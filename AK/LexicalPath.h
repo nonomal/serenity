@@ -7,35 +7,47 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/Vector.h>
+
+// On Linux distros that use mlibc `basename` is defined as a macro that expands to `__mlibc_gnu_basename` or `__mlibc_gnu_basename_c`, so we undefine it.
+#if defined(AK_OS_LINUX) && defined(basename)
+#    undef basename
+#endif
 
 namespace AK {
 
 class LexicalPath {
 public:
-    explicit LexicalPath(String);
+    enum StripExtension {
+        No,
+        Yes
+    };
+
+    explicit LexicalPath(ByteString);
 
     bool is_absolute() const { return !m_string.is_empty() && m_string[0] == '/'; }
-    String const& string() const { return m_string; }
+    bool is_canonical() const;
+    ByteString const& string() const { return m_string; }
 
     StringView dirname() const { return m_dirname; }
-    StringView basename() const { return m_basename; }
+    StringView basename(StripExtension s = StripExtension::No) const { return s == StripExtension::No ? m_basename : m_basename.substring_view(0, m_basename.length() - m_extension.length() - 1); }
     StringView title() const { return m_title; }
     StringView extension() const { return m_extension; }
 
     Vector<StringView> const& parts_view() const { return m_parts; }
-    [[nodiscard]] Vector<String> parts() const;
+    [[nodiscard]] Vector<ByteString> parts() const;
 
     bool has_extension(StringView) const;
+    bool is_child_of(LexicalPath const& possible_parent) const;
 
     [[nodiscard]] LexicalPath append(StringView) const;
     [[nodiscard]] LexicalPath prepend(StringView) const;
     [[nodiscard]] LexicalPath parent() const;
 
-    [[nodiscard]] static String canonicalized_path(String);
-    [[nodiscard]] static String absolute_path(String dir_path, String target);
-    [[nodiscard]] static String relative_path(StringView absolute_path, StringView prefix);
+    [[nodiscard]] static ByteString canonicalized_path(ByteString);
+    [[nodiscard]] static ByteString absolute_path(ByteString dir_path, ByteString target);
+    [[nodiscard]] static ByteString relative_path(StringView absolute_path, StringView prefix);
 
     template<typename... S>
     [[nodiscard]] static LexicalPath join(StringView first, S&&... rest)
@@ -44,28 +56,28 @@ public:
         builder.append(first);
         ((builder.append('/'), builder.append(forward<S>(rest))), ...);
 
-        return LexicalPath { builder.to_string() };
+        return LexicalPath { builder.to_byte_string() };
     }
 
-    [[nodiscard]] static String dirname(String path)
+    [[nodiscard]] static ByteString dirname(ByteString path)
     {
         auto lexical_path = LexicalPath(move(path));
         return lexical_path.dirname();
     }
 
-    [[nodiscard]] static String basename(String path)
+    [[nodiscard]] static ByteString basename(ByteString path, StripExtension s = StripExtension::No)
     {
         auto lexical_path = LexicalPath(move(path));
-        return lexical_path.basename();
+        return lexical_path.basename(s);
     }
 
-    [[nodiscard]] static String title(String path)
+    [[nodiscard]] static ByteString title(ByteString path)
     {
         auto lexical_path = LexicalPath(move(path));
         return lexical_path.title();
     }
 
-    [[nodiscard]] static String extension(String path)
+    [[nodiscard]] static ByteString extension(ByteString path)
     {
         auto lexical_path = LexicalPath(move(path));
         return lexical_path.extension();
@@ -73,7 +85,7 @@ public:
 
 private:
     Vector<StringView> m_parts;
-    String m_string;
+    ByteString m_string;
     StringView m_dirname;
     StringView m_basename;
     StringView m_title;
@@ -90,4 +102,6 @@ struct Formatter<LexicalPath> : Formatter<StringView> {
 
 };
 
+#if USING_AK_GLOBALLY
 using AK::LexicalPath;
+#endif

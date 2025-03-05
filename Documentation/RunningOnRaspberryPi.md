@@ -2,11 +2,11 @@
 
 ## NOTE
 
-This is for development purposes only - Serenity doesn't currently boot on Rasperry Pi! Use this guide if you want to set up a development environment.
+This is for development purposes only - Serenity doesn't currently boot on Raspberry Pi! Use this guide if you want to set up a development environment.
 
 Currently only UART output is supported, no display.
 
-64-bit only, so you need a Rasperry Pi 3 or newer.
+64-bit only, so you need a Raspberry Pi 3 or newer.
 
 ## Running in QEMU
 
@@ -14,17 +14,9 @@ Currently only UART output is supported, no display.
 
 Please follow [build instructions](BuildInstructions.md) to download and build Serenity. Make sure everything builds successfully for x86.
 
-### Step 2: Build Aarch64 toolchain
+### Step 2: Build and run in emulator
 
-Use following the command to build the toolchain for Aarch64:
-
-```console
-Meta/serenity.sh rebuild-toolchain aarch64
-```
-
-### Step 3: Build and run in emulator
-
-Use the following command to build and run the Aarch64 kernel:
+Use the following command to build and run the AArch64 version of the system:
 
 ```console
 Meta/serenity.sh run aarch64
@@ -48,6 +40,13 @@ This step is needed because the original firmware files need to be present on th
 
 Please follow one of the existing guides (for example [here](https://scribles.net/setting-up-serial-communication-between-raspberry-pi-and-pc)) and make sure UART is working on Raspberry Pi OS before proceeding.
 
+If you're using a Raspberry Pi 4B and want to test if the UART is working correctly, you need to do a few extra steps.
+UART0 (the one that SerenityOS uses) is used for bluetooth on these models, so for the OS to use it instead, ensure that you disable Bluetooth inside the `config.txt`:
+
+```
+dtoverlay=disable-bt
+```
+
 ### Step 2: Mount SD Card
 
 If you use a Raspberry Pi 4, and your serenity kernel is called `kernel8.img`
@@ -70,7 +69,7 @@ enable_uart=1
 
 ### Step 3: Copy Serenity kernel to SD Card
 
-`kernel8.img` can be found in `Build/aarch64/Kernel/Prekernel/`. Copy it to the main directory on the `Boot/` partition, next to `config.txt`. You can either replace the original file or use another name (see above).
+`kernel8.img` can be found in `Build/aarch64/Kernel/`. Copy it to the main directory on the `Boot/` partition, next to `config.txt`. You can either replace the original file or use another name (see above).
 
 ### Step 4: Put the SD Card in the Raspberry Pi and power on
 
@@ -84,7 +83,7 @@ There are multiple ways to set up your network. The easiest way is a direct conn
 
 Here's the [Raspberry Pi Documentation](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#debugging-network-boot-mode) on booting from the network.
 
-### Step 1: Make sure OTP mode is enabled on the board 
+### Step 1: Make sure OTP mode is enabled on the board
 
 This is enabled by default on Raspberry Pi 3+. For the previous boards please see the section [Debugging Network Boot Mode](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#debugging-network-boot-mode) of the Raspberry Pi documentation.
 

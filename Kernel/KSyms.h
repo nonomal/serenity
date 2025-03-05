@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Forward.h>
+#include <AK/SetOnce.h>
 
 namespace Kernel {
 
@@ -24,10 +25,11 @@ FlatPtr address_for_kernel_symbol(StringView name);
 KernelSymbol const* symbolicate_kernel_address(FlatPtr);
 void load_kernel_symbol_table();
 
-extern bool g_kernel_symbols_available;
+extern SetOnce g_kernel_symbols_available;
 extern FlatPtr g_lowest_kernel_symbol_address;
 extern FlatPtr g_highest_kernel_symbol_address;
 
 void dump_backtrace(PrintToScreen print_to_screen = PrintToScreen::No);
+void dump_backtrace_from_base_pointer(FlatPtr base_pointer);
 
 }

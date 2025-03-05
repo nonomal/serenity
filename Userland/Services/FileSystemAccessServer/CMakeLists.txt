@@ -10,10 +10,13 @@ compile_ipc(FileSystemAccessClient.ipc FileSystemAccessClientEndpoint.h)
 set(SOURCES
     ConnectionFromClient.cpp
     main.cpp
+)
+
+set(GENERATED_SOURCES
     FileSystemAccessServerEndpoint.h
     FileSystemAccessClientEndpoint.h
 )
 
 serenity_bin(FileSystemAccessServer)
-target_link_libraries(FileSystemAccessServer LibCore LibIPC LibGUI LibMain)
+target_link_libraries(FileSystemAccessServer PRIVATE LibCore LibFileSystem LibGfx LibGUI LibIPC LibMain LibURL)
 add_dependencies(FileSystemAccessServer WindowServer)

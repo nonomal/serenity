@@ -9,30 +9,30 @@
 
 namespace PDF {
 
-String Value::to_string(int indent) const
+ByteString Value::to_byte_string(int indent) const
 {
     return visit(
-        [&](Empty const&) -> String {
+        [&](Empty const&) -> ByteString {
             // Return type deduction means that we can't use implicit conversions.
             return "<empty>";
         },
-        [&](std::nullptr_t const&) -> String {
+        [&](nullptr_t const&) -> ByteString {
             return "null";
         },
-        [&](bool const& b) -> String {
+        [&](bool const& b) -> ByteString {
             return b ? "true" : "false";
         },
         [&](int const& i) {
-            return String::number(i);
+            return ByteString::number(i);
         },
         [&](float const& f) {
-            return String::number(f);
+            return ByteString::number(f);
         },
         [&](Reference const& ref) {
-            return String::formatted("{} {} R", ref.as_ref_index(), ref.as_ref_generation_index());
+            return ByteString::formatted("{} {} R", ref.as_ref_index(), ref.as_ref_generation_index());
         },
         [&](NonnullRefPtr<Object> const& object) {
-            return object->to_string(indent);
+            return object->to_byte_string(indent);
         });
 }
 

@@ -7,28 +7,38 @@
 
 #pragma once
 
+#include <LibWeb/DOM/StyleElementUtils.h>
 #include <LibWeb/HTML/HTMLElement.h>
 
 namespace Web::HTML {
 
 class HTMLStyleElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLStyleElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLStyleElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLStyleElement);
 
-    HTMLStyleElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLStyleElement() override;
 
     virtual void children_changed() override;
     virtual void inserted() override;
     virtual void removed_from(Node*) override;
 
-    void update_a_style_block();
+    bool disabled();
+    void set_disabled(bool disabled);
 
-    RefPtr<CSS::CSSStyleSheet> sheet() const;
+    CSS::CSSStyleSheet* sheet();
+    CSS::CSSStyleSheet const* sheet() const;
 
 private:
-    // https://www.w3.org/TR/cssom/#associated-css-style-sheet
-    RefPtr<CSS::CSSStyleSheet> m_associated_css_style_sheet;
+    HTMLStyleElement(DOM::Document&, DOM::QualifiedName);
+
+    // ^DOM::Node
+    virtual bool is_html_style_element() const override { return true; }
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    DOM::StyleElementUtils m_style_element_utils;
 };
 
 }

@@ -7,18 +7,18 @@
 #pragma once
 
 #if defined(KERNEL)
-#    include <Kernel/Assertions.h>
+#    include <Kernel/Library/Assertions.h>
 #else
-#    include <assert.h>
-#    ifndef NDEBUG
-#        define VERIFY assert
-#    else
-#        define VERIFY(expr)              \
-            (__builtin_expect(!(expr), 0) \
-                    ? __builtin_trap()    \
-                    : (void)0)
-#    endif
+extern "C" __attribute__((noreturn)) void ak_verification_failed(char const*);
+#    define __stringify_helper(x) #x
+#    define __stringify(x) __stringify_helper(x)
+#    define VERIFY(expr)                                                                  \
+        (__builtin_expect(!(expr), 0)                                                     \
+                ? ak_verification_failed(#expr " at " __FILE__ ":" __stringify(__LINE__)) \
+                : (void)0)
 #    define VERIFY_NOT_REACHED() VERIFY(false) /* NOLINT(cert-dcl03-c,misc-static-assert) No, this can't be static_assert, it's a runtime check */
 static constexpr bool TODO = false;
 #    define TODO() VERIFY(TODO)                /* NOLINT(cert-dcl03-c,misc-static-assert) No, this can't be static_assert, it's a runtime check */
+#    define TODO_AARCH64() VERIFY(TODO)        /* NOLINT(cert-dcl03-c,misc-static-assert) No, this can't be static_assert, it's a runtime check */
+#    define TODO_RISCV64() VERIFY(TODO)        /* NOLINT(cert-dcl03-c,misc-static-assert) No, this can't be static_assert, it's a runtime check */
 #endif

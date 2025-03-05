@@ -9,16 +9,7 @@
 #include <AK/AllOf.h>
 #include <AK/AnyOf.h>
 #include <AK/Array.h>
-#include <AK/StdLibExtras.h>
 #include <AK/StringView.h>
-
-#ifdef ENABLE_COMPILETIME_FORMAT_CHECK
-// FIXME: Seems like clang doesn't like calling 'consteval' functions inside 'consteval' functions quite the same way as GCC does,
-//        it seems to entirely forget that it accepted that parameters to a 'consteval' function to begin with.
-#    if defined(__clang__) || defined(__CLION_IDE__) || defined(__CLION_IDE_)
-#        undef ENABLE_COMPILETIME_FORMAT_CHECK
-#    endif
-#endif
 
 #ifdef ENABLE_COMPILETIME_FORMAT_CHECK
 namespace AK::Format::Detail {
@@ -27,9 +18,9 @@ namespace AK::Format::Detail {
 template<typename T, size_t Size>
 struct Array {
     constexpr static size_t size() { return Size; }
-    constexpr const T& operator[](size_t index) const { return __data[index]; }
+    constexpr T const& operator[](size_t index) const { return __data[index]; }
     constexpr T& operator[](size_t index) { return __data[index]; }
-    using ConstIterator = SimpleIterator<const Array, const T>;
+    using ConstIterator = SimpleIterator<Array const, T const>;
     using Iterator = SimpleIterator<Array, T>;
 
     constexpr ConstIterator begin() const { return ConstIterator::begin(*this); }
@@ -40,9 +31,6 @@ struct Array {
 
     T __data[Size];
 };
-
-template<typename... Args>
-void compiletime_fail(Args...);
 
 template<size_t N>
 consteval auto extract_used_argument_index(char const (&fmt)[N], size_t specifier_start_index, size_t specifier_end_index, size_t& next_implicit_argument_index)
@@ -155,7 +143,8 @@ struct CheckedFormatString {
     }
 
     template<typename T>
-    CheckedFormatString(const T& unchecked_fmt) requires(requires(T t) { StringView { t }; })
+    CheckedFormatString(T const& unchecked_fmt)
+    requires(requires(T t) { StringView { t }; })
         : m_string(unchecked_fmt)
     {
     }

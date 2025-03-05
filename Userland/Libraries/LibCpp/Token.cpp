@@ -5,7 +5,7 @@
  */
 
 #include "Token.h"
-#include <AK/String.h>
+#include <AK/ByteString.h>
 
 namespace Cpp {
 
@@ -26,12 +26,12 @@ bool Position::operator<=(Position const& other) const
     return !(*this > other);
 }
 
-String Token::to_string() const
+ByteString Token::to_byte_string() const
 {
-    return String::formatted("{}  {}:{}-{}:{} ({})", type_to_string(m_type), start().line, start().column, end().line, end().column, text());
+    return ByteString::formatted("{}  {}:{}-{}:{} ({})", type_to_string(m_type), start().line, start().column, end().line, end().column, text());
 }
 
-String Token::type_as_string() const
+ByteString Token::type_as_byte_string() const
 {
     return type_to_string(m_type);
 }

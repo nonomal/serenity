@@ -9,10 +9,10 @@
 #include <AK/NonnullOwnPtr.h>
 #include <AK/OwnPtr.h>
 #include <AK/Stack.h>
+#include <Kernel/Library/StdLib.h>
 #include <Kernel/Locking/Spinlock.h>
 #include <Kernel/Memory/MemoryManager.h>
 #include <Kernel/Memory/Region.h>
-#include <Kernel/StdLib.h>
 
 namespace Kernel::USB {
 
@@ -83,7 +83,7 @@ private:
     StringView m_pool_name;                                   // Name of this pool
     NonnullOwnPtr<Memory::Region> m_pool_region;              // Memory region where descriptors actually reside
     Stack<T*, PAGE_SIZE / sizeof(T)> m_free_descriptor_stack; // Stack of currently free descriptor pointers
-    Spinlock m_pool_lock;
+    Spinlock<LockRank::None> m_pool_lock;
 };
 
 }

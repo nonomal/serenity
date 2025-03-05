@@ -6,19 +6,17 @@
  */
 
 #include "KeyboardSettingsWidget.h"
+#include <LibConfig/Client.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/SettingsWindow.h>
 #include <LibMain/Main.h>
 
-// Including this after to avoid LibIPC errors
-#include <LibConfig/Client.h>
-
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio rpath recvfd sendfd unix proc exec"));
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
     Config::pledge_domain("KeyboardSettings");
 
     StringView selected_tab;
@@ -29,7 +27,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::pledge("stdio rpath recvfd sendfd proc exec"));
     TRY(Core::System::unveil("/res", "r"));
     TRY(Core::System::unveil("/bin/keymap", "x"));
-    TRY(Core::System::unveil("/proc/keymap", "r"));
+    TRY(Core::System::unveil("/bin/sysctl", "x"));
+    TRY(Core::System::unveil("/sys/kernel/keymap", "r"));
+    TRY(Core::System::unveil("/sys/kernel/conf/caps_lock_to_ctrl", "r"));
     TRY(Core::System::unveil("/etc/Keyboard.ini", "r"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
@@ -37,7 +37,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto window = TRY(GUI::SettingsWindow::create("Keyboard Settings"));
     window->set_icon(app_icon.bitmap_for_size(16));
-    auto keyboard_settings_widget = TRY(window->add_tab<KeyboardSettingsWidget>("Keyboard"sv, "keyboard"sv));
+
+    auto keyboard_settings_widget = TRY(KeyboardSettings::KeyboardSettingsWidget::create());
+    TRY(window->add_tab(keyboard_settings_widget, "Keyboard"_string, "keyboard"sv));
     window->set_active_tab(selected_tab);
 
     window->on_active_window_change = [&](bool is_active_window) {

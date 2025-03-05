@@ -1,15 +1,15 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/DistinctNumeric.h>
 #include <AK/Function.h>
-#include <AK/NonnullOwnPtrVector.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/Timer.h>
 #include <LibGUI/AbstractScrollableWidget.h>
@@ -17,10 +17,10 @@
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/Forward.h>
 #include <LibGUI/TextDocument.h>
-#include <LibGUI/TextRange.h>
 #include <LibGfx/TextAlignment.h>
 #include <LibSyntax/Forward.h>
 #include <LibSyntax/HighlighterClient.h>
+#include <LibSyntax/TextRange.h>
 
 namespace GUI {
 
@@ -57,7 +57,7 @@ public:
 
     virtual void set_document(TextDocument&);
 
-    String const& placeholder() const { return m_placeholder; }
+    ByteString const& placeholder() const { return m_placeholder; }
     void set_placeholder(StringView placeholder) { m_placeholder = placeholder; }
 
     TextDocumentLine& current_line() { return line(m_cursor.line()); }
@@ -76,7 +76,7 @@ public:
     void set_automatic_indentation_enabled(bool enabled) { m_automatic_indentation_enabled = enabled; }
 
     virtual int soft_tab_width() const final { return m_soft_tab_width; }
-    void set_soft_tab_width(int width) { m_soft_tab_width = width; };
+    void set_soft_tab_width(int width) { m_soft_tab_width = width; }
 
     WrappingMode wrapping_mode() const { return m_wrapping_mode; }
     bool is_wrapping_enabled() const { return m_wrapping_mode != WrappingMode::NoWrap; }
@@ -93,13 +93,27 @@ public:
     bool is_editable() const { return m_mode == Editable; }
     bool is_readonly() const { return m_mode == ReadOnly; }
     bool is_displayonly() const { return m_mode == DisplayOnly; }
-    void set_mode(const Mode);
+    void set_mode(Mode const);
+
+    void set_editing_cursor();
+
+    bool is_relative_line_number() const { return m_relative_line_number; }
+    void set_relative_line_number(bool);
 
     bool is_ruler_visible() const { return m_ruler_visible; }
     void set_ruler_visible(bool);
 
     bool is_gutter_visible() const { return m_gutter_visible; }
     void set_gutter_visible(bool);
+
+    AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(size_t, GutterIndicatorID, CastToUnderlying, Comparison);
+    using PaintGutterIndicator = Function<void(Gfx::Painter&, Gfx::IntRect, size_t line)>;
+    using OnGutterIndicatorClick = Function<void(size_t line, unsigned modifiers)>;
+    ErrorOr<GutterIndicatorID> register_gutter_indicator(PaintGutterIndicator, OnGutterIndicatorClick = nullptr);
+    void add_gutter_indicator(GutterIndicatorID, size_t line);
+    void remove_gutter_indicator(GutterIndicatorID, size_t line);
+    void clear_gutter_indicators(GutterIndicatorID);
+    Gfx::IntRect gutter_indicator_rect(size_t line_number, int indicator_position) const;
 
     void set_icon(Gfx::Bitmap const*);
     Gfx::Bitmap const* icon() const { return m_icon; }
@@ -109,6 +123,7 @@ public:
     Function<void()> on_focusin;
     Function<void()> on_focusout;
     Function<void()> on_highlighter_change;
+    Function<void(size_t line, unsigned modifiers)> on_gutter_click;
 
     void set_text(StringView, AllowCallback = AllowCallback::Yes);
     void scroll_cursor_into_view();
@@ -116,18 +131,18 @@ public:
     size_t line_count() const { return document().line_count(); }
     TextDocumentLine& line(size_t index) { return document().line(index); }
     TextDocumentLine const& line(size_t index) const { return document().line(index); }
-    NonnullOwnPtrVector<TextDocumentLine>& lines() { return document().lines(); }
-    NonnullOwnPtrVector<TextDocumentLine> const& lines() const { return document().lines(); }
+    Vector<NonnullOwnPtr<TextDocumentLine>>& lines() { return document().lines(); }
+    Vector<NonnullOwnPtr<TextDocumentLine>> const& lines() const { return document().lines(); }
     int line_height() const;
     TextPosition cursor() const { return m_cursor; }
     TextRange normalized_selection() const { return m_selection.normalized(); }
 
     void insert_at_cursor_or_replace_selection(StringView);
-    void replace_all_text_without_resetting_undo_stack(StringView text);
-    bool write_to_file(String const& path);
-    bool write_to_file(Core::File&);
+    void replace_all_text_without_resetting_undo_stack(StringView text, StringView action_text);
+    ErrorOr<void> write_to_file(StringView path);
+    ErrorOr<void> write_to_file(Core::File&);
     bool has_selection() const { return m_selection.is_valid(); }
-    String selected_text() const;
+    ByteString selected_text() const;
     size_t number_of_words() const;
     size_t number_of_selected_words() const;
     void set_selection(TextRange const&);
@@ -135,7 +150,7 @@ public:
     bool can_undo() const { return document().can_undo(); }
     bool can_redo() const { return document().can_redo(); }
 
-    String text() const;
+    ByteString text() const;
 
     void clear();
 
@@ -148,12 +163,15 @@ public:
     void delete_previous_char();
     void delete_from_line_start_to_cursor();
     void select_all();
+    void insert_emoji();
+    void set_or_clear_emoji_input_callback();
     void select_current_line();
     virtual void undo();
     virtual void redo();
     bool is_indenting_selection();
     void indent_selection();
     void unindent_selection();
+    void unindent_line();
 
     Function<void()> on_change;
     Function<void(bool modified)> on_modified_change;
@@ -172,14 +190,17 @@ public:
     Action& cut_action() { return *m_cut_action; }
     Action& copy_action() { return *m_copy_action; }
     Action& paste_action() { return *m_paste_action; }
-    Action& go_to_line_action() { return *m_go_to_line_action; }
+    Action& go_to_line_or_column_action() { return *m_go_to_line_or_column_action; }
     Action& select_all_action() { return *m_select_all_action; }
+    Action& insert_emoji_action() { return *m_insert_emoji_action; }
 
     void add_custom_context_menu_action(Action&);
 
     void set_cursor_and_focus_line(size_t line, size_t column);
     void set_cursor(size_t line, size_t column);
     virtual void set_cursor(TextPosition const&);
+    void set_cursor_to_text_position(Gfx::IntPoint);
+    void set_cursor_to_end_of_visual_line();
 
     Syntax::Highlighter* syntax_highlighter();
     Syntax::Highlighter const* syntax_highlighter() const;
@@ -193,13 +214,14 @@ public:
 
     bool should_autocomplete_automatically() const { return m_autocomplete_timer; }
     void set_should_autocomplete_automatically(bool);
+    void hide_autocomplete();
 
     Optional<u32> const& substitution_code_point() const { return m_substitution_code_point; }
     void set_substitution_code_point(Optional<u32> code_point);
 
     bool is_in_drag_select() const { return m_in_drag_select; }
 
-    TextRange& selection() { return m_selection; };
+    TextRange& selection() { return m_selection; }
     void did_update_selection();
     void did_change(AllowCallback = AllowCallback::Yes);
     void update_cursor();
@@ -210,7 +232,7 @@ public:
 
     int number_of_visible_lines() const;
     Gfx::IntRect cursor_content_rect() const;
-    TextPosition text_position_at_content_position(Gfx::IntPoint const&) const;
+    TextPosition text_position_at_content_position(Gfx::IntPoint) const;
 
     void delete_text_range(TextRange);
 
@@ -223,6 +245,7 @@ public:
         Backward,
     };
     TextRange find_text(StringView needle, SearchDirection, GUI::TextDocument::SearchShouldWrap, bool use_regex, bool match_case);
+    void highlight_all_occurances_of(ByteString const selected_text);
     void reset_search_results();
     Optional<size_t> search_result_index() const { return m_search_result_index; }
     Vector<TextRange> const& search_results() const { return m_search_results; }
@@ -254,20 +277,24 @@ protected:
     virtual void resize_event(ResizeEvent&) override;
     virtual void theme_change_event(ThemeChangeEvent&) override;
     virtual void cursor_did_change();
-    Gfx::IntRect ruler_content_rect(size_t line) const;
     Gfx::IntRect gutter_content_rect(size_t line) const;
+    Gfx::IntRect ruler_content_rect(size_t line) const;
+    Gfx::IntRect folding_indicator_rect(size_t line) const;
 
-    TextPosition text_position_at(Gfx::IntPoint const&) const;
+    TextPosition text_position_at(Gfx::IntPoint) const;
     bool ruler_visible() const { return m_ruler_visible; }
     bool gutter_visible() const { return m_gutter_visible; }
     Gfx::IntRect content_rect_for_position(TextPosition const&) const;
-    int ruler_width() const;
     int gutter_width() const;
+    int ruler_width() const;
+    int folding_indicator_width() const;
+    int fixed_elements_width() const { return gutter_width() + ruler_width() + folding_indicator_width(); }
 
     virtual void highlighter_did_set_spans(Vector<TextDocumentSpan> spans) final { document().set_spans(Syntax::HighlighterClient::span_collection_index, move(spans)); }
+    virtual void highlighter_did_set_folding_regions(Vector<TextDocumentFoldingRegion> folding_regions) final;
 
 private:
-    friend class TextDocumentLine;
+    friend TextDocumentLine;
 
     // ^TextDocument::Client
     virtual void document_did_append_line() override;
@@ -280,19 +307,22 @@ private:
     virtual void document_did_update_undo_stack() override;
 
     // ^Syntax::HighlighterClient
-    virtual Vector<TextDocumentSpan>& spans() final { return document().spans(); }
     virtual Vector<TextDocumentSpan> const& spans() const final { return document().spans(); }
     virtual void set_span_at_index(size_t index, TextDocumentSpan span) final { document().set_span_at_index(index, move(span)); }
+    virtual Vector<GUI::TextDocumentFoldingRegion>& folding_regions() final { return document().folding_regions(); }
+    virtual Vector<GUI::TextDocumentFoldingRegion> const& folding_regions() const final { return document().folding_regions(); }
     virtual void highlighter_did_request_update() final { update(); }
-    virtual String highlighter_did_request_text() const final { return text(); }
+    virtual ByteString highlighter_did_request_text() const final { return text(); }
     virtual GUI::TextDocument& highlighter_did_request_document() final { return document(); }
     virtual GUI::TextPosition highlighter_did_request_cursor() const final { return m_cursor; }
 
     // ^Clipboard::ClipboardClient
-    virtual void clipboard_content_did_change(String const& mime_type) override;
+    virtual void clipboard_content_did_change(ByteString const& mime_type) override;
+
+    // ^GUI::AbstractScrollableWidget
+    virtual void automatic_scrolling_timer_did_fire() override;
 
     void create_actions();
-    void paint_ruler(Painter&);
     void update_content_size();
     int fixed_glyph_width() const;
 
@@ -307,7 +337,6 @@ private:
     void try_update_autocomplete(Function<void()> callback = {});
     void force_update_autocomplete(Function<void()> callback = {});
     void hide_autocomplete_if_needed();
-    void hide_autocomplete();
 
     int icon_size() const { return 16; }
     int icon_padding() const { return 2; }
@@ -335,32 +364,33 @@ private:
     Gfx::IntRect line_widget_rect(size_t line_index) const;
     void delete_selection();
     int content_x_for_position(TextPosition const&) const;
-    Gfx::IntRect ruler_rect_in_inner_coordinates() const;
     Gfx::IntRect gutter_rect_in_inner_coordinates() const;
+    Gfx::IntRect ruler_rect_in_inner_coordinates() const;
+    Gfx::IntRect folding_indicator_rect_in_inner_coordinates() const;
     Gfx::IntRect visible_text_rect_in_inner_coordinates() const;
     void recompute_all_visual_lines();
     void ensure_cursor_is_valid();
     void rehighlight_if_needed();
 
     size_t visual_line_containing(size_t line_index, size_t column) const;
-    void recompute_visual_lines(size_t line_index);
-
-    void automatic_selection_scroll_timer_fired();
+    void recompute_visual_lines(size_t line_index, Vector<TextDocumentFoldingRegion const&>::Iterator& folded_region_iterator);
+    void populate_line_data();
 
     template<class T, class... Args>
     inline void execute(Args&&... args)
     {
         auto command = make<T>(*m_document, forward<Args>(args)...);
         command->perform_formatting(*this);
-        will_execute(*command);
         command->execute_from(*this);
+        after_execute(*command);
         m_document->add_to_undo_stack(move(command));
     }
 
-    virtual void will_execute(TextDocumentUndoCommand const&) { }
+    virtual void after_execute(TextDocumentUndoCommand const&) { }
     void on_search_results(GUI::TextRange current, Vector<GUI::TextRange> all_results);
 
     static constexpr auto search_results_span_collection_index = 1;
+    static constexpr auto highlight_selected_text_span_collection_index = 2;
 
     Type m_type { MultiLine };
     Mode m_mode { Editable };
@@ -369,6 +399,7 @@ private:
     Gfx::TextAlignment m_text_alignment { Gfx::TextAlignment::CenterLeft };
     bool m_cursor_state { true };
     bool m_in_drag_select { false };
+    bool m_relative_line_number { false };
     bool m_ruler_visible { false };
     bool m_gutter_visible { false };
     bool m_needs_rehighlight { false };
@@ -381,6 +412,13 @@ private:
     int m_horizontal_content_padding { 3 };
     TextRange m_selection {};
 
+    struct GutterIndicator {
+        PaintGutterIndicator draw_indicator;
+        OnGutterIndicatorClick on_click;
+    };
+    Vector<GutterIndicator> m_gutter_indicators;
+    unsigned m_most_gutter_indicators_displayed_on_one_line { 0 };
+
     Optional<u32> m_substitution_code_point;
     mutable OwnPtr<Vector<u32>> m_substitution_string_data; // Used to avoid repeated String construction.
 
@@ -390,10 +428,11 @@ private:
     RefPtr<Action> m_cut_action;
     RefPtr<Action> m_copy_action;
     RefPtr<Action> m_paste_action;
-    RefPtr<Action> m_go_to_line_action;
+    RefPtr<Action> m_go_to_line_or_column_action;
     RefPtr<Action> m_select_all_action;
+    RefPtr<Action> m_insert_emoji_action;
     Core::ElapsedTimer m_triple_click_timer;
-    NonnullRefPtrVector<Action> m_custom_context_menu_actions;
+    Vector<NonnullRefPtr<Action>> m_custom_context_menu_actions;
 
     size_t m_reflow_deferred { 0 };
     bool m_reflow_requested { false };
@@ -402,37 +441,37 @@ private:
 
     RefPtr<TextDocument> m_document;
 
-    String m_placeholder { "" };
+    ByteString m_placeholder { "" };
 
     template<typename Callback>
     void for_each_visual_line(size_t line_index, Callback) const;
 
-    struct LineVisualData {
-        Vector<size_t, 1> visual_line_breaks;
+    struct LineData {
+        Vector<Utf32View> visual_lines;
         Gfx::IntRect visual_rect;
+        u32 gutter_indicators { 0 }; // A bitfield of which gutter indicators are present. (1 << GutterIndicatorID)
     };
 
-    NonnullOwnPtrVector<LineVisualData> m_line_visual_data;
+    Vector<NonnullOwnPtr<LineData>> m_line_data;
 
     OwnPtr<Syntax::Highlighter> m_highlighter;
     OwnPtr<AutocompleteProvider> m_autocomplete_provider;
     OwnPtr<AutocompleteBox> m_autocomplete_box;
     bool m_should_keep_autocomplete_box { false };
     size_t m_automatic_autocomplete_delay_ms { 800 };
-
-    RefPtr<Core::Timer> m_automatic_selection_scroll_timer;
     RefPtr<Core::Timer> m_autocomplete_timer;
 
     OwnPtr<EditingEngine> m_editing_engine;
 
     Gfx::IntPoint m_last_mousemove_position;
 
-    RefPtr<Gfx::Bitmap> m_icon;
+    RefPtr<Gfx::Bitmap const> m_icon;
 
     bool m_text_is_secret { false };
 
     Optional<size_t> m_search_result_index;
     Vector<GUI::TextRange> m_search_results;
+    RefPtr<IncrementalSearchBanner> m_search_banner;
 };
 
 }

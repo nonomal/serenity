@@ -27,7 +27,7 @@ public:
 
     virtual int row_count(const GUI::ModelIndex&) const override;
     virtual int column_count(const GUI::ModelIndex&) const override;
-    virtual String column_name(int column_index) const override;
+    virtual ErrorOr<String> column_name(int column_index) const override;
     virtual GUI::Variant data(const GUI::ModelIndex&, GUI::ModelRole) const override;
 
     void update();
@@ -38,8 +38,8 @@ private:
     struct Process {
         pid_t pid;
         uid_t uid;
-        RefPtr<Gfx::Bitmap> icon;
-        String name;
+        RefPtr<Gfx::Bitmap const> icon;
+        ByteString name;
     };
     Vector<Process> m_processes;
 };

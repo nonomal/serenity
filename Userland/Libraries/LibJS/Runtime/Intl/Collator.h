@@ -16,6 +16,7 @@ namespace JS::Intl {
 
 class Collator final : public Object {
     JS_OBJECT(Collator, Object);
+    JS_DECLARE_ALLOCATOR(Collator);
 
 public:
     enum class Usage {
@@ -43,7 +44,6 @@ public:
         return AK::Array { "co"sv, "kf"sv, "kn"sv };
     }
 
-    explicit Collator(Object& prototype);
     virtual ~Collator() override = default;
 
     String const& locale() const { return m_locale; }
@@ -74,16 +74,18 @@ public:
     void set_bound_compare(CollatorCompareFunction* bound_compare) { m_bound_compare = bound_compare; }
 
 private:
+    explicit Collator(Object& prototype);
+
     virtual void visit_edges(Visitor&) override;
 
-    String m_locale;                                      // [[Locale]]
-    Usage m_usage { Usage::Sort };                        // [[Usage]]
-    Sensitivity m_sensitivity { Sensitivity::Variant };   // [[Sensitivity]]
-    CaseFirst m_case_first { CaseFirst::False };          // [[CaseFirst]]
-    String m_collation;                                   // [[Collation]]
-    bool m_ignore_punctuation { false };                  // [[IgnorePunctuation]]
-    bool m_numeric { false };                             // [[Numeric]]
-    CollatorCompareFunction* m_bound_compare { nullptr }; // [[BoundCompare]]
+    String m_locale;                                    // [[Locale]]
+    Usage m_usage { Usage::Sort };                      // [[Usage]]
+    Sensitivity m_sensitivity { Sensitivity::Variant }; // [[Sensitivity]]
+    CaseFirst m_case_first { CaseFirst::False };        // [[CaseFirst]]
+    String m_collation;                                 // [[Collation]]
+    bool m_ignore_punctuation { false };                // [[IgnorePunctuation]]
+    bool m_numeric { false };                           // [[Numeric]]
+    GCPtr<CollatorCompareFunction> m_bound_compare;     // [[BoundCompare]]
 };
 
 }

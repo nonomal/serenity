@@ -12,28 +12,30 @@
 namespace Web::SVG {
 
 class SVGLineElement final : public SVGGeometryElement {
-public:
-    using WrapperType = Bindings::SVGLineElementWrapper;
+    WEB_PLATFORM_OBJECT(SVGLineElement, SVGGeometryElement);
+    JS_DECLARE_ALLOCATOR(SVGLineElement);
 
-    SVGLineElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~SVGLineElement() override = default;
 
-    virtual void parse_attribute(FlyString const& name, String const& value) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value) override;
 
-    virtual Gfx::Path& get_path() override;
+    virtual Gfx::Path get_path(CSSPixelSize viewport_size) override;
 
-    NonnullRefPtr<SVGAnimatedLength> x1() const;
-    NonnullRefPtr<SVGAnimatedLength> y1() const;
-    NonnullRefPtr<SVGAnimatedLength> x2() const;
-    NonnullRefPtr<SVGAnimatedLength> y2() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> x1() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> y1() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> x2() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> y2() const;
 
 private:
-    Optional<Gfx::Path> m_path;
+    SVGLineElement(DOM::Document&, DOM::QualifiedName);
 
-    Optional<float> m_x1;
-    Optional<float> m_y1;
-    Optional<float> m_x2;
-    Optional<float> m_y2;
+    virtual void initialize(JS::Realm&) override;
+
+    Optional<NumberPercentage> m_x1;
+    Optional<NumberPercentage> m_y1;
+    Optional<NumberPercentage> m_x2;
+    Optional<NumberPercentage> m_y2;
 };
 
 }

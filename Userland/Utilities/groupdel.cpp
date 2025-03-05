@@ -8,7 +8,6 @@
  */
 
 #include <LibCore/ArgsParser.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <grp.h>
@@ -20,15 +19,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::pledge("stdio wpath rpath cpath fattr proc exec"));
     TRY(Core::System::unveil("/etc/", "rwc"));
     TRY(Core::System::unveil("/bin/rm", "x"));
+    TRY(Core::System::unveil(nullptr, nullptr));
 
-    char const* groupname = nullptr;
+    ByteString groupname;
 
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(groupname, "Group name", "group");
     args_parser.parse(arguments);
 
     setgrent();
-    auto* g = getgrnam(groupname);
+    auto* g = getgrnam(groupname.characters());
 
     // Check if the group exists
     if (!g) {

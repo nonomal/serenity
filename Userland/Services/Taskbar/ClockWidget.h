@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "TaskbarFrame.h"
 #include <LibCore/DateTime.h>
 #include <LibCore/Timer.h>
 #include <LibGUI/Application.h>
@@ -18,19 +19,20 @@
 
 namespace Taskbar {
 
-class ClockWidget final : public GUI::Frame {
+class ClockWidget final : public TaskbarFrame {
     C_OBJECT(ClockWidget);
 
 public:
     virtual ~ClockWidget() override = default;
 
-    void update_format(String const&);
+    void update_format(ByteString const&);
 
 private:
     ClockWidget();
 
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void mousedown_event(GUI::MouseEvent&) override;
+    virtual void context_menu_event(GUI::ContextMenuEvent&) override;
 
     void tick_clock()
     {
@@ -44,7 +46,9 @@ private:
     void position_calendar_window();
     void jump_to_current_date();
 
-    String m_time_format;
+    void update_selected_calendar_button();
+
+    ByteString m_time_format;
     RefPtr<GUI::Window> m_calendar_window;
     RefPtr<GUI::Calendar> m_calendar;
     RefPtr<GUI::Button> m_next_date;
@@ -52,6 +56,7 @@ private:
     RefPtr<GUI::Button> m_selected_calendar_button;
     RefPtr<GUI::Button> m_jump_to_button;
     RefPtr<GUI::Button> m_calendar_launcher;
+    RefPtr<GUI::Menu> m_context_menu;
     RefPtr<Core::Timer> m_timer;
     int m_time_width { 0 };
     Gfx::IntSize m_window_size { 158, 186 };

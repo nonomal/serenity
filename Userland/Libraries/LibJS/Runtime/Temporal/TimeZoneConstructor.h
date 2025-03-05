@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,16 +12,18 @@ namespace JS::Temporal {
 
 class TimeZoneConstructor final : public NativeFunction {
     JS_OBJECT(TimeZoneConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(TimeZoneConstructor);
 
 public:
-    explicit TimeZoneConstructor(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~TimeZoneConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 private:
+    explicit TimeZoneConstructor(Realm&);
+
     virtual bool has_constructor() const override { return true; }
 
     JS_DECLARE_NATIVE_FUNCTION(from);

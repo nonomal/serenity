@@ -13,13 +13,15 @@ namespace JS::Temporal {
 
 class PlainTimePrototype final : public PrototypeObject<PlainTimePrototype, PlainTime> {
     JS_PROTOTYPE_OBJECT(PlainTimePrototype, PlainTime, Temporal.PlainTime);
+    JS_DECLARE_ALLOCATOR(PlainTimePrototype);
 
 public:
-    explicit PlainTimePrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~PlainTimePrototype() override = default;
 
 private:
+    explicit PlainTimePrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(calendar_getter);
     JS_DECLARE_NATIVE_FUNCTION(hour_getter);
     JS_DECLARE_NATIVE_FUNCTION(minute_getter);

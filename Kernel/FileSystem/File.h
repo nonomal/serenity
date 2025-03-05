@@ -6,16 +6,16 @@
 
 #pragma once
 
+#include <AK/AtomicRefCounted.h>
 #include <AK/Error.h>
-#include <AK/NonnullRefPtr.h>
-#include <AK/RefCounted.h>
 #include <AK/StringView.h>
 #include <AK/Types.h>
-#include <AK/Weakable.h>
 #include <Kernel/Forward.h>
+#include <Kernel/Library/LockWeakable.h>
+#include <Kernel/Library/NonnullLockRefPtr.h>
+#include <Kernel/Library/UserOrKernelBuffer.h>
+#include <Kernel/Memory/VirtualAddress.h>
 #include <Kernel/UnixTypes.h>
-#include <Kernel/UserOrKernelBuffer.h>
-#include <Kernel/VirtualAddress.h>
 
 namespace Kernel {
 
@@ -64,17 +64,17 @@ public:
 //   - Can be overridden in subclasses to implement arbitrary functionality.
 //   - Subclasses should take care to validate incoming addresses before dereferencing.
 //
-// mmap()
+// vmobject_and_memory_type_for_mmap()
 //
 //   - Optional. If unimplemented, mmap() on this File will fail with -ENODEV.
 //   - Called by mmap() when userspace wants to memory-map this File somewhere.
-//   - Should create a Region in the Process and return it if successful.
+//   - Should return a VMObject suitable for mapping into the calling process.
 
 class File
-    : public RefCounted<File>
-    , public Weakable<File> {
+    : public AtomicRefCounted<File>
+    , public LockWeakable<File> {
 public:
-    virtual bool unref() const { return RefCounted<File>::unref(); }
+    virtual bool unref() const { return AtomicRefCounted<File>::unref(); }
     virtual void will_be_destroyed() { }
     virtual ~File();
 
@@ -90,16 +90,21 @@ public:
     virtual ErrorOr<size_t> read(OpenFileDescription&, u64, UserOrKernelBuffer&, size_t) = 0;
     virtual ErrorOr<size_t> write(OpenFileDescription&, u64, UserOrKernelBuffer const&, size_t) = 0;
     virtual ErrorOr<void> ioctl(OpenFileDescription&, unsigned request, Userspace<void*> arg);
-    virtual ErrorOr<Memory::Region*> mmap(Process&, OpenFileDescription&, Memory::VirtualRange const&, u64 offset, int prot, bool shared);
     virtual ErrorOr<struct stat> stat() const { return EBADF; }
+
+    struct VMObjectAndMemoryType {
+        NonnullLockRefPtr<Memory::VMObject> vmobject;
+        Memory::MemoryType memory_type;
+    };
+    virtual ErrorOr<VMObjectAndMemoryType> vmobject_and_memory_type_for_mmap(Process&, Memory::VirtualRange const&, u64& offset, bool shared);
 
     // Although this might be better described "name" or "description", these terms already have other meanings.
     virtual ErrorOr<NonnullOwnPtr<KString>> pseudo_path(OpenFileDescription const&) const = 0;
 
     virtual ErrorOr<void> truncate(u64) { return EINVAL; }
     virtual ErrorOr<void> sync() { return EINVAL; }
-    virtual ErrorOr<void> chown(OpenFileDescription&, UserID, GroupID) { return EBADF; }
-    virtual ErrorOr<void> chmod(OpenFileDescription&, mode_t) { return EBADF; }
+    virtual ErrorOr<void> chown(Credentials const&, OpenFileDescription&, UserID, GroupID) { return EBADF; }
+    virtual ErrorOr<void> chmod(Credentials const&, OpenFileDescription&, mode_t) { return EBADF; }
 
     virtual StringView class_name() const = 0;
 
@@ -114,6 +119,10 @@ public:
     virtual bool is_character_device() const { return false; }
     virtual bool is_socket() const { return false; }
     virtual bool is_inode_watcher() const { return false; }
+    virtual bool is_mount_file() const { return false; }
+    virtual bool is_loop_device() const { return false; }
+
+    virtual bool is_regular_file() const { return false; }
 
     virtual FileBlockerSet& blocker_set() { return m_blocker_set; }
 

@@ -24,7 +24,7 @@ void DoubleClickArrowWidget::set_double_click_speed(int speed)
 
 DoubleClickArrowWidget::DoubleClickArrowWidget()
 {
-    m_arrow_bitmap = Gfx::Bitmap::try_load_from_file("/res/graphics/double-click-down-arrow.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_arrow_bitmap = Gfx::Bitmap::load_from_file("/res/graphics/double-click-down-arrow.png"sv).release_value_but_fixme_should_propagate_errors();
 }
 
 void DoubleClickArrowWidget::paint_event(GUI::PaintEvent& event)
@@ -46,8 +46,8 @@ void DoubleClickArrowWidget::paint_event(GUI::PaintEvent& event)
     });
 
     auto text_rect = rect();
-    text_rect.set_y(bottom_arrow_rect.bottom());
-    text_rect.set_height(font().glyph_height());
+    text_rect.set_y(bottom_arrow_rect.bottom() - 1);
+    text_rect.set_height(font().pixel_size_rounded_up());
 }
 
 void DoubleClickArrowWidget::mousedown_event(GUI::MouseEvent&)

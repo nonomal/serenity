@@ -11,7 +11,6 @@
 #include <AK/LexicalPath.h>
 #include <AK/StringView.h>
 #include <LibCore/ConfigFile.h>
-#include <LibCore/File.h>
 #include <LibGUI/AbstractThemePreview.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/Bitmap.h>
@@ -21,12 +20,12 @@ namespace GUI {
 AbstractThemePreview::AbstractThemePreview(Gfx::Palette const& preview_palette)
     : m_preview_palette(preview_palette)
 {
-    m_active_window_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/window.png"sv).release_value_but_fixme_should_propagate_errors();
-    m_inactive_window_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/window.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_active_window_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/window.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_inactive_window_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/window.png"sv).release_value_but_fixme_should_propagate_errors();
 
-    m_default_close_bitmap = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/window-close.png"sv).release_value_but_fixme_should_propagate_errors();
-    m_default_maximize_bitmap = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/upward-triangle.png"sv).release_value_but_fixme_should_propagate_errors();
-    m_default_minimize_bitmap = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/downward-triangle.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_default_close_bitmap = Gfx::Bitmap::load_from_file("/res/icons/16x16/window-close.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_default_maximize_bitmap = Gfx::Bitmap::load_from_file("/res/icons/16x16/upward-triangle.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_default_minimize_bitmap = Gfx::Bitmap::load_from_file("/res/icons/16x16/downward-triangle.png"sv).release_value_but_fixme_should_propagate_errors();
 
     VERIFY(m_active_window_icon);
     VERIFY(m_inactive_window_icon);
@@ -39,14 +38,14 @@ AbstractThemePreview::AbstractThemePreview(Gfx::Palette const& preview_palette)
 
 void AbstractThemePreview::load_theme_bitmaps()
 {
-    auto load_bitmap = [](String const& path, String& last_path, RefPtr<Gfx::Bitmap>& bitmap) {
+    auto load_bitmap = [](ByteString const& path, ByteString& last_path, RefPtr<Gfx::Bitmap>& bitmap) {
         if (path.is_empty()) {
-            last_path = String::empty();
+            last_path = ByteString::empty();
             bitmap = nullptr;
         } else if (last_path != path) {
-            auto bitmap_or_error = Gfx::Bitmap::try_load_from_file(path);
+            auto bitmap_or_error = Gfx::Bitmap::load_from_file(path);
             if (bitmap_or_error.is_error()) {
-                last_path = String::empty();
+                last_path = ByteString::empty();
                 bitmap = nullptr;
             } else {
                 last_path = path;
@@ -68,7 +67,7 @@ void AbstractThemePreview::load_theme_bitmaps()
     load_bitmap(m_preview_palette.tooltip_shadow_path(), m_last_tooltip_shadow_path, m_tooltip_shadow);
 }
 
-void AbstractThemePreview::set_preview_palette(Gfx::Palette const& palette)
+void AbstractThemePreview::set_preview_palette(Gfx::Palette& palette)
 {
     m_preview_palette = palette;
     palette_changed();
@@ -85,31 +84,28 @@ void AbstractThemePreview::set_theme(Core::AnonymousBuffer const& theme_buffer)
     set_preview_palette(m_preview_palette);
 }
 
-void AbstractThemePreview::set_theme_from_file(Core::File& file)
+ErrorOr<void> AbstractThemePreview::set_theme_from_file(StringView path, NonnullOwnPtr<Core::File> file)
 {
-    auto config_file = Core::ConfigFile::open(file.filename(), file.leak_fd()).release_value_but_fixme_should_propagate_errors();
-    auto theme = Gfx::load_system_theme(config_file);
-    VERIFY(theme.is_valid());
+    auto config_file = TRY(Core::ConfigFile::open(path, move(file)));
+    auto theme = TRY(Gfx::load_system_theme(config_file));
 
     m_preview_palette = Gfx::Palette(Gfx::PaletteImpl::create_with_anonymous_buffer(theme));
     set_preview_palette(m_preview_palette);
-    if (on_theme_load_from_file)
-        on_theme_load_from_file(file.filename());
+    return {};
 }
 
 void AbstractThemePreview::paint_window(StringView title, Gfx::IntRect const& rect, Gfx::WindowTheme::WindowState state, Gfx::Bitmap const& icon, int button_count)
 {
-    GUI::Painter painter(*this);
+    GUI::Painter gui_painter(*this);
+
+    auto window_bitmap = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, this->rect().size()).release_value();
+    GUI::Painter painter(window_bitmap);
+    painter.translate(-this->rect().location());
 
     struct Button {
         Gfx::IntRect rect;
         RefPtr<Gfx::Bitmap> bitmap;
     };
-
-    int window_button_width = m_preview_palette.window_title_button_width();
-    int window_button_height = m_preview_palette.window_title_button_height();
-    auto titlebar_text_rect = Gfx::WindowTheme::current().titlebar_text_rect(Gfx::WindowTheme::WindowType::Normal, rect, m_preview_palette);
-    int pos = titlebar_text_rect.right() + 1;
 
     Array possible_buttons {
         Button { {}, m_close_bitmap.is_null() ? m_default_close_bitmap : m_close_bitmap },
@@ -119,14 +115,11 @@ void AbstractThemePreview::paint_window(StringView title, Gfx::IntRect const& re
 
     auto buttons = possible_buttons.span().trim(button_count);
 
-    for (auto& button : buttons) {
-        pos -= window_button_width;
-        Gfx::IntRect button_rect { pos, 0, window_button_width, window_button_height };
-        button_rect.center_vertically_within(titlebar_text_rect);
-        button.rect = button_rect;
-    }
+    int button_idx = 0;
+    for (auto rect : m_preview_palette.window_theme().layout_buttons(Gfx::WindowTheme::WindowType::Normal, Gfx::WindowTheme::WindowMode::Other, rect, m_preview_palette, buttons.size(), false))
+        buttons[button_idx++].rect = rect;
 
-    auto frame_rect = Gfx::WindowTheme::current().frame_rect_for_window(Gfx::WindowTheme::WindowType::Normal, rect, m_preview_palette, 0);
+    auto frame_rect = m_preview_palette.window_theme().frame_rect_for_window(Gfx::WindowTheme::WindowType::Normal, Gfx::WindowTheme::WindowMode::Other, rect, m_preview_palette, 0);
 
     auto paint_shadow = [](Gfx::Painter& painter, Gfx::IntRect& frame_rect, Gfx::Bitmap const& shadow_bitmap) {
         auto total_shadow_size = shadow_bitmap.height();
@@ -142,15 +135,18 @@ void AbstractThemePreview::paint_window(StringView title, Gfx::IntRect const& re
 
     Gfx::PainterStateSaver saver(painter);
     painter.translate(frame_rect.location());
-    Gfx::WindowTheme::current().paint_normal_frame(painter, state, rect, title, icon, m_preview_palette, buttons.last().rect, 0, false);
+    m_preview_palette.window_theme().paint_normal_frame(painter, state, Gfx::WindowTheme::WindowMode::Other, rect, title, icon, m_preview_palette, buttons.last().rect, 0, false);
     painter.fill_rect(rect.translated(-frame_rect.location()), m_preview_palette.color(Gfx::ColorRole::Background));
 
+    auto inactive_button_opacity = m_preview_palette.window_title_button_inactive_alpha() / 255.0f;
     for (auto& button : buttons) {
         if (!m_preview_palette.title_buttons_icon_only())
             Gfx::StylePainter::paint_button(painter, button.rect, m_preview_palette, Gfx::ButtonStyle::Normal, false);
         auto bitmap_rect = button.bitmap->rect().centered_within(button.rect);
-        painter.blit(bitmap_rect.location(), *button.bitmap, button.bitmap->rect());
+        painter.blit(bitmap_rect.location(), *button.bitmap, button.bitmap->rect(), state == Gfx::WindowTheme::WindowState::Inactive ? inactive_button_opacity : 1.0f);
     }
+
+    gui_painter.blit(this->rect().location(), *window_bitmap, window_bitmap->rect());
 }
 
 void AbstractThemePreview::paint_event(GUI::PaintEvent& event)
@@ -170,8 +166,8 @@ void AbstractThemePreview::center_window_group_within(Span<Window> windows, Gfx:
     VERIFY(windows.size() >= 1);
 
     auto to_frame_rect = [&](Gfx::IntRect const& rect) {
-        return Gfx::WindowTheme::current().frame_rect_for_window(
-            Gfx::WindowTheme::WindowType::Normal, rect, m_preview_palette, 0);
+        return m_preview_palette.window_theme().frame_rect_for_window(
+            Gfx::WindowTheme::WindowType::Normal, Gfx::WindowTheme::WindowMode::Other, rect, m_preview_palette, 0);
     };
 
     auto leftmost_x_value = windows[0].rect.x();

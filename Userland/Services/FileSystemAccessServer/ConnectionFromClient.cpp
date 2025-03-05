@@ -4,15 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// FIXME: LibIPC Decoder and Encoder are sensitive to include order here
-// clang-format off
-#include <LibGUI/ConnectionToWindowServer.h>
-// clang-format on
-#include <AK/Debug.h>
 #include <FileSystemAccessServer/ConnectionFromClient.h>
-#include <LibCore/File.h>
-#include <LibCore/IODevice.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibGUI/Application.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/FilePicker.h>
 #include <LibGUI/MessageBox.h>
 
@@ -20,7 +15,7 @@ namespace FileSystemAccessServer {
 
 static HashMap<int, NonnullRefPtr<ConnectionFromClient>> s_connections;
 
-ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket> socket)
     : IPC::ConnectionFromClient<FileSystemAccessClientEndpoint, FileSystemAccessServerEndpoint>(*this, move(socket), 1)
 {
     s_connections.set(1, *this);
@@ -32,51 +27,38 @@ void ConnectionFromClient::die()
     GUI::Application::the()->quit();
 }
 
-RefPtr<GUI::Window> ConnectionFromClient::create_dummy_child_window(i32 window_server_client_id, i32 parent_window_id)
-{
-    auto window = GUI::Window::construct();
-    window->set_opacity(0);
-    window->set_frameless(true);
-    auto rect = GUI::ConnectionToWindowServer::the().get_window_rect_from_client(window_server_client_id, parent_window_id);
-    window->set_rect(rect);
-    window->show();
-    GUI::ConnectionToWindowServer::the().set_window_parent_from_client(window_server_client_id, parent_window_id, window->window_id());
-
-    return window;
-}
-
-void ConnectionFromClient::request_file_handler(i32 request_id, i32 window_server_client_id, i32 parent_window_id, String const& path, Core::OpenMode const& requested_access, ShouldPrompt prompt)
+void ConnectionFromClient::request_file_handler(i32 request_id, i32 window_server_client_id, i32 parent_window_id, ByteString const& path, Core::File::OpenMode requested_access, ShouldPrompt prompt)
 {
     VERIFY(path.starts_with("/"sv));
 
     bool approved = false;
     auto maybe_permissions = m_approved_files.get(path);
 
-    auto relevant_permissions = requested_access & (Core::OpenMode::ReadOnly | Core::OpenMode::WriteOnly);
-    VERIFY(relevant_permissions != Core::OpenMode::NotOpen);
+    auto relevant_permissions = requested_access & (Core::File::OpenMode::Read | Core::File::OpenMode::Write);
+    VERIFY(relevant_permissions != Core::File::OpenMode::NotOpen);
 
     if (maybe_permissions.has_value())
         approved = has_flag(maybe_permissions.value(), relevant_permissions);
 
     if (!approved) {
-        String access_string;
+        ByteString access_string;
 
-        if (has_flag(requested_access, Core::OpenMode::ReadWrite))
+        if (has_flag(requested_access, Core::File::OpenMode::ReadWrite))
             access_string = "read and write";
-        else if (has_flag(requested_access, Core::OpenMode::ReadOnly))
+        else if (has_flag(requested_access, Core::File::OpenMode::Read))
             access_string = "read from";
-        else if (has_flag(requested_access, Core::OpenMode::WriteOnly))
+        else if (has_flag(requested_access, Core::File::OpenMode::Write))
             access_string = "write to";
 
         auto pid = this->socket().peer_pid().release_value_but_fixme_should_propagate_errors();
-        auto exe_link = LexicalPath("/proc").append(String::number(pid)).append("exe"sv).string();
-        auto exe_path = Core::File::real_path_for(exe_link);
-
-        auto main_window = create_dummy_child_window(window_server_client_id, parent_window_id);
+        auto exe_link = LexicalPath("/proc").append(ByteString::number(pid)).append("exe"sv).string();
+        auto exe_path = FileSystem::real_path(exe_link).release_value_but_fixme_should_propagate_errors();
 
         if (prompt == ShouldPrompt::Yes) {
+            VERIFY(window_server_client_id != -1 && parent_window_id != -1);
             auto exe_name = LexicalPath::basename(exe_path);
-            auto result = GUI::MessageBox::show(main_window, String::formatted("Allow {} ({}) to {} \"{}\"?", exe_name, pid, access_string, path), "File Permissions Requested"sv, GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNo);
+            auto text = String::formatted("Allow {} ({}) to {} \"{}\"?", exe_name, pid, access_string, path).release_value_but_fixme_should_propagate_errors();
+            auto result = GUI::MessageBox::try_show({}, window_server_client_id, parent_window_id, text, "File Permissions Requested"sv).release_value_but_fixme_should_propagate_errors();
             approved = result == GUI::MessageBox::ExecResult::Yes;
         } else {
             approved = true;
@@ -97,50 +79,49 @@ void ConnectionFromClient::request_file_handler(i32 request_id, i32 window_serve
 
         if (file.is_error()) {
             dbgln("FileSystemAccessServer: Couldn't open {}, error {}", path, file.error());
-            async_handle_prompt_end(request_id, errno, Optional<IPC::File> {}, path);
+            async_handle_prompt_end(request_id, file.error().code(), Optional<IPC::File> {}, path);
         } else {
-            async_handle_prompt_end(request_id, 0, IPC::File(file.value()->leak_fd(), IPC::File::CloseAfterSending), path);
+            async_handle_prompt_end(request_id, 0, IPC::File::adopt_file(file.release_value()), path);
         }
     } else {
-        async_handle_prompt_end(request_id, -1, Optional<IPC::File> {}, path);
+        async_handle_prompt_end(request_id, EPERM, Optional<IPC::File> {}, path);
     }
 }
 
-void ConnectionFromClient::request_file_read_only_approved(i32 request_id, i32 window_server_client_id, i32 parent_window_id, String const& path)
+void ConnectionFromClient::request_file_read_only_approved(i32 request_id, ByteString const& path)
 {
-    request_file_handler(request_id, window_server_client_id, parent_window_id, path, Core::OpenMode::ReadOnly, ShouldPrompt::No);
+    request_file_handler(request_id, -1, -1, path, Core::File::OpenMode::Read, ShouldPrompt::No);
 }
 
-void ConnectionFromClient::request_file(i32 request_id, i32 window_server_client_id, i32 parent_window_id, String const& path, Core::OpenMode const& requested_access)
+void ConnectionFromClient::request_file(i32 request_id, i32 window_server_client_id, i32 parent_window_id, ByteString const& path, Core::File::OpenMode requested_access)
 {
     request_file_handler(request_id, window_server_client_id, parent_window_id, path, requested_access, ShouldPrompt::Yes);
 }
 
-void ConnectionFromClient::prompt_open_file(i32 request_id, i32 window_server_client_id, i32 parent_window_id, String const& window_title, String const& path_to_view, Core::OpenMode const& requested_access)
+void ConnectionFromClient::prompt_open_file(i32 request_id, i32 window_server_client_id, i32 parent_window_id, ByteString const& window_title, ByteString const& path_to_view, Core::File::OpenMode requested_access, Optional<Vector<GUI::FileTypeFilter>> const& allowed_file_types)
 {
-    auto relevant_permissions = requested_access & (Core::OpenMode::ReadOnly | Core::OpenMode::WriteOnly);
-    VERIFY(relevant_permissions != Core::OpenMode::NotOpen);
+    auto relevant_permissions = requested_access & (Core::File::OpenMode::Read | Core::File::OpenMode::Write);
+    VERIFY(relevant_permissions != Core::File::OpenMode::NotOpen);
 
-    auto main_window = create_dummy_child_window(window_server_client_id, parent_window_id);
+    auto user_picked_file = GUI::FilePicker::get_filepath({}, window_server_client_id, parent_window_id, GUI::FilePicker::Mode::Open, window_title, {}, path_to_view, allowed_file_types).release_value_but_fixme_should_propagate_errors();
+    auto user_picked_file_but_fixme_should_use_string = user_picked_file.has_value() ? user_picked_file.release_value().to_byte_string() : Optional<ByteString> {};
 
-    auto user_picked_file = GUI::FilePicker::get_open_filepath(main_window, window_title, path_to_view);
-
-    prompt_helper(request_id, user_picked_file, requested_access);
+    prompt_helper(request_id, user_picked_file_but_fixme_should_use_string, requested_access);
 }
 
-void ConnectionFromClient::prompt_save_file(i32 request_id, i32 window_server_client_id, i32 parent_window_id, String const& name, String const& ext, String const& path_to_view, Core::OpenMode const& requested_access)
+void ConnectionFromClient::prompt_save_file(i32 request_id, i32 window_server_client_id, i32 parent_window_id, ByteString const& name, ByteString const& ext, ByteString const& path_to_view, Core::File::OpenMode requested_access)
 {
-    auto relevant_permissions = requested_access & (Core::OpenMode::ReadOnly | Core::OpenMode::WriteOnly);
-    VERIFY(relevant_permissions != Core::OpenMode::NotOpen);
+    auto relevant_permissions = requested_access & (Core::File::OpenMode::Read | Core::File::OpenMode::Write);
+    VERIFY(relevant_permissions != Core::File::OpenMode::NotOpen);
 
-    auto main_window = create_dummy_child_window(window_server_client_id, parent_window_id);
+    auto basename = String::formatted("{}.{}", name, ext).release_value_but_fixme_should_propagate_errors();
+    auto user_picked_file = GUI::FilePicker::get_filepath({}, window_server_client_id, parent_window_id, GUI::FilePicker::Mode::Save, {}, basename, path_to_view).release_value_but_fixme_should_propagate_errors();
+    auto user_picked_file_but_fixme_should_use_string = user_picked_file.has_value() ? user_picked_file.release_value().to_byte_string() : Optional<ByteString> {};
 
-    auto user_picked_file = GUI::FilePicker::get_save_filepath(main_window, name, ext, path_to_view);
-
-    prompt_helper(request_id, user_picked_file, requested_access);
+    prompt_helper(request_id, user_picked_file_but_fixme_should_use_string, requested_access);
 }
 
-void ConnectionFromClient::prompt_helper(i32 request_id, Optional<String> const& user_picked_file, Core::OpenMode const& requested_access)
+void ConnectionFromClient::prompt_helper(i32 request_id, Optional<ByteString> const& user_picked_file, Core::File::OpenMode requested_access)
 {
     if (user_picked_file.has_value()) {
         VERIFY(user_picked_file->starts_with("/"sv));
@@ -148,20 +129,19 @@ void ConnectionFromClient::prompt_helper(i32 request_id, Optional<String> const&
 
         if (file.is_error()) {
             dbgln("FileSystemAccessServer: Couldn't open {}, error {}", user_picked_file.value(), file.error());
-
-            async_handle_prompt_end(request_id, errno, Optional<IPC::File> {}, user_picked_file);
+            async_handle_prompt_end(request_id, file.error().code(), Optional<IPC::File> {}, user_picked_file);
         } else {
             auto maybe_permissions = m_approved_files.get(user_picked_file.value());
-            auto new_permissions = requested_access & (Core::OpenMode::ReadOnly | Core::OpenMode::WriteOnly);
+            auto new_permissions = requested_access & (Core::File::OpenMode::Read | Core::File::OpenMode::Write);
             if (maybe_permissions.has_value())
                 new_permissions |= maybe_permissions.value();
 
             m_approved_files.set(user_picked_file.value(), new_permissions);
 
-            async_handle_prompt_end(request_id, 0, IPC::File(file.value()->leak_fd(), IPC::File::CloseAfterSending), user_picked_file);
+            async_handle_prompt_end(request_id, 0, IPC::File::adopt_file(file.release_value()), user_picked_file);
         }
     } else {
-        async_handle_prompt_end(request_id, -1, Optional<IPC::File> {}, Optional<String> {});
+        async_handle_prompt_end(request_id, ECANCELED, Optional<IPC::File> {}, Optional<ByteString> {});
     }
 }
 

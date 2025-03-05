@@ -10,11 +10,11 @@
 #include <AK/OwnPtr.h>
 #include <AK/ScopeGuard.h>
 #include <LibCore/DirIterator.h>
-#include <LibCore/File.h>
 #include <LibCpp/AST.h>
 #include <LibCpp/Lexer.h>
 #include <LibCpp/Parser.h>
 #include <LibCpp/Preprocessor.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibRegex/Regex.h>
 #include <Userland/DevTools/HackStudio/LanguageServers/ConnectionFromClient.h>
 
@@ -25,7 +25,7 @@ CppComprehensionEngine::CppComprehensionEngine(FileDB const& filedb)
 {
 }
 
-CppComprehensionEngine::DocumentData const* CppComprehensionEngine::get_or_create_document_data(String const& file)
+CppComprehensionEngine::DocumentData const* CppComprehensionEngine::get_or_create_document_data(ByteString const& file)
 {
     auto absolute_path = filedb().to_absolute_path(file);
     if (!m_documents.contains(absolute_path)) {
@@ -34,7 +34,7 @@ CppComprehensionEngine::DocumentData const* CppComprehensionEngine::get_or_creat
     return get_document_data(absolute_path);
 }
 
-CppComprehensionEngine::DocumentData const* CppComprehensionEngine::get_document_data(String const& file) const
+CppComprehensionEngine::DocumentData const* CppComprehensionEngine::get_document_data(ByteString const& file) const
 {
     auto absolute_path = filedb().to_absolute_path(file);
     auto document_data = m_documents.get(absolute_path);
@@ -43,7 +43,7 @@ CppComprehensionEngine::DocumentData const* CppComprehensionEngine::get_document
     return document_data.value();
 }
 
-OwnPtr<CppComprehensionEngine::DocumentData> CppComprehensionEngine::create_document_data_for(String const& file)
+OwnPtr<CppComprehensionEngine::DocumentData> CppComprehensionEngine::create_document_data_for(ByteString const& file)
 {
     if (m_unfinished_documents.contains(file)) {
         return {};
@@ -56,12 +56,12 @@ OwnPtr<CppComprehensionEngine::DocumentData> CppComprehensionEngine::create_docu
     return create_document_data(move(document.value()), file);
 }
 
-void CppComprehensionEngine::set_document_data(String const& file, OwnPtr<DocumentData>&& data)
+void CppComprehensionEngine::set_document_data(ByteString const& file, OwnPtr<DocumentData>&& data)
 {
     m_documents.set(filedb().to_absolute_path(file), move(data));
 }
 
-Vector<CodeComprehension::AutocompleteResultEntry> CppComprehensionEngine::get_suggestions(String const& file, const GUI::TextPosition& autocomplete_position)
+Vector<CodeComprehension::AutocompleteResultEntry> CppComprehensionEngine::get_suggestions(ByteString const& file, const GUI::TextPosition& autocomplete_position)
 {
     Cpp::Position position { autocomplete_position.line(), autocomplete_position.column() > 0 ? autocomplete_position.column() - 1 : 0 };
 
@@ -104,7 +104,7 @@ Vector<CodeComprehension::AutocompleteResultEntry> CppComprehensionEngine::get_s
 
 Optional<Vector<CodeComprehension::AutocompleteResultEntry>> CppComprehensionEngine::try_autocomplete_name(DocumentData const& document, ASTNode const& node, Optional<Token> containing_token) const
 {
-    auto partial_text = String::empty();
+    auto partial_text = ByteString::empty();
     if (containing_token.has_value() && containing_token.value().type() != Token::Type::ColonColon) {
         partial_text = containing_token.value().text();
     }
@@ -121,7 +121,7 @@ Optional<Vector<CodeComprehension::AutocompleteResultEntry>> CppComprehensionEng
 
     auto const& parent = static_cast<MemberExpression const&>(*node.parent());
 
-    auto partial_text = String::empty();
+    auto partial_text = ByteString::empty();
     if (containing_token.value().type() != Token::Type::Dot) {
         if (&node != parent.property())
             return {};
@@ -131,7 +131,7 @@ Optional<Vector<CodeComprehension::AutocompleteResultEntry>> CppComprehensionEng
     return autocomplete_property(document, parent, partial_text);
 }
 
-Vector<CodeComprehension::AutocompleteResultEntry> CppComprehensionEngine::autocomplete_name(DocumentData const& document, ASTNode const& node, String const& partial_text) const
+Vector<CodeComprehension::AutocompleteResultEntry> CppComprehensionEngine::autocomplete_name(DocumentData const& document, ASTNode const& node, ByteString const& partial_text) const
 {
     auto reference_scope = scope_of_reference_to_symbol(node);
     auto current_scope = scope_of_node(node);
@@ -199,18 +199,18 @@ Vector<StringView> CppComprehensionEngine::scope_of_reference_to_symbol(ASTNode 
     Vector<StringView> scope_parts;
     for (auto& scope_part : name->scope()) {
         // If the target node is part of a scope reference, we want to end the scope chain before it.
-        if (&scope_part == &node)
+        if (scope_part == &node)
             break;
-        scope_parts.append(scope_part.name());
+        scope_parts.append(scope_part->name());
     }
     return scope_parts;
 }
 
-Vector<CodeComprehension::AutocompleteResultEntry> CppComprehensionEngine::autocomplete_property(DocumentData const& document, MemberExpression const& parent, const String partial_text) const
+Vector<CodeComprehension::AutocompleteResultEntry> CppComprehensionEngine::autocomplete_property(DocumentData const& document, MemberExpression const& parent, ByteString const partial_text) const
 {
     VERIFY(parent.object());
     auto type = type_of(document, *parent.object());
-    if (type.is_null()) {
+    if (type.is_empty()) {
         dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "Could not infer type of object");
         return {};
     }
@@ -233,7 +233,7 @@ bool CppComprehensionEngine::is_property(ASTNode const& node) const
     return parent.property() == &node;
 }
 
-String CppComprehensionEngine::type_of_property(DocumentData const& document, Identifier const& identifier) const
+ByteString CppComprehensionEngine::type_of_property(DocumentData const& document, Identifier const& identifier) const
 {
     auto& parent = verify_cast<MemberExpression>(*identifier.parent());
     VERIFY(parent.object());
@@ -253,23 +253,23 @@ String CppComprehensionEngine::type_of_property(DocumentData const& document, Id
         VERIFY(verify_cast<NamedType>(*type).name());
         if (verify_cast<NamedType>(*type).name())
             return verify_cast<NamedType>(*type).name()->full_name();
-        return String::empty();
+        return ByteString::empty();
     }
     return {};
 }
 
-String CppComprehensionEngine::type_of_variable(Identifier const& identifier) const
+ByteString CppComprehensionEngine::type_of_variable(Identifier const& identifier) const
 {
     ASTNode const* current = &identifier;
     while (current) {
         for (auto& decl : current->declarations()) {
-            if (decl.is_variable_or_parameter_declaration()) {
-                auto& var_or_param = verify_cast<VariableOrParameterDeclaration>(decl);
+            if (decl->is_variable_or_parameter_declaration()) {
+                auto& var_or_param = verify_cast<VariableOrParameterDeclaration>(*decl);
                 if (var_or_param.full_name() == identifier.name() && var_or_param.type()->is_named_type()) {
                     VERIFY(verify_cast<NamedType>(*var_or_param.type()).name());
                     if (verify_cast<NamedType>(*var_or_param.type()).name())
                         return verify_cast<NamedType>(*var_or_param.type()).name()->full_name();
-                    return String::empty();
+                    return ByteString::empty();
                 }
             }
         }
@@ -278,7 +278,7 @@ String CppComprehensionEngine::type_of_variable(Identifier const& identifier) co
     return {};
 }
 
-String CppComprehensionEngine::type_of(DocumentData const& document, Expression const& expression) const
+ByteString CppComprehensionEngine::type_of(DocumentData const& document, Expression const& expression) const
 {
     if (expression.is_member_expression()) {
         auto& member_expression = verify_cast<MemberExpression>(expression);
@@ -304,7 +304,7 @@ String CppComprehensionEngine::type_of(DocumentData const& document, Expression 
     return type_of_variable(*identifier);
 }
 
-Vector<CppComprehensionEngine::Symbol> CppComprehensionEngine::properties_of_type(DocumentData const& document, String const& type) const
+Vector<CppComprehensionEngine::Symbol> CppComprehensionEngine::properties_of_type(DocumentData const& document, ByteString const& type) const
 {
     auto type_symbol = SymbolName::create(type);
     auto decl = find_declaration_of(document, type_symbol);
@@ -326,12 +326,12 @@ Vector<CppComprehensionEngine::Symbol> CppComprehensionEngine::properties_of_typ
         Vector<StringView> scope(type_symbol.scope);
         scope.append(type_symbol.name);
         // FIXME: We don't have to create the Symbol here, it should already exist in the 'm_symbol' table of some DocumentData we already parsed.
-        properties.append(Symbol::create(member.full_name(), scope, member, Symbol::IsLocal::No));
+        properties.append(Symbol::create(member->full_name(), scope, member, Symbol::IsLocal::No));
     }
     return properties;
 }
 
-CppComprehensionEngine::Symbol CppComprehensionEngine::Symbol::create(StringView name, Vector<StringView> const& scope, NonnullRefPtr<Cpp::Declaration> declaration, IsLocal is_local)
+CppComprehensionEngine::Symbol CppComprehensionEngine::Symbol::create(StringView name, Vector<StringView> const& scope, NonnullRefPtr<Cpp::Declaration const> declaration, IsLocal is_local)
 {
     return { { name, scope }, move(declaration), is_local == IsLocal::Yes };
 }
@@ -346,37 +346,37 @@ Vector<CppComprehensionEngine::Symbol> CppComprehensionEngine::get_child_symbols
     Vector<Symbol> symbols;
 
     for (auto& decl : node.declarations()) {
-        symbols.append(Symbol::create(decl.full_name(), scope, decl, is_local));
+        symbols.append(Symbol::create(decl->full_name(), scope, decl, is_local));
 
-        bool should_recurse = decl.is_namespace() || decl.is_struct_or_class() || decl.is_function();
-        bool are_child_symbols_local = decl.is_function();
+        bool should_recurse = decl->is_namespace() || decl->is_struct_or_class() || decl->is_function();
+        bool are_child_symbols_local = decl->is_function();
 
         if (!should_recurse)
             continue;
 
         auto new_scope = scope;
-        new_scope.append(decl.full_name());
+        new_scope.append(decl->full_name());
         symbols.extend(get_child_symbols(decl, new_scope, are_child_symbols_local ? Symbol::IsLocal::Yes : is_local));
     }
 
     return symbols;
 }
 
-String CppComprehensionEngine::document_path_from_include_path(StringView include_path) const
+ByteString CppComprehensionEngine::document_path_from_include_path(StringView include_path) const
 {
     static Regex<PosixExtended> library_include("<(.+)>");
     static Regex<PosixExtended> user_defined_include("\"(.+)\"");
 
-    auto document_path_for_library_include = [&](StringView include_path) -> String {
+    auto document_path_for_library_include = [&](StringView include_path) -> ByteString {
         RegexResult result;
         if (!library_include.search(include_path, result))
             return {};
 
         auto path = result.capture_group_matches.at(0).at(0).view.string_view();
-        return String::formatted("/usr/include/{}", path);
+        return ByteString::formatted("/usr/include/{}", path);
     };
 
-    auto document_path_for_user_defined_include = [&](StringView include_path) -> String {
+    auto document_path_for_user_defined_include = [&](StringView include_path) -> ByteString {
         RegexResult result;
         if (!user_defined_include.search(include_path, result))
             return {};
@@ -385,23 +385,23 @@ String CppComprehensionEngine::document_path_from_include_path(StringView includ
     };
 
     auto result = document_path_for_library_include(include_path);
-    if (result.is_null())
+    if (result.is_empty())
         result = document_path_for_user_defined_include(include_path);
 
     return result;
 }
 
-void CppComprehensionEngine::on_edit(String const& file)
+void CppComprehensionEngine::on_edit(ByteString const& file)
 {
     set_document_data(file, create_document_data_for(file));
 }
 
-void CppComprehensionEngine::file_opened([[maybe_unused]] String const& file)
+void CppComprehensionEngine::file_opened([[maybe_unused]] ByteString const& file)
 {
     get_or_create_document_data(file);
 }
 
-Optional<CodeComprehension::ProjectLocation> CppComprehensionEngine::find_declaration_of(String const& filename, const GUI::TextPosition& identifier_position)
+Optional<CodeComprehension::ProjectLocation> CppComprehensionEngine::find_declaration_of(ByteString const& filename, const GUI::TextPosition& identifier_position)
 {
     auto const* document_ptr = get_or_create_document_data(filename);
     if (!document_ptr)
@@ -416,7 +416,7 @@ Optional<CodeComprehension::ProjectLocation> CppComprehensionEngine::find_declar
     return find_preprocessor_definition(document, identifier_position);
 }
 
-RefPtr<Cpp::Declaration> CppComprehensionEngine::find_declaration_of(DocumentData const& document, const GUI::TextPosition& identifier_position)
+RefPtr<Cpp::Declaration const> CppComprehensionEngine::find_declaration_of(DocumentData const& document, const GUI::TextPosition& identifier_position)
 {
     auto node = document.parser().node_at(Cpp::Position { identifier_position.line(), identifier_position.column() });
     if (!node) {
@@ -456,10 +456,10 @@ struct TargetDeclaration {
         Property,
         Scope
     } type;
-    String name;
+    ByteString name;
 };
 
-static Optional<TargetDeclaration> get_target_declaration(ASTNode const& node, String name);
+static Optional<TargetDeclaration> get_target_declaration(ASTNode const& node, ByteString name);
 static Optional<TargetDeclaration> get_target_declaration(ASTNode const& node)
 {
     if (node.is_identifier()) {
@@ -478,7 +478,7 @@ static Optional<TargetDeclaration> get_target_declaration(ASTNode const& node)
     return {};
 }
 
-static Optional<TargetDeclaration> get_target_declaration(ASTNode const& node, String name)
+static Optional<TargetDeclaration> get_target_declaration(ASTNode const& node, ByteString name)
 {
     if (node.parent() && node.parent()->is_name()) {
         auto& name_node = *verify_cast<Name>(node.parent());
@@ -509,7 +509,7 @@ static Optional<TargetDeclaration> get_target_declaration(ASTNode const& node, S
 
     return TargetDeclaration { TargetDeclaration::Type::Variable, name };
 }
-RefPtr<Cpp::Declaration> CppComprehensionEngine::find_declaration_of(DocumentData const& document_data, ASTNode const& node) const
+RefPtr<Cpp::Declaration const> CppComprehensionEngine::find_declaration_of(DocumentData const& document_data, ASTNode const& node) const
 {
     dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "find_declaration_of: {} ({})", document_data.parser().text_of_node(node), node.class_name());
 
@@ -612,7 +612,7 @@ CodeComprehension::DeclarationType CppComprehensionEngine::type_of_declaration(C
     return CodeComprehension::DeclarationType::Variable;
 }
 
-OwnPtr<CppComprehensionEngine::DocumentData> CppComprehensionEngine::create_document_data(String text, String const& filename)
+OwnPtr<CppComprehensionEngine::DocumentData> CppComprehensionEngine::create_document_data(ByteString text, ByteString const& filename)
 {
     auto document_data = make<DocumentData>();
     document_data->m_filename = filename;
@@ -669,15 +669,15 @@ Vector<StringView> CppComprehensionEngine::scope_of_node(ASTNode const& node) co
     if (!parent->is_declaration())
         return parent_scope;
 
-    auto& parent_decl = static_cast<Cpp::Declaration&>(*parent);
+    auto& parent_decl = static_cast<Cpp::Declaration const&>(*parent);
 
     StringView containing_scope;
     if (parent_decl.is_namespace())
-        containing_scope = static_cast<NamespaceDeclaration&>(parent_decl).full_name();
+        containing_scope = static_cast<NamespaceDeclaration const&>(parent_decl).full_name();
     if (parent_decl.is_struct_or_class())
-        containing_scope = static_cast<StructOrClassDeclaration&>(parent_decl).full_name();
+        containing_scope = static_cast<StructOrClassDeclaration const&>(parent_decl).full_name();
     if (parent_decl.is_function())
-        containing_scope = static_cast<FunctionDeclaration&>(parent_decl).full_name();
+        containing_scope = static_cast<FunctionDeclaration const&>(parent_decl).full_name();
 
     parent_scope.append(containing_scope);
     return parent_scope;
@@ -693,7 +693,7 @@ Optional<Vector<CodeComprehension::AutocompleteResultEntry>> CppComprehensionEng
         System,
     } include_type { Project };
 
-    String include_root;
+    ByteString include_root;
     bool already_has_suffix = false;
     if (partial_include.starts_with('<')) {
         include_root = "/usr/include/";
@@ -703,7 +703,7 @@ Optional<Vector<CodeComprehension::AutocompleteResultEntry>> CppComprehensionEng
             partial_include = partial_include.substring_view(0, partial_include.length() - 1).trim_whitespace();
         }
     } else if (partial_include.starts_with('"')) {
-        include_root = filedb().project_root();
+        include_root = filedb().project_root().value_or("");
         if (partial_include.length() > 1 && partial_include.ends_with('\"')) {
             already_has_suffix = true;
             partial_include = partial_include.substring_view(0, partial_include.length() - 1).trim_whitespace();
@@ -716,7 +716,7 @@ Optional<Vector<CodeComprehension::AutocompleteResultEntry>> CppComprehensionEng
         return {};
 
     auto last_slash = partial_include.find_last('/');
-    auto include_dir = String::empty();
+    auto include_dir = ByteString::empty();
     auto partial_basename = partial_include.substring_view((last_slash.has_value() ? last_slash.value() : 0) + 1);
     if (last_slash.has_value()) {
         include_dir = partial_include.substring_view(1, last_slash.value());
@@ -736,14 +736,14 @@ Optional<Vector<CodeComprehension::AutocompleteResultEntry>> CppComprehensionEng
         if (!path.starts_with(partial_basename))
             continue;
 
-        if (Core::File::is_directory(LexicalPath::join(full_dir, path).string())) {
+        if (FileSystem::is_directory(LexicalPath::join(full_dir, path).string())) {
             // FIXME: Don't dismiss the autocomplete when filling these suggestions.
-            auto completion = String::formatted("{}{}{}/", prefix, include_dir, path);
+            auto completion = ByteString::formatted("{}{}{}/", prefix, include_dir, path);
             options.empend(completion, include_dir.length() + partial_basename.length() + 1, CodeComprehension::Language::Cpp, path, CodeComprehension::AutocompleteResultEntry::HideAutocompleteAfterApplying::No);
         } else if (path.ends_with(".h"sv)) {
             // FIXME: Place the cursor after the trailing > or ", even if it was
             //        already typed.
-            auto completion = String::formatted("{}{}{}{}", prefix, include_dir, path, already_has_suffix ? "" : suffix);
+            auto completion = ByteString::formatted("{}{}{}{}", prefix, include_dir, path, already_has_suffix ? "" : suffix);
             options.empend(completion, include_dir.length() + partial_basename.length() + 1, CodeComprehension::Language::Cpp, path);
         }
     }
@@ -751,9 +751,9 @@ Optional<Vector<CodeComprehension::AutocompleteResultEntry>> CppComprehensionEng
     return options;
 }
 
-RefPtr<Cpp::Declaration> CppComprehensionEngine::find_declaration_of(CppComprehensionEngine::DocumentData const& document, CppComprehensionEngine::SymbolName const& target_symbol_name) const
+RefPtr<Cpp::Declaration const> CppComprehensionEngine::find_declaration_of(CppComprehensionEngine::DocumentData const& document, CppComprehensionEngine::SymbolName const& target_symbol_name) const
 {
-    RefPtr<Cpp::Declaration> target_declaration;
+    RefPtr<Cpp::Declaration const> target_declaration;
     for_each_available_symbol(document, [&](Symbol const& symbol) {
         if (symbol.name == target_symbol_name) {
             target_declaration = symbol.declaration;
@@ -764,17 +764,17 @@ RefPtr<Cpp::Declaration> CppComprehensionEngine::find_declaration_of(CppComprehe
     return target_declaration;
 }
 
-String CppComprehensionEngine::SymbolName::scope_as_string() const
+ByteString CppComprehensionEngine::SymbolName::scope_as_string() const
 {
     if (scope.is_empty())
-        return String::empty();
+        return ByteString::empty();
 
     StringBuilder builder;
     for (size_t i = 0; i < scope.size() - 1; ++i) {
         builder.appendff("{}::", scope[i]);
     }
     builder.append(scope.last());
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
 CppComprehensionEngine::SymbolName CppComprehensionEngine::SymbolName::create(StringView name, Vector<StringView>&& scope)
@@ -790,11 +790,11 @@ CppComprehensionEngine::SymbolName CppComprehensionEngine::SymbolName::create(St
     return SymbolName::create(name, move(parts));
 }
 
-String CppComprehensionEngine::SymbolName::to_string() const
+ByteString CppComprehensionEngine::SymbolName::to_byte_string() const
 {
     if (scope.is_empty())
         return name;
-    return String::formatted("{}::{}", scope_as_string(), name);
+    return ByteString::formatted("{}::{}", scope_as_string(), name);
 }
 
 bool CppComprehensionEngine::is_symbol_available(Symbol const& symbol, Vector<StringView> const& current_scope, Vector<StringView> const& reference_scope)
@@ -818,7 +818,7 @@ bool CppComprehensionEngine::is_symbol_available(Symbol const& symbol, Vector<St
     return true;
 }
 
-Optional<CodeComprehensionEngine::FunctionParamsHint> CppComprehensionEngine::get_function_params_hint(String const& filename, const GUI::TextPosition& identifier_position)
+Optional<CodeComprehensionEngine::FunctionParamsHint> CppComprehensionEngine::get_function_params_hint(ByteString const& filename, const GUI::TextPosition& identifier_position)
 {
     auto const* document_ptr = get_or_create_document_data(filename);
     if (!document_ptr)
@@ -834,7 +834,7 @@ Optional<CodeComprehensionEngine::FunctionParamsHint> CppComprehensionEngine::ge
 
     dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "node type: {}", node->class_name());
 
-    FunctionCall* call_node { nullptr };
+    FunctionCall const* call_node { nullptr };
 
     if (node->is_function_call()) {
         call_node = verify_cast<FunctionCall>(node.ptr());
@@ -864,7 +864,7 @@ Optional<CodeComprehensionEngine::FunctionParamsHint> CppComprehensionEngine::ge
 
     Optional<size_t> invoked_arg_index;
     for (size_t arg_index = 0; arg_index < call_node->arguments().size(); ++arg_index) {
-        if (&call_node->arguments()[arg_index] == node.ptr()) {
+        if (call_node->arguments()[arg_index] == node.ptr()) {
             invoked_arg_index = arg_index;
             break;
         }
@@ -880,7 +880,7 @@ Optional<CodeComprehensionEngine::FunctionParamsHint> CppComprehensionEngine::ge
 
 Optional<CppComprehensionEngine::FunctionParamsHint> CppComprehensionEngine::get_function_params_hint(
     DocumentData const& document,
-    FunctionCall& call_node,
+    FunctionCall const& call_node,
     size_t argument_index)
 {
     Identifier const* callee = nullptr;
@@ -920,16 +920,16 @@ Optional<CppComprehensionEngine::FunctionParamsHint> CppComprehensionEngine::get
     hint.current_index = argument_index;
     for (auto& arg : func_decl.parameters()) {
         Vector<StringView> tokens_text;
-        for (auto token : document_of_declaration->parser().tokens_in_range(arg.start(), arg.end())) {
+        for (auto token : document_of_declaration->parser().tokens_in_range(arg->start(), arg->end())) {
             tokens_text.append(token.text());
         }
-        hint.params.append(String::join(' ', tokens_text));
+        hint.params.append(ByteString::join(' ', tokens_text));
     }
 
     return hint;
 }
 
-Vector<CodeComprehension::TokenInfo> CppComprehensionEngine::get_tokens_info(String const& filename)
+Vector<CodeComprehension::TokenInfo> CppComprehensionEngine::get_tokens_info(ByteString const& filename)
 {
     dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "CppComprehensionEngine::get_tokens_info: {}", filename);
 
@@ -940,12 +940,10 @@ Vector<CodeComprehension::TokenInfo> CppComprehensionEngine::get_tokens_info(Str
     auto const& document = *document_ptr;
 
     Vector<CodeComprehension::TokenInfo> tokens_info;
-    size_t i = 0;
     for (auto const& token : document.preprocessor().unprocessed_tokens()) {
 
         tokens_info.append({ get_token_semantic_type(document, token),
             token.start().line, token.start().column, token.end().line, token.end().column });
-        ++i;
         dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "{}: {}", token.text(), CodeComprehension::TokenInfo::type_to_string(tokens_info.last().type));
     }
     return tokens_info;

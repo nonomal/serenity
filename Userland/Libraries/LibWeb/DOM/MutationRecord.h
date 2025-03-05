@@ -6,33 +6,46 @@
 
 #pragma once
 
-#include <AK/RefCounted.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <AK/FlyString.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::DOM {
 
 // https://dom.spec.whatwg.org/#mutationrecord
-// NOTE: This is implemented as a pure virtual interface with the actual implementation in the CPP file to prevent this circular dependency: Node.h -> MutationRecord.h -> MutationObserver.h -> Node.h
-//       This is also why this uses raw pointers and references, since using (NN)RP requires us to include the templated type, even in a header specifying a function return type.
-class MutationRecord
-    : public RefCounted<MutationRecord>
-    , public Bindings::Wrappable {
+class MutationRecord : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(MutationRecord, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(MutationRecord);
+
 public:
-    using WrapperType = Bindings::MutationRecordWrapper;
+    [[nodiscard]] static JS::NonnullGCPtr<MutationRecord> create(JS::Realm&, FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, Optional<String> const& attribute_name, Optional<String> const& attribute_namespace, Optional<String> const& old_value);
 
-    static NonnullRefPtr<MutationRecord> create(FlyString const& type, Node& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, String const& attribute_name, String const& attribute_namespace, String const& old_value);
+    virtual ~MutationRecord() override;
 
-    virtual ~MutationRecord() override = default;
+    FlyString const& type() const { return m_type; }
+    Node const* target() const { return m_target; }
+    NodeList const* added_nodes() const { return m_added_nodes; }
+    NodeList const* removed_nodes() const { return m_removed_nodes; }
+    Node const* previous_sibling() const { return m_previous_sibling; }
+    Node const* next_sibling() const { return m_next_sibling; }
+    Optional<String> const& attribute_name() const { return m_attribute_name; }
+    Optional<String> const& attribute_namespace() const { return m_attribute_namespace; }
+    Optional<String> const& old_value() const { return m_old_value; }
 
-    virtual FlyString const& type() const = 0;
-    virtual Node const* target() const = 0;
-    virtual NodeList const* added_nodes() const = 0;
-    virtual NodeList const* removed_nodes() const = 0;
-    virtual Node const* previous_sibling() const = 0;
-    virtual Node const* next_sibling() const = 0;
-    virtual String const& attribute_name() const = 0;
-    virtual String const& attribute_namespace() const = 0;
-    virtual String const& old_value() const = 0;
+private:
+    MutationRecord(JS::Realm& realm, FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, Optional<String> const& attribute_name, Optional<String> const& attribute_namespace, Optional<String> const& old_value);
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    FlyString m_type;
+    JS::GCPtr<Node const> m_target;
+    JS::GCPtr<NodeList> m_added_nodes;
+    JS::GCPtr<NodeList> m_removed_nodes;
+    JS::GCPtr<Node> m_previous_sibling;
+    JS::GCPtr<Node> m_next_sibling;
+    Optional<String> m_attribute_name;
+    Optional<String> m_attribute_namespace;
+    Optional<String> m_old_value;
 };
 
 }

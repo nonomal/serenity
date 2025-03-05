@@ -22,50 +22,66 @@
 
 namespace HackStudio {
 
-void DebugInfoWidget::init_toolbar()
+ErrorOr<void> DebugInfoWidget::init_toolbar()
 {
-    m_continue_action = GUI::Action::create("Continue", Gfx::Bitmap::try_load_from_file("/res/icons/16x16/debug-continue.png"sv).release_value_but_fixme_should_propagate_errors(), [](auto&) {
+    m_continue_action = GUI::Action::create("Continue", TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-continue.png"sv)), [](auto&) {
         Debugger::the().set_requested_debugger_action(Debugger::DebuggerAction::Continue);
     });
 
-    m_singlestep_action = GUI::Action::create("Step Over", { Mod_None, Key_F10 }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/debug-step-over.png"sv).release_value_but_fixme_should_propagate_errors(), [](auto&) {
+    m_singlestep_action = GUI::Action::create("Step Over", { Mod_None, Key_F10 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-step-over.png"sv)), [](auto&) {
         Debugger::the().set_requested_debugger_action(Debugger::DebuggerAction::SourceStepOver);
     });
 
-    m_step_in_action = GUI::Action::create("Step In", { Mod_None, Key_F11 }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/debug-step-in.png"sv).release_value_but_fixme_should_propagate_errors(), [](auto&) {
+    m_step_in_action = GUI::Action::create("Step In", { Mod_None, Key_F11 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-step-in.png"sv)), [](auto&) {
         Debugger::the().set_requested_debugger_action(Debugger::DebuggerAction::SourceSingleStep);
     });
 
-    m_step_out_action = GUI::Action::create("Step Out", { Mod_Shift, Key_F11 }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/debug-step-out.png"sv).release_value_but_fixme_should_propagate_errors(), [](auto&) {
+    m_step_out_action = GUI::Action::create("Step Out", { Mod_Shift, Key_F11 }, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-step-out.png"sv)), [](auto&) {
         Debugger::the().set_requested_debugger_action(Debugger::DebuggerAction::SourceStepOut);
+    });
+
+    m_pause_action = GUI::Action::create("Pause", {}, TRY(Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-pause.png"sv)), [](auto&) {
+        Debugger::the().stop_debuggee();
     });
 
     m_toolbar->add_action(*m_continue_action);
     m_toolbar->add_action(*m_singlestep_action);
     m_toolbar->add_action(*m_step_in_action);
     m_toolbar->add_action(*m_step_out_action);
+    m_toolbar->add_action(*m_pause_action);
 
-    set_debug_actions_enabled(false);
+    set_debug_actions_enabled(false, {});
+
+    return {};
+}
+
+ErrorOr<NonnullRefPtr<DebugInfoWidget>> DebugInfoWidget::create()
+{
+    auto debuginfo_widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) DebugInfoWidget));
+
+    auto& toolbar_container = debuginfo_widget->add<GUI::ToolbarContainer>();
+    debuginfo_widget->m_toolbar = toolbar_container.add<GUI::Toolbar>();
+
+    TRY(debuginfo_widget->init_toolbar());
+
+    return debuginfo_widget;
 }
 
 DebugInfoWidget::DebugInfoWidget()
 {
     set_layout<GUI::VerticalBoxLayout>();
-    auto& toolbar_container = add<GUI::ToolbarContainer>();
-    m_toolbar = toolbar_container.add<GUI::Toolbar>();
-    init_toolbar();
     auto& bottom_box = add<GUI::Widget>();
     bottom_box.set_layout<GUI::HorizontalBoxLayout>();
 
     auto& splitter = bottom_box.add<GUI::HorizontalSplitter>();
     m_backtrace_view = splitter.add<GUI::ListView>();
     auto& variables_tab_widget = splitter.add<GUI::TabWidget>();
-    variables_tab_widget.set_tab_position(GUI::TabWidget::TabPosition::Bottom);
+    variables_tab_widget.set_tab_position(TabPosition::Bottom);
     variables_tab_widget.add_widget(build_variables_tab());
     variables_tab_widget.add_widget(build_registers_tab());
 
     m_backtrace_view->on_selection_change = [this] {
-        const auto& index = m_backtrace_view->selection().first();
+        auto const& index = m_backtrace_view->selection().first();
 
         if (!index.is_valid()) {
             return;
@@ -132,7 +148,7 @@ RefPtr<GUI::Menu> DebugInfoWidget::get_context_menu_for_variable(const GUI::Mode
 NonnullRefPtr<GUI::Widget> DebugInfoWidget::build_variables_tab()
 {
     auto variables_widget = GUI::Widget::construct();
-    variables_widget->set_title("Variables");
+    variables_widget->set_title("Variables"_string);
     variables_widget->set_layout<GUI::HorizontalBoxLayout>();
 
     m_variables_view = variables_widget->add<GUI::TreeView>();
@@ -149,7 +165,7 @@ NonnullRefPtr<GUI::Widget> DebugInfoWidget::build_variables_tab()
 NonnullRefPtr<GUI::Widget> DebugInfoWidget::build_registers_tab()
 {
     auto registers_widget = GUI::Widget::construct();
-    registers_widget->set_title("Registers");
+    registers_widget->set_title("Registers"_string);
     registers_widget->set_layout<GUI::HorizontalBoxLayout>();
 
     m_registers_view = registers_widget->add<GUI::TableView>();
@@ -182,12 +198,22 @@ void DebugInfoWidget::program_stopped()
     m_registers_view->set_model({});
 }
 
-void DebugInfoWidget::set_debug_actions_enabled(bool enabled)
+void DebugInfoWidget::set_debug_actions_enabled(bool enabled, Optional<DebugActionsState> state)
 {
-    m_continue_action->set_enabled(enabled);
-    m_singlestep_action->set_enabled(enabled);
-    m_step_in_action->set_enabled(enabled);
-    m_step_out_action->set_enabled(enabled);
+    if (!enabled) {
+        m_continue_action->set_enabled(false);
+        m_singlestep_action->set_enabled(false);
+        m_step_in_action->set_enabled(false);
+        m_step_out_action->set_enabled(false);
+        m_pause_action->set_enabled(false);
+        return;
+    }
+
+    m_continue_action->set_enabled(state == DebugActionsState::DebuggeeStopped);
+    m_singlestep_action->set_enabled(state == DebugActionsState::DebuggeeStopped);
+    m_step_in_action->set_enabled(state == DebugActionsState::DebuggeeStopped);
+    m_step_out_action->set_enabled(state == DebugActionsState::DebuggeeStopped);
+    m_pause_action->set_enabled(state == DebugActionsState::DebuggeeRunning);
 }
 
 }

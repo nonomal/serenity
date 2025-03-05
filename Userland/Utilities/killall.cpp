@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
+#include <AK/CharacterTypes.h>
 #include <LibCore/ProcessStatisticsReader.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
@@ -19,15 +19,14 @@ static void print_usage_and_exit()
     exit(1);
 }
 
-static ErrorOr<int> kill_all(String const& process_name, unsigned const signum)
+static ErrorOr<int> kill_all(StringView process_name, unsigned const signum)
 {
-    auto all_processes = Core::ProcessStatisticsReader::get_all();
-    if (!all_processes.has_value())
-        return 1;
+    auto all_processes = TRY(Core::ProcessStatisticsReader::get_all());
 
-    for (auto& process : all_processes.value().processes) {
+    for (auto& process : all_processes.processes) {
         if (process.name == process_name) {
-            TRY(Core::System::kill(process.pid, signum));
+            if (auto maybe_error = Core::System::kill(process.pid, signum); maybe_error.is_error())
+                warnln("{}", maybe_error.release_error());
         }
     }
 
@@ -50,14 +49,14 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
         Optional<unsigned> number;
 
-        if (isalpha(arguments.argv[1][1])) {
+        if (is_ascii_alpha(arguments.argv[1][1])) {
             int value = getsignalbyname(&arguments.argv[1][1]);
-            if (value >= 0 && value < NSIG)
+            if (value > 0 && value < NSIG)
                 number = value;
         }
 
         if (!number.has_value())
-            number = String(&arguments.argv[1][1]).to_uint();
+            number = arguments.strings[1].substring_view(1).to_number<unsigned>();
 
         if (!number.has_value()) {
             warnln("'{}' is not a valid signal name or number", &arguments.argv[1][1]);

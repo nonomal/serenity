@@ -14,7 +14,7 @@
 #include <LibAudio/Queue.h>
 #include <LibAudio/UserSampleQueue.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibIPC/ConnectionToServer.h>
 #include <LibThreading/Mutex.h>
 #include <LibThreading/Thread.h>
@@ -26,7 +26,7 @@ namespace Audio {
 class ConnectionToServer final
     : public IPC::ConnectionToServer<AudioClientEndpoint, AudioServerEndpoint>
     , public AudioClientEndpoint {
-    IPC_CLIENT_CONNECTION(ConnectionToServer, "/tmp/portal/audio")
+    IPC_CLIENT_CONNECTION(ConnectionToServer, "/tmp/session/%sid/portal/audio"sv)
 public:
     virtual ~ConnectionToServer() override;
 
@@ -36,7 +36,7 @@ public:
     template<ArrayLike<Sample> Samples>
     ErrorOr<void> async_enqueue(Samples&& samples)
     {
-        return async_enqueue(TRY(FixedArray<Sample>::try_create(samples.span())));
+        return async_enqueue(TRY(FixedArray<Sample>::create(samples.span())));
     }
 
     ErrorOr<void> async_enqueue(FixedArray<Sample>&& samples);
@@ -45,6 +45,7 @@ public:
 
     // Returns immediately with the appropriate status if the buffer is full; use in conjunction with remaining_buffers to get low latency.
     ErrorOr<void, AudioQueue::QueueStatus> realtime_enqueue(Array<Sample, AUDIO_BUFFER_SIZE> samples);
+    ErrorOr<void> blocking_realtime_enqueue(Array<Sample, AUDIO_BUFFER_SIZE> samples, Function<void()> wait_function);
 
     // This information can be deducted from the shared audio buffer.
     unsigned total_played_samples() const;
@@ -53,24 +54,23 @@ public:
     // How many buffers (i.e. short sample arrays) the server hasn't played yet.
     // Non-realtime code needn't worry about this.
     size_t remaining_buffers() const;
+    // Whether there is room in the realtime audio queue for another sample buffer.
+    bool can_enqueue() const;
+
+    void set_self_sample_rate(u32 sample_rate);
 
     virtual void die() override;
 
-    Function<void(bool muted)> on_main_mix_muted_state_change;
-    Function<void(double volume)> on_main_mix_volume_change;
     Function<void(double volume)> on_client_volume_change;
 
 private:
-    ConnectionToServer(NonnullOwnPtr<Core::Stream::LocalSocket>);
+    ConnectionToServer(NonnullOwnPtr<Core::LocalSocket>);
 
-    virtual void main_mix_muted_state_changed(bool) override;
-    virtual void main_mix_volume_changed(double) override;
     virtual void client_volume_changed(double) override;
 
     // We use this to perform the audio enqueuing on the background thread's event loop
     virtual void custom_event(Core::CustomEvent&) override;
 
-    // FIXME: This should be called every time the sample rate changes, but we just cautiously call it on every non-realtime enqueue.
     void update_good_sleep_time();
 
     // Shared audio buffer: both server and client constantly read and write to/from this.
@@ -81,9 +81,8 @@ private:
     NonnullOwnPtr<UserSampleQueue> m_user_queue;
 
     NonnullRefPtr<Threading::Thread> m_background_audio_enqueuer;
-    Core::EventLoop* m_enqueuer_loop;
+    Core::EventLoop* m_enqueuer_loop { nullptr };
     Threading::Mutex m_enqueuer_loop_destruction;
-    Atomic<bool> m_audio_enqueuer_active { false };
 
     // A good amount of time to sleep when the queue is full.
     // (Only used for non-realtime enqueues)

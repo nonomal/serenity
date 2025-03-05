@@ -5,11 +5,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(AK_COMPILER_GCC)
 #    pragma GCC optimize("O3")
 #endif
 
 #include <AK/Array.h>
+#include <AK/IntegralMath.h>
 #include <AK/Math.h>
 #include <AK/Vector.h>
 #include <LibGfx/Filters/StackBlurFilter.h>

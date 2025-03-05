@@ -10,18 +10,20 @@
 #include <AK/HashMap.h>
 #include <AK/SourceGenerator.h>
 #include <AK/StringBuilder.h>
+#include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
 #include <LibMain/Main.h>
 #include <ctype.h>
 #include <stdio.h>
 
+namespace {
 struct Parameter {
-    Vector<String> attributes;
-    String type;
-    String name;
+    Vector<ByteString> attributes;
+    ByteString type;
+    ByteString name;
 };
 
-static String pascal_case(String const& identifier)
+static ByteString pascal_case(ByteString const& identifier)
 {
     StringBuilder builder;
     bool was_new_word = true;
@@ -36,37 +38,48 @@ static String pascal_case(String const& identifier)
         } else
             builder.append(ch);
     }
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
 struct Message {
-    String name;
+    ByteString name;
     bool is_synchronous { false };
     Vector<Parameter> inputs;
     Vector<Parameter> outputs;
 
-    String response_name() const
+    ByteString response_name() const
     {
         StringBuilder builder;
         builder.append(pascal_case(name));
         builder.append("Response"sv);
-        return builder.to_string();
+        return builder.to_byte_string();
     }
 };
 
 struct Endpoint {
-    Vector<String> includes;
-    String name;
+    Vector<ByteString> includes;
+    ByteString name;
     u32 magic;
     Vector<Message> messages;
 };
 
-static bool is_primitive_type(String const& type)
+static bool is_primitive_type(ByteString const& type)
 {
-    return type.is_one_of("u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "bool", "double", "float", "int", "unsigned", "unsigned int");
+    return type.is_one_of("u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "size_t", "bool", "double", "float", "int", "unsigned", "unsigned int");
 }
 
-static String message_name(String const& endpoint, String const& message, bool is_response)
+static bool is_simple_type(ByteString const& type)
+{
+    // Small types that it makes sense just to pass by value.
+    return type.is_one_of("AK::CaseSensitivity", "AK::Duration", "Gfx::Color", "Web::DevicePixels", "Gfx::IntPoint", "Gfx::FloatPoint", "Web::DevicePixelPoint", "Gfx::IntSize", "Gfx::FloatSize", "Web::DevicePixelSize", "Core::File::OpenMode", "Web::Cookie::Source", "Web::EventResult", "Web::HTML::AllowMultipleFiles", "Web::HTML::AudioPlayState", "Web::HTML::HistoryHandlingBehavior", "WebView::PageInfoType");
+}
+
+static bool is_primitive_or_simple_type(ByteString const& type)
+{
+    return is_primitive_type(type) || is_simple_type(type);
+}
+
+static ByteString message_name(ByteString const& endpoint, ByteString const& message, bool is_response)
 {
     StringBuilder builder;
     builder.append("Messages::"sv);
@@ -75,7 +88,7 @@ static String message_name(String const& endpoint, String const& message, bool i
     builder.append(pascal_case(message));
     if (is_response)
         builder.append("Response"sv);
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
 Vector<Endpoint> parse(ByteBuffer const& file_contents)
@@ -94,11 +107,42 @@ Vector<Endpoint> parse(ByteBuffer const& file_contents)
     auto consume_whitespace = [&lexer] {
         lexer.ignore_while([](char ch) { return isspace(ch); });
         if (lexer.peek() == '/' && lexer.peek(1) == '/')
-            lexer.ignore_until([](char ch) { return ch == '\n'; });
+            lexer.ignore_until('\n');
     };
 
-    auto parse_parameter = [&](Vector<Parameter>& storage) {
-        for (;;) {
+    auto parse_parameter_type = [&]() {
+        ByteString parameter_type = lexer.consume_until([](char ch) { return ch == '<' || isspace(ch); });
+        if (lexer.peek() == '<') {
+            lexer.consume();
+
+            StringBuilder builder;
+            builder.append(parameter_type);
+            builder.append('<');
+            auto nesting_level = 1;
+            while (nesting_level > 0) {
+                auto inner_type = lexer.consume_until([](char ch) { return ch == '<' || ch == '>'; });
+                if (lexer.is_eof()) {
+                    warnln("Unexpected EOF when parsing parameter type");
+                    VERIFY_NOT_REACHED();
+                }
+                builder.append(inner_type);
+                if (lexer.peek() == '<') {
+                    nesting_level++;
+                } else if (lexer.peek() == '>') {
+                    nesting_level--;
+                }
+
+                builder.append(lexer.consume());
+            }
+
+            parameter_type = builder.to_byte_string();
+        }
+
+        return parameter_type;
+    };
+
+    auto parse_parameter = [&](Vector<Parameter>& storage, StringView message_name) {
+        for (auto parameter_index = 1;; ++parameter_index) {
             Parameter parameter;
             if (lexer.is_eof()) {
                 warnln("EOF when parsing parameter");
@@ -121,9 +165,11 @@ Vector<Endpoint> parse(ByteBuffer const& file_contents)
                     consume_whitespace();
                 }
             }
-            // FIXME: This is not entirely correct. Types can have spaces, for example `HashMap<int, String>`.
-            //        Maybe we should use LibCpp::Parser for parsing types.
-            parameter.type = lexer.consume_until([](char ch) { return isspace(ch); });
+            parameter.type = parse_parameter_type();
+            if (parameter.type.ends_with(',') || parameter.type.ends_with(')')) {
+                warnln("Parameter {} of method: {} must be named", parameter_index, message_name);
+                VERIFY_NOT_REACHED();
+            }
             VERIFY(!lexer.is_eof());
             consume_whitespace();
             parameter.name = lexer.consume_until([](char ch) { return isspace(ch) || ch == ',' || ch == ')'; });
@@ -136,10 +182,10 @@ Vector<Endpoint> parse(ByteBuffer const& file_contents)
         }
     };
 
-    auto parse_parameters = [&](Vector<Parameter>& storage) {
+    auto parse_parameters = [&](Vector<Parameter>& storage, StringView message_name) {
         for (;;) {
             consume_whitespace();
-            parse_parameter(storage);
+            parse_parameter(storage, message_name);
             consume_whitespace();
             if (lexer.consume_specific(','))
                 continue;
@@ -154,7 +200,7 @@ Vector<Endpoint> parse(ByteBuffer const& file_contents)
         message.name = lexer.consume_until([](char ch) { return isspace(ch) || ch == '('; });
         consume_whitespace();
         assert_specific('(');
-        parse_parameters(message.inputs);
+        parse_parameters(message.inputs, message.name);
         assert_specific(')');
         consume_whitespace();
         assert_specific('=');
@@ -171,7 +217,7 @@ Vector<Endpoint> parse(ByteBuffer const& file_contents)
 
         if (message.is_synchronous) {
             assert_specific('(');
-            parse_parameters(message.outputs);
+            parse_parameters(message.outputs, message.name);
             assert_specific(')');
         }
 
@@ -191,7 +237,7 @@ Vector<Endpoint> parse(ByteBuffer const& file_contents)
     };
 
     auto parse_include = [&] {
-        String include;
+        ByteString include;
         consume_whitespace();
         include = lexer.consume_while([](char ch) { return ch != '\n'; });
         consume_whitespace();
@@ -214,10 +260,10 @@ Vector<Endpoint> parse(ByteBuffer const& file_contents)
         consume_whitespace();
         parse_includes();
         consume_whitespace();
-        lexer.consume_specific("endpoint");
+        lexer.consume_specific("endpoint"sv);
         consume_whitespace();
         endpoints.last().name = lexer.consume_while([](char ch) { return !isspace(ch); });
-        endpoints.last().magic = Traits<String>::hash(endpoints.last().name);
+        endpoints.last().magic = Traits<ByteString>::hash(endpoints.last().name);
         consume_whitespace();
         assert_specific('{');
         parse_messages();
@@ -231,22 +277,22 @@ Vector<Endpoint> parse(ByteBuffer const& file_contents)
     return endpoints;
 }
 
-HashMap<String, int> build_message_ids_for_endpoint(SourceGenerator generator, Endpoint const& endpoint)
+HashMap<ByteString, int> build_message_ids_for_endpoint(SourceGenerator generator, Endpoint const& endpoint)
 {
-    HashMap<String, int> message_ids;
+    HashMap<ByteString, int> message_ids;
 
     generator.appendln("\nenum class MessageID : i32 {");
     for (auto const& message : endpoint.messages) {
 
         message_ids.set(message.name, message_ids.size() + 1);
         generator.set("message.pascal_name", pascal_case(message.name));
-        generator.set("message.id", String::number(message_ids.size()));
+        generator.set("message.id", ByteString::number(message_ids.size()));
 
         generator.appendln("    @message.pascal_name@ = @message.id@,");
         if (message.is_synchronous) {
             message_ids.set(message.response_name(), message_ids.size() + 1);
             generator.set("message.pascal_name", pascal_case(message.response_name()));
-            generator.set("message.id", String::number(message_ids.size()));
+            generator.set("message.id", ByteString::number(message_ids.size()));
 
             generator.appendln("    @message.pascal_name@ = @message.id@,");
         }
@@ -255,14 +301,14 @@ HashMap<String, int> build_message_ids_for_endpoint(SourceGenerator generator, E
     return message_ids;
 }
 
-String constructor_for_message(String const& name, Vector<Parameter> const& parameters)
+ByteString constructor_for_message(ByteString const& name, Vector<Parameter> const& parameters)
 {
     StringBuilder builder;
     builder.append(name);
 
     if (parameters.is_empty()) {
         builder.append("() {}"sv);
-        return builder.to_string();
+        return builder.to_byte_string();
     }
     builder.append('(');
     for (size_t i = 0; i < parameters.size(); ++i) {
@@ -279,10 +325,10 @@ String constructor_for_message(String const& name, Vector<Parameter> const& para
             builder.append(", "sv);
     }
     builder.append(" {}"sv);
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
-void do_message(SourceGenerator message_generator, String const& name, Vector<Parameter> const& parameters, String const& response_type = {})
+void do_message(SourceGenerator message_generator, ByteString const& name, Vector<Parameter> const& parameters, ByteString const& response_type = {})
 {
     auto pascal_name = pascal_case(name);
     message_generator.set("message.name", name);
@@ -294,7 +340,7 @@ void do_message(SourceGenerator message_generator, String const& name, Vector<Pa
 class @message.pascal_name@ final : public IPC::Message {
 public:)~~~");
 
-    if (!response_type.is_null())
+    if (!response_type.is_empty())
         message_generator.appendln(R"~~~(
    typedef class @message.response_type@ ResponseType;)~~~");
 
@@ -303,7 +349,23 @@ public:)~~~");
     @message.pascal_name@(@message.pascal_name@ const&) = default;
     @message.pascal_name@(@message.pascal_name@&&) = default;
     @message.pascal_name@& operator=(@message.pascal_name@ const&) = default;
-    @message.constructor@
+    @message.constructor@)~~~");
+
+    if (parameters.size() == 1) {
+        auto const& parameter = parameters[0];
+        message_generator.set("parameter.type"sv, parameter.type);
+        message_generator.set("parameter.name"sv, parameter.name);
+
+        message_generator.appendln(R"~~~(
+    template <typename WrappedReturnType>
+    requires(!SameAs<WrappedReturnType, @parameter.type@>)
+    @message.pascal_name@(WrappedReturnType&& value)
+        : m_@parameter.name@(forward<WrappedReturnType>(value))
+    {
+    })~~~");
+    }
+
+    message_generator.appendln(R"~~~(
     virtual ~@message.pascal_name@() override {}
 
     virtual u32 endpoint_magic() const override { return @endpoint.magic@; }
@@ -311,9 +373,9 @@ public:)~~~");
     static i32 static_message_id() { return (int)MessageID::@message.pascal_name@; }
     virtual const char* message_name() const override { return "@endpoint.name@::@message.pascal_name@"; }
 
-    static OwnPtr<@message.pascal_name@> decode(InputMemoryStream& stream, Core::Stream::LocalSocket& socket)
+    static ErrorOr<NonnullOwnPtr<@message.pascal_name@>> decode(Stream& stream, Queue<IPC::File>& files)
     {
-        IPC::Decoder decoder { stream, socket };)~~~");
+        IPC::Decoder decoder { stream, files };)~~~");
 
     for (auto const& parameter : parameters) {
         auto parameter_generator = message_generator.fork();
@@ -327,14 +389,12 @@ public:)~~~");
             parameter_generator.set("parameter.initial_value", "{}");
 
         parameter_generator.appendln(R"~~~(
-        @parameter.type@ @parameter.name@ = @parameter.initial_value@;
-        if (decoder.decode(@parameter.name@).is_error())
-            return {};)~~~");
+        auto @parameter.name@ = TRY((decoder.decode<@parameter.type@>()));)~~~");
 
         if (parameter.attributes.contains_slow("UTF8")) {
             parameter_generator.appendln(R"~~~(
         if (!Utf8View(@parameter.name@).validate())
-            return {};)~~~");
+            return Error::from_string_literal("Decoded @parameter.name@ is invalid UTF-8");)~~~");
         }
     }
 
@@ -346,8 +406,7 @@ public:)~~~");
             builder.append(", "sv);
     }
 
-    message_generator.set("message.constructor_call_parameters", builder.build());
-
+    message_generator.set("message.constructor_call_parameters", builder.to_byte_string());
     message_generator.appendln(R"~~~(
         return make<@message.pascal_name@>(@message.constructor_call_parameters@);
     })~~~");
@@ -355,21 +414,21 @@ public:)~~~");
     message_generator.appendln(R"~~~(
     virtual bool valid() const override { return m_ipc_message_valid; }
 
-    virtual IPC::MessageBuffer encode() const override
+    virtual ErrorOr<IPC::MessageBuffer> encode() const override
     {
         VERIFY(valid());
 
         IPC::MessageBuffer buffer;
         IPC::Encoder stream(buffer);
-        stream << endpoint_magic();
-        stream << (int)MessageID::@message.pascal_name@;)~~~");
+        TRY(stream.encode(endpoint_magic()));
+        TRY(stream.encode((int)MessageID::@message.pascal_name@));)~~~");
 
     for (auto const& parameter : parameters) {
         auto parameter_generator = message_generator.fork();
 
         parameter_generator.set("parameter.name", parameter.name);
         parameter_generator.appendln(R"~~~(
-        stream << m_@parameter.name@;)~~~");
+        TRY(stream.encode(m_@parameter.name@));)~~~");
     }
 
     message_generator.appendln(R"~~~(
@@ -402,17 +461,17 @@ private:
 
 void do_message_for_proxy(SourceGenerator message_generator, Endpoint const& endpoint, Message const& message)
 {
-    auto do_implement_proxy = [&](String const& name, Vector<Parameter> const& parameters, bool is_synchronous, bool is_try) {
-        String return_type = "void";
+    auto do_implement_proxy = [&](ByteString const& name, Vector<Parameter> const& parameters, bool is_synchronous, bool is_try) {
+        ByteString return_type = "void";
         if (is_synchronous) {
             if (message.outputs.size() == 1)
                 return_type = message.outputs[0].type;
             else if (!message.outputs.is_empty())
                 return_type = message_name(endpoint.name, message.name, true);
         }
-        String inner_return_type = return_type;
+        ByteString inner_return_type = return_type;
         if (is_try)
-            return_type = String::formatted("IPC::IPCErrorOr<{}>", return_type);
+            return_type = ByteString::formatted("IPC::IPCErrorOr<{}>", return_type);
 
         message_generator.set("message.name", message.name);
         message_generator.set("message.pascal_name", pascal_case(message.name));
@@ -461,7 +520,7 @@ void do_message_for_proxy(SourceGenerator message_generator, Endpoint const& end
             auto const& parameter = parameters[i];
             auto argument_generator = message_generator.fork();
             argument_generator.set("argument.name", parameter.name);
-            if (is_primitive_type(parameters[i].type))
+            if (is_primitive_or_simple_type(parameters[i].type))
                 argument_generator.append("@argument.name@");
             else
                 argument_generator.append("move(@argument.name@)");
@@ -484,8 +543,10 @@ void do_message_for_proxy(SourceGenerator message_generator, Endpoint const& end
             message_generator.append(";");
         } else if (is_try) {
             message_generator.append(R"~~~();
-        if (!result)
-            return IPC::ErrorCode::PeerDisconnected;)~~~");
+        if (!result) {
+            m_connection.shutdown();
+            return IPC::ErrorCode::PeerDisconnected;
+        })~~~");
             if (inner_return_type != "void") {
                 message_generator.appendln(R"~~~(
         return move(*result);)~~~");
@@ -511,14 +572,14 @@ void do_message_for_proxy(SourceGenerator message_generator, Endpoint const& end
 void build_endpoint(SourceGenerator generator, Endpoint const& endpoint)
 {
     generator.set("endpoint.name", endpoint.name);
-    generator.set("endpoint.magic", String::number(endpoint.magic));
+    generator.set("endpoint.magic", ByteString::number(endpoint.magic));
 
     generator.appendln("\nnamespace Messages::@endpoint.name@ {");
 
-    HashMap<String, int> message_ids = build_message_ids_for_endpoint(generator.fork(), endpoint);
+    HashMap<ByteString, int> message_ids = build_message_ids_for_endpoint(generator.fork(), endpoint);
 
     for (auto const& message : endpoint.messages) {
-        String response_name;
+        ByteString response_name;
         if (message.is_synchronous) {
             response_name = message.response_name();
             do_message(generator.fork(), response_name, message.outputs);
@@ -547,7 +608,7 @@ private:
     IPC::Connection<LocalEndpoint, PeerEndpoint>& m_connection;
 };)~~~");
 
-    generator.appendln(R"~~~(
+    generator.append(R"~~~(
 template<typename LocalEndpoint, typename PeerEndpoint>
 class @endpoint.name@Proxy;
 class @endpoint.name@Stub;
@@ -560,54 +621,36 @@ public:
 
     static u32 static_magic() { return @endpoint.magic@; }
 
-    static OwnPtr<IPC::Message> decode_message(ReadonlyBytes buffer, [[maybe_unused]] Core::Stream::LocalSocket& socket)
+    static ErrorOr<NonnullOwnPtr<IPC::Message>> decode_message(ReadonlyBytes buffer, [[maybe_unused]] Queue<IPC::File>& files)
     {
-        InputMemoryStream stream { buffer };
-        u32 message_endpoint_magic = 0;
-        stream >> message_endpoint_magic;
-        if (stream.handle_any_error()) {)~~~");
-    if constexpr (GENERATE_DEBUG) {
-        generator.appendln(R"~~~(
-                dbgln(\"Failed to read message endpoint magic\"))~~~");
-    }
-    generator.appendln(R"~~~(
-            return {};
-        }
+        FixedMemoryStream stream { buffer };
+        auto message_endpoint_magic = TRY(stream.read_value<u32>());)~~~");
+    generator.append(R"~~~(
 
         if (message_endpoint_magic != @endpoint.magic@) {)~~~");
     if constexpr (GENERATE_DEBUG) {
-        generator.appendln(R"~~~(
-                dbgln(\"@endpoint.name@: Endpoint magic number message_endpoint_magic != @endpoint.magic@, not my message! (the other endpoint may have handled it)\"))~~~");
+        generator.append(R"~~~(
+            dbgln("@endpoint.name@: Endpoint magic number message_endpoint_magic != @endpoint.magic@, not my message! (the other endpoint may have handled it)");)~~~");
     }
     generator.appendln(R"~~~(
-            return {};
+            return Error::from_string_literal("Endpoint magic number mismatch, not my message!");
         }
 
-        i32 message_id = 0;
-        stream >> message_id;
-        if (stream.handle_any_error()) {)~~~");
-    if constexpr (GENERATE_DEBUG) {
-        generator.appendln(R"~~~(
-                dbgln(\"Failed to read message ID\"))~~~");
-    }
+        auto message_id = TRY(stream.read_value<i32>());)~~~");
     generator.appendln(R"~~~(
-            return {};
-        }
 
-        OwnPtr<IPC::Message> message;
         switch (message_id) {)~~~");
 
     for (auto const& message : endpoint.messages) {
-        auto do_decode_message = [&](String const& name) {
+        auto do_decode_message = [&](ByteString const& name) {
             auto message_generator = generator.fork();
 
             message_generator.set("message.name", name);
             message_generator.set("message.pascal_name", pascal_case(name));
 
-            message_generator.appendln(R"~~~(
+            message_generator.append(R"~~~(
         case (int)Messages::@endpoint.name@::MessageID::@message.pascal_name@:
-            message = Messages::@endpoint.name@::@message.pascal_name@::decode(stream, socket);
-            break;)~~~");
+            return TRY(Messages::@endpoint.name@::@message.pascal_name@::decode(stream, files));)~~~");
         };
 
         do_decode_message(message.name);
@@ -615,26 +658,18 @@ public:
             do_decode_message(message.response_name());
     }
 
-    generator.appendln(R"~~~(
+    generator.append(R"~~~(
         default:)~~~");
     if constexpr (GENERATE_DEBUG) {
-        generator.appendln(R"~~~(
-                dbgln(\"Failed to decode @endpoint.name@.({})\", message_id))~~~");
+        generator.append(R"~~~(
+            dbgln("Failed to decode @endpoint.name@.({})", message_id);)~~~");
     }
     generator.appendln(R"~~~(
-            return {};
-        }
+            return Error::from_string_literal("Failed to decode @endpoint.name@ message");
+        })~~~");
 
-        if (stream.handle_any_error()) {)~~~");
-    if constexpr (GENERATE_DEBUG) {
-        generator.appendln(R"~~~(
-                dbgln(\"Failed to read the message\");)~~~");
-    }
     generator.appendln(R"~~~(
-            return {};
-        }
-
-        return message;
+        VERIFY_NOT_REACHED();
     }
 
 };
@@ -645,13 +680,13 @@ public:
     virtual ~@endpoint.name@Stub() override { }
 
     virtual u32 magic() const override { return @endpoint.magic@; }
-    virtual String name() const override { return "@endpoint.name@"; }
+    virtual ByteString name() const override { return "@endpoint.name@"; }
 
-    virtual OwnPtr<IPC::MessageBuffer> handle(const IPC::Message& message) override
+    virtual ErrorOr<OwnPtr<IPC::MessageBuffer>> handle(const IPC::Message& message) override
     {
         switch (message.message_id()) {)~~~");
     for (auto const& message : endpoint.messages) {
-        auto do_handle_message = [&](String const& name, Vector<Parameter> const& parameters, bool returns_something) {
+        auto do_handle_message = [&](ByteString const& name, Vector<Parameter> const& parameters, bool returns_something) {
             auto message_generator = generator.fork();
 
             StringBuilder argument_generator;
@@ -667,7 +702,7 @@ public:
             message_generator.set("message.pascal_name", pascal_case(name));
             message_generator.set("message.response_type", pascal_case(message.response_name()));
             message_generator.set("handler_name", name);
-            message_generator.set("arguments", argument_generator.to_string());
+            message_generator.set("arguments", argument_generator.to_byte_string());
             message_generator.appendln(R"~~~(
         case (int)Messages::@endpoint.name@::MessageID::@message.pascal_name@: {)~~~");
             if (returns_something) {
@@ -676,20 +711,20 @@ public:
             [[maybe_unused]] auto& request = static_cast<const Messages::@endpoint.name@::@message.pascal_name@&>(message);
             @handler_name@(@arguments@);
             auto response = Messages::@endpoint.name@::@message.response_type@ { };
-            return make<IPC::MessageBuffer>(response.encode());)~~~");
+            return make<IPC::MessageBuffer>(TRY(response.encode()));)~~~");
                 } else {
                     message_generator.appendln(R"~~~(
             [[maybe_unused]] auto& request = static_cast<const Messages::@endpoint.name@::@message.pascal_name@&>(message);
             auto response = @handler_name@(@arguments@);
             if (!response.valid())
-                return {};
-            return make<IPC::MessageBuffer>(response.encode());)~~~");
+                return Error::from_string_literal("Failed to handle @endpoint.name@::@message.pascal_name@ message");
+            return make<IPC::MessageBuffer>(TRY(response.encode()));)~~~");
                 }
             } else {
                 message_generator.appendln(R"~~~(
             [[maybe_unused]] auto& request = static_cast<const Messages::@endpoint.name@::@message.pascal_name@&>(message);
             @handler_name@(@arguments@);
-            return {};)~~~");
+            return nullptr;)~~~");
             }
             message_generator.appendln(R"~~~(
         })~~~");
@@ -698,15 +733,15 @@ public:
     }
     generator.appendln(R"~~~(
         default:
-            return {};
+            return Error::from_string_literal("Unknown message ID for @endpoint.name@ endpoint");
         }
     })~~~");
 
     for (auto const& message : endpoint.messages) {
         auto message_generator = generator.fork();
 
-        auto do_handle_message_decl = [&](String const& name, Vector<Parameter> const& parameters, bool is_response) {
-            String return_type = "void";
+        auto do_handle_message_decl = [&](ByteString const& name, Vector<Parameter> const& parameters, bool is_response) {
+            ByteString return_type = "void";
             if (message.is_synchronous && !message.outputs.is_empty() && !is_response)
                 return_type = message_name(endpoint.name, message.name, true);
             message_generator.set("message.complex_return_type", return_type);
@@ -715,16 +750,16 @@ public:
             message_generator.appendln(R"~~~(
     virtual @message.complex_return_type@ @handler_name@()~~~");
 
-            auto make_argument_type = [](String const& type) {
+            auto make_argument_type = [](ByteString const& type) {
                 StringBuilder builder;
 
-                bool const_ref = !is_primitive_type(type);
+                bool const_ref = !is_primitive_or_simple_type(type);
 
                 builder.append(type);
                 if (const_ref)
                     builder.append(" const&"sv);
 
-                return builder.to_string();
+                return builder.to_byte_string();
             };
 
             for (size_t i = 0; i < parameters.size(); ++i) {
@@ -751,7 +786,7 @@ public:
 private:
 };
 
-#ifdef __clang__
+#if defined(AK_COMPILER_CLANG)
 #pragma clang diagnostic pop
 #endif)~~~");
 }
@@ -769,19 +804,19 @@ void build(StringBuilder& builder, Vector<Endpoint> const& endpoints)
         }
     }
 
-    generator.appendln(R"~~~(#include <AK/MemoryStream.h>
+    generator.appendln(R"~~~(#include <AK/Error.h>
+#include <AK/MemoryStream.h>
 #include <AK/OwnPtr.h>
 #include <AK/Result.h>
 #include <AK/Utf8View.h>
 #include <LibIPC/Connection.h>
 #include <LibIPC/Decoder.h>
-#include <LibIPC/Dictionary.h>
 #include <LibIPC/Encoder.h>
 #include <LibIPC/File.h>
 #include <LibIPC/Message.h>
 #include <LibIPC/Stub.h>
 
-#ifdef __clang__
+#if defined(AK_COMPILER_CLANG)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdefaulted-function-deleted"
 #endif)~~~");
@@ -789,24 +824,30 @@ void build(StringBuilder& builder, Vector<Endpoint> const& endpoints)
     for (auto const& endpoint : endpoints)
         build_endpoint(generator.fork(), endpoint);
 }
+} // end anonymous namespace
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (arguments.argc != 2) {
-        outln("usage: {} <IPC endpoint definition file>", arguments.strings[0]);
-        return 1;
-    }
+    StringView ipc_file;
+    StringView output_file = "-"sv;
 
-    auto file = TRY(Core::File::open(arguments.strings[1], Core::OpenMode::ReadOnly));
+    Core::ArgsParser parser;
+    parser.add_positional_argument(ipc_file, "IPC endpoint definition file", "input");
+    parser.add_option(output_file, "Place to write file", "output", 'o', "output-file");
+    parser.parse(arguments);
 
-    auto file_contents = file->read_all();
+    auto output = TRY(Core::File::open_file_or_standard_stream(output_file, Core::File::OpenMode::Write));
+
+    auto file = TRY(Core::File::open(ipc_file, Core::File::OpenMode::Read));
+
+    auto file_contents = TRY(file->read_until_eof());
 
     auto endpoints = parse(file_contents);
 
     StringBuilder builder;
     build(builder, endpoints);
 
-    outln("{}", builder.string_view());
+    TRY(output->write_until_depleted(builder.string_view().bytes()));
 
     if constexpr (GENERATE_DEBUG) {
         for (auto& endpoint : endpoints) {

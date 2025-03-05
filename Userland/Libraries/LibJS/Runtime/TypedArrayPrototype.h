@@ -13,13 +13,15 @@ namespace JS {
 
 class TypedArrayPrototype final : public Object {
     JS_OBJECT(TypedArrayPrototype, Object);
+    JS_DECLARE_ALLOCATOR(TypedArrayPrototype);
 
 public:
-    explicit TypedArrayPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~TypedArrayPrototype() override = default;
 
 private:
+    explicit TypedArrayPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(buffer_getter);
     JS_DECLARE_NATIVE_FUNCTION(byte_length_getter);
     JS_DECLARE_NATIVE_FUNCTION(byte_offset_getter);
@@ -53,7 +55,7 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(to_locale_string);
     JS_DECLARE_NATIVE_FUNCTION(to_reversed);
     JS_DECLARE_NATIVE_FUNCTION(to_sorted);
-    JS_DECLARE_NATIVE_FUNCTION(to_spliced);
+    JS_DECLARE_NATIVE_FUNCTION(with);
     JS_DECLARE_NATIVE_FUNCTION(values);
     JS_DECLARE_NATIVE_FUNCTION(to_string_tag_getter);
 };

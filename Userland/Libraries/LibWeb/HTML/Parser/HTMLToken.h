@@ -10,7 +10,6 @@
 #include <AK/FlyString.h>
 #include <AK/Function.h>
 #include <AK/OwnPtr.h>
-#include <AK/String.h>
 #include <AK/Types.h>
 #include <AK/Variant.h>
 #include <AK/Vector.h>
@@ -21,6 +20,7 @@ class HTMLTokenizer;
 
 class HTMLToken {
     AK_MAKE_NONCOPYABLE(HTMLToken);
+    AK_MAKE_DEFAULT_MOVABLE(HTMLToken);
 
 public:
     enum class Type : u8 {
@@ -36,13 +36,14 @@ public:
     struct Position {
         size_t line { 0 };
         size_t column { 0 };
+        size_t byte_offset { 0 };
     };
 
     struct Attribute {
-        String prefix;
-        String local_name { "" };
-        String namespace_;
-        String value { "" };
+        Optional<FlyString> prefix;
+        FlyString local_name;
+        Optional<FlyString> namespace_;
+        String value;
         Position name_start_position;
         Position value_start_position;
         Position name_end_position;
@@ -95,9 +96,6 @@ public:
         }
     }
 
-    HTMLToken(HTMLToken&&) = default;
-    HTMLToken& operator=(HTMLToken&&) = default;
-
     bool is_doctype() const { return m_type == Type::DOCTYPE; }
     bool is_start_tag() const { return m_type == Type::StartTag; }
     bool is_end_tag() const { return m_type == Type::EndTag; }
@@ -137,22 +135,22 @@ public:
     String const& comment() const
     {
         VERIFY(is_comment());
-        return m_string_data;
+        return m_comment_data;
     }
 
     void set_comment(String comment)
     {
         VERIFY(is_comment());
-        m_string_data = move(comment);
+        m_comment_data = move(comment);
     }
 
-    String const& tag_name() const
+    FlyString const& tag_name() const
     {
         VERIFY(is_start_tag() || is_end_tag());
         return m_string_data;
     }
 
-    void set_tag_name(String name)
+    void set_tag_name(FlyString name)
     {
         VERIFY(is_start_tag() || is_end_tag());
         m_string_data = move(name);
@@ -247,23 +245,30 @@ public:
         }
     }
 
-    StringView attribute(FlyString const& attribute_name)
+    Optional<String> attribute(FlyString const& attribute_name) const
+    {
+        if (auto result = raw_attribute(attribute_name); result.has_value())
+            return result->value;
+        return {};
+    }
+
+    Optional<Attribute const&> raw_attribute(FlyString const& attribute_name) const
     {
         VERIFY(is_start_tag() || is_end_tag());
 
         auto* ptr = tag_attributes();
         if (!ptr)
             return {};
-        for (auto& attribute : *ptr) {
+        for (auto const& attribute : *ptr) {
             if (attribute_name == attribute.local_name)
-                return attribute.value;
+                return attribute;
         }
         return {};
     }
 
-    bool has_attribute(FlyString const& attribute_name)
+    bool has_attribute(FlyString const& attribute_name) const
     {
-        return !attribute(attribute_name).is_null();
+        return attribute(attribute_name).has_value();
     }
 
     void adjust_tag_name(FlyString const& old_name, FlyString const& new_name)
@@ -283,7 +288,7 @@ public:
         });
     }
 
-    void adjust_foreign_attribute(FlyString const& old_name, FlyString const& prefix, FlyString const& local_name, FlyString const& namespace_)
+    void adjust_foreign_attribute(FlyString const& old_name, Optional<FlyString> const& prefix, FlyString const& local_name, Optional<FlyString> const& namespace_)
     {
         VERIFY(is_start_tag() || is_end_tag());
         for_each_attribute([&](Attribute& attribute) {
@@ -323,6 +328,8 @@ public:
     void set_start_position(Badge<HTMLTokenizer>, Position start_position) { m_start_position = start_position; }
     void set_end_position(Badge<HTMLTokenizer>, Position end_position) { m_end_position = end_position; }
 
+    void normalize_attributes();
+
 private:
     Vector<Attribute> const* tag_attributes() const
     {
@@ -349,8 +356,11 @@ private:
     bool m_tag_self_closing { false };
     bool m_tag_self_closing_acknowledged { false };
 
-    // Type::Comment (comment data), Type::StartTag and Type::EndTag (tag name)
-    String m_string_data;
+    // Type::StartTag and Type::EndTag (tag name)
+    FlyString m_string_data;
+
+    // Type::Comment (comment data)
+    String m_comment_data;
 
     Variant<Empty, u32, OwnPtr<DoctypeData>, OwnPtr<Vector<Attribute>>> m_data {};
 

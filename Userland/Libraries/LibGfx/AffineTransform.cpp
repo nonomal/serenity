@@ -4,22 +4,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Math.h>
 #include <AK/Optional.h>
 #include <LibGfx/AffineTransform.h>
 #include <LibGfx/Quad.h>
 #include <LibGfx/Rect.h>
 
 namespace Gfx {
-
-bool AffineTransform::is_identity() const
-{
-    return m_values[0] == 1 && m_values[1] == 0 && m_values[2] == 0 && m_values[3] == 1 && m_values[4] == 0 && m_values[5] == 0;
-}
-
-bool AffineTransform::is_identity_or_translation() const
-{
-    return a() == 1 && b() == 0 && c() == 0 && d() == 1;
-}
 
 float AffineTransform::x_scale() const
 {
@@ -60,7 +51,7 @@ AffineTransform& AffineTransform::scale(float sx, float sy)
     return *this;
 }
 
-AffineTransform& AffineTransform::scale(FloatPoint const& s)
+AffineTransform& AffineTransform::scale(FloatPoint s)
 {
     return scale(s.x(), s.y());
 }
@@ -74,19 +65,31 @@ AffineTransform& AffineTransform::set_scale(float sx, float sy)
     return *this;
 }
 
-AffineTransform& AffineTransform::set_scale(FloatPoint const& s)
+AffineTransform& AffineTransform::set_scale(FloatPoint s)
 {
     return set_scale(s.x(), s.y());
 }
 
+AffineTransform& AffineTransform::skew_radians(float x_radians, float y_radians)
+{
+    AffineTransform skew_transform(1, AK::tan(y_radians), AK::tan(x_radians), 1, 0, 0);
+    multiply(skew_transform);
+    return *this;
+}
+
 AffineTransform& AffineTransform::translate(float tx, float ty)
 {
+    if (is_identity_or_translation()) {
+        m_values[4] += tx;
+        m_values[5] += ty;
+        return *this;
+    }
     m_values[4] += tx * m_values[0] + ty * m_values[2];
     m_values[5] += tx * m_values[1] + ty * m_values[3];
     return *this;
 }
 
-AffineTransform& AffineTransform::translate(FloatPoint const& t)
+AffineTransform& AffineTransform::translate(FloatPoint t)
 {
     return translate(t.x(), t.y());
 }
@@ -98,13 +101,15 @@ AffineTransform& AffineTransform::set_translation(float tx, float ty)
     return *this;
 }
 
-AffineTransform& AffineTransform::set_translation(FloatPoint const& t)
+AffineTransform& AffineTransform::set_translation(FloatPoint t)
 {
     return set_translation(t.x(), t.y());
 }
 
 AffineTransform& AffineTransform::multiply(AffineTransform const& other)
 {
+    if (other.is_identity())
+        return *this;
     AffineTransform result;
     result.m_values[0] = other.a() * a() + other.b() * c();
     result.m_values[1] = other.a() * b() + other.b() * d();
@@ -126,18 +131,23 @@ AffineTransform& AffineTransform::rotate_radians(float radians)
     return *this;
 }
 
+float AffineTransform::determinant() const
+{
+    return a() * d() - b() * c();
+}
+
 Optional<AffineTransform> AffineTransform::inverse() const
 {
-    auto determinant = a() * d() - b() * c();
-    if (determinant == 0)
+    auto det = determinant();
+    if (det == 0)
         return {};
     return AffineTransform {
-        d() / determinant,
-        -b() / determinant,
-        -c() / determinant,
-        a() / determinant,
-        (c() * f() - d() * e()) / determinant,
-        (b() * e() - a() * f()) / determinant,
+        d() / det,
+        -b() / det,
+        -c() / det,
+        a() / det,
+        (c() * f() - d() * e()) / det,
+        (b() * e() - a() * f()) / det,
     };
 }
 
@@ -148,7 +158,7 @@ void AffineTransform::map(float unmapped_x, float unmapped_y, float& mapped_x, f
 }
 
 template<>
-IntPoint AffineTransform::map(IntPoint const& point) const
+IntPoint AffineTransform::map(IntPoint point) const
 {
     float mapped_x;
     float mapped_y;
@@ -157,7 +167,7 @@ IntPoint AffineTransform::map(IntPoint const& point) const
 }
 
 template<>
-FloatPoint AffineTransform::map(FloatPoint const& point) const
+FloatPoint AffineTransform::map(FloatPoint point) const
 {
     float mapped_x;
     float mapped_y;
@@ -166,7 +176,7 @@ FloatPoint AffineTransform::map(FloatPoint const& point) const
 }
 
 template<>
-IntSize AffineTransform::map(IntSize const& size) const
+IntSize AffineTransform::map(IntSize size) const
 {
     return {
         round_to<int>(static_cast<float>(size.width()) * x_scale()),
@@ -175,7 +185,7 @@ IntSize AffineTransform::map(IntSize const& size) const
 }
 
 template<>
-FloatSize AffineTransform::map(FloatSize const& size) const
+FloatSize AffineTransform::map(FloatSize size) const
 {
     return { size.width() * x_scale(), size.height() * y_scale() };
 }
@@ -195,10 +205,16 @@ static T largest_of(T p1, T p2, T p3, T p4)
 template<>
 FloatRect AffineTransform::map(FloatRect const& rect) const
 {
+    if (is_identity()) {
+        return rect;
+    }
+    if (is_identity_or_translation()) {
+        return rect.translated(e(), f());
+    }
     FloatPoint p1 = map(rect.top_left());
-    FloatPoint p2 = map(rect.top_right().translated(1, 0));
-    FloatPoint p3 = map(rect.bottom_right().translated(1, 1));
-    FloatPoint p4 = map(rect.bottom_left().translated(0, 1));
+    FloatPoint p2 = map(rect.top_right());
+    FloatPoint p3 = map(rect.bottom_right());
+    FloatPoint p4 = map(rect.bottom_left());
     float left = smallest_of(p1.x(), p2.x(), p3.x(), p4.x());
     float top = smallest_of(p1.y(), p2.y(), p3.y(), p4.y());
     float right = largest_of(p1.x(), p2.x(), p3.x(), p4.x());
@@ -220,6 +236,16 @@ Quad<float> AffineTransform::map_to_quad(Rect<float> const& rect) const
         map(rect.bottom_right()),
         map(rect.bottom_left()),
     };
+}
+
+float AffineTransform::rotation() const
+{
+    auto rotation = AK::atan2(b(), a());
+    while (rotation < -AK::Pi<float>)
+        rotation += 2.0f * AK::Pi<float>;
+    while (rotation > AK::Pi<float>)
+        rotation -= 2.0f * AK::Pi<float>;
+    return rotation;
 }
 
 }

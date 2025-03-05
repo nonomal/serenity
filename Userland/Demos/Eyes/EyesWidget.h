@@ -18,6 +18,15 @@ class EyesWidget final : public GUI::Widget
 public:
     virtual ~EyesWidget() override = default;
 
+    Function<void(GUI::ContextMenuEvent&)> on_context_menu_request;
+
+protected:
+    virtual void context_menu_event(GUI::ContextMenuEvent& event) override
+    {
+        if (on_context_menu_request)
+            on_context_menu_request(event);
+    }
+
 private:
     EyesWidget(int num_eyes, int full_rows, int extra)
         : m_full_rows(full_rows)
@@ -28,7 +37,7 @@ private:
     }
 
     virtual void paint_event(GUI::PaintEvent&) override;
-    virtual void track_mouse_move(Gfx::IntPoint const&) override;
+    virtual void track_mouse_move(Gfx::IntPoint) override;
 
     void render_eyeball(int row, int column, Gfx::AntiAliasingPainter& aa_painter) const;
     Gfx::IntPoint pupil_center(Gfx::IntRect& eyeball_bounds) const;

@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +9,6 @@
 #pragma once
 
 #include <AK/HashTable.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/RefCounted.h>
@@ -17,25 +17,24 @@
 #include <LibCore/Forward.h>
 #include <LibGUI/Command.h>
 #include <LibGUI/Forward.h>
+#include <LibGUI/TextPosition.h>
 #include <LibGUI/TextRange.h>
 #include <LibGUI/UndoStack.h>
 #include <LibGUI/Widget.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/TextAttributes.h>
 #include <LibRegex/Regex.h>
+#include <LibSyntax/Document.h>
 
 namespace GUI {
 
-constexpr Time COMMAND_COMMIT_TIME = Time::from_milliseconds(400);
+using TextDocumentSpan = Syntax::TextDocumentSpan;
+using TextDocumentFoldingRegion = Syntax::TextDocumentFoldingRegion;
+using TextDocumentLine = Syntax::TextDocumentLine;
 
-struct TextDocumentSpan {
-    TextRange range;
-    Gfx::TextAttributes attributes;
-    u64 data { 0 };
-    bool is_skippable { false };
-};
+constexpr Duration COMMAND_COMMIT_TIME = Duration::from_milliseconds(400);
 
-class TextDocument : public RefCounted<TextDocument> {
+class TextDocument : public Syntax::Document {
 public:
     enum class SearchShouldWrap {
         No = 0,
@@ -62,22 +61,17 @@ public:
     virtual ~TextDocument() = default;
 
     size_t line_count() const { return m_lines.size(); }
-    TextDocumentLine const& line(size_t line_index) const { return m_lines[line_index]; }
-    TextDocumentLine& line(size_t line_index) { return m_lines[line_index]; }
+    virtual TextDocumentLine const& line(size_t line_index) const override { return *m_lines[line_index]; }
+    virtual TextDocumentLine& line(size_t line_index) override { return *m_lines[line_index]; }
 
-    void set_spans(u32 span_collection_index, Vector<TextDocumentSpan> spans);
+    enum class IsNewDocument {
+        No,
+        Yes,
+    };
+    bool set_text(StringView, AllowCallback = AllowCallback::Yes, IsNewDocument = IsNewDocument::Yes);
 
-    bool set_text(StringView, AllowCallback = AllowCallback::Yes);
-
-    NonnullOwnPtrVector<TextDocumentLine> const& lines() const { return m_lines; }
-    NonnullOwnPtrVector<TextDocumentLine>& lines() { return m_lines; }
-
-    bool has_spans() const { return !m_spans.is_empty(); }
-    Vector<TextDocumentSpan>& spans() { return m_spans; }
-    Vector<TextDocumentSpan> const& spans() const { return m_spans; }
-    void set_span_at_index(size_t index, TextDocumentSpan span) { m_spans[index] = move(span); }
-
-    TextDocumentSpan const* span_at(TextPosition const&) const;
+    Vector<NonnullOwnPtr<TextDocumentLine>> const& lines() const { return m_lines; }
+    Vector<NonnullOwnPtr<TextDocumentLine>>& lines() { return m_lines; }
 
     void append_line(NonnullOwnPtr<TextDocumentLine>);
     NonnullOwnPtr<TextDocumentLine> take_line(size_t line_index);
@@ -88,10 +82,10 @@ public:
     void register_client(Client&);
     void unregister_client(Client&);
 
-    void update_views(Badge<TextDocumentLine>);
+    virtual void update_views(Badge<TextDocumentLine>) override;
 
-    String text() const;
-    String text_in_range(TextRange const&) const;
+    ByteString text() const;
+    ByteString text_in_range(TextRange const&) const;
 
     Vector<TextRange> find_all(StringView needle, bool regmatch = false, bool match_case = true);
 
@@ -101,6 +95,9 @@ public:
 
     TextPosition next_position_after(TextPosition const&, SearchShouldWrap = SearchShouldWrap::Yes) const;
     TextPosition previous_position_before(TextPosition const&, SearchShouldWrap = SearchShouldWrap::Yes) const;
+
+    size_t get_next_grapheme_cluster_boundary(TextPosition const& cursor) const;
+    size_t get_previous_grapheme_cluster_boundary(TextPosition const& cursor) const;
 
     u32 code_point_at(TextPosition const&) const;
 
@@ -130,8 +127,6 @@ public:
     TextPosition insert_at(TextPosition const&, StringView, Client const* = nullptr);
     void remove(TextRange const&);
 
-    virtual bool is_code_document() const { return false; }
-
     bool is_empty() const;
     bool is_modified() const { return m_undo_stack.is_current_modified(); }
     void set_unmodified();
@@ -140,11 +135,7 @@ protected:
     explicit TextDocument(Client* client);
 
 private:
-    void merge_span_collections();
-
-    NonnullOwnPtrVector<TextDocumentLine> m_lines;
-    HashMap<u32, Vector<TextDocumentSpan>> m_span_collections;
-    Vector<TextDocumentSpan> m_spans;
+    Vector<NonnullOwnPtr<TextDocumentLine>> m_lines;
 
     HashTable<Client*> m_clients;
     bool m_client_notifications_enabled { true };
@@ -156,40 +147,7 @@ private:
     size_t m_regex_result_match_capture_group_index { 0 };
 
     bool m_regex_needs_update { true };
-    String m_regex_needle;
-};
-
-class TextDocumentLine {
-public:
-    explicit TextDocumentLine(TextDocument&);
-    explicit TextDocumentLine(TextDocument&, StringView);
-
-    String to_utf8() const;
-
-    Utf32View view() const { return { code_points(), length() }; }
-    u32 const* code_points() const { return m_text.data(); }
-    size_t length() const { return m_text.size(); }
-    bool set_text(TextDocument&, StringView);
-    void set_text(TextDocument&, Vector<u32>);
-    void append(TextDocument&, u32);
-    void prepend(TextDocument&, u32);
-    void insert(TextDocument&, size_t index, u32);
-    void remove(TextDocument&, size_t index);
-    void append(TextDocument&, u32 const*, size_t);
-    void truncate(TextDocument&, size_t length);
-    void clear(TextDocument&);
-    void remove_range(TextDocument&, size_t start, size_t length);
-
-    size_t first_non_whitespace_column() const;
-    Optional<size_t> last_non_whitespace_column() const;
-    bool ends_in_whitespace() const;
-    bool can_select() const;
-    bool is_empty() const { return length() == 0; }
-    size_t leading_spaces() const;
-
-private:
-    // NOTE: This vector is null terminated.
-    Vector<u32> m_text;
+    ByteString m_regex_needle;
 };
 
 class TextDocumentUndoCommand : public Command {
@@ -206,61 +164,82 @@ public:
     }
 
 protected:
-    bool commit_time_expired() const { return Time::now_monotonic() - m_timestamp >= COMMAND_COMMIT_TIME; }
+    bool commit_time_expired() const { return MonotonicTime::now() - m_timestamp >= COMMAND_COMMIT_TIME; }
 
-    Time m_timestamp = Time::now_monotonic();
+    MonotonicTime m_timestamp = MonotonicTime::now();
     TextDocument& m_document;
     TextDocument::Client const* m_client { nullptr };
 };
 
 class InsertTextCommand : public TextDocumentUndoCommand {
 public:
-    InsertTextCommand(TextDocument&, String const&, TextPosition const&);
+    InsertTextCommand(TextDocument&, ByteString const&, TextPosition const&);
     virtual ~InsertTextCommand() = default;
     virtual void perform_formatting(TextDocument::Client const&) override;
     virtual void undo() override;
     virtual void redo() override;
     virtual bool merge_with(GUI::Command const&) override;
-    virtual String action_text() const override;
-    String const& text() const { return m_text; }
+    virtual ByteString action_text() const override;
+    ByteString const& text() const { return m_text; }
     TextRange const& range() const { return m_range; }
 
 private:
-    String m_text;
+    ByteString m_text;
     TextRange m_range;
 };
 
 class RemoveTextCommand : public TextDocumentUndoCommand {
 public:
-    RemoveTextCommand(TextDocument&, String const&, TextRange const&);
+    RemoveTextCommand(TextDocument&, ByteString const&, TextRange const&, TextPosition const&);
     virtual ~RemoveTextCommand() = default;
     virtual void undo() override;
     virtual void redo() override;
     TextRange const& range() const { return m_range; }
     virtual bool merge_with(GUI::Command const&) override;
-    virtual String action_text() const override;
+    virtual ByteString action_text() const override;
 
 private:
-    String m_text;
+    ByteString m_text;
     TextRange m_range;
+    TextPosition m_original_cursor_position;
+};
+
+class InsertLineCommand : public TextDocumentUndoCommand {
+public:
+    enum class InsertPosition {
+        Above,
+        Below,
+    };
+
+    InsertLineCommand(TextDocument&, TextPosition, ByteString&&, InsertPosition);
+    virtual ~InsertLineCommand() = default;
+    virtual void undo() override;
+    virtual void redo() override;
+    virtual ByteString action_text() const override;
+
+private:
+    size_t compute_line_number() const;
+
+    TextPosition m_cursor;
+    ByteString m_text;
+    InsertPosition m_pos;
 };
 
 class ReplaceAllTextCommand final : public GUI::TextDocumentUndoCommand {
 
 public:
-    ReplaceAllTextCommand(GUI::TextDocument& document, String const& text, GUI::TextRange const& range, String const& action_text);
+    ReplaceAllTextCommand(GUI::TextDocument& document, ByteString const& new_text, ByteString const& action_text);
     virtual ~ReplaceAllTextCommand() = default;
     void redo() override;
     void undo() override;
     bool merge_with(GUI::Command const&) override;
-    String action_text() const override;
-    String const& text() const { return m_text; }
-    TextRange const& range() const { return m_range; }
+    ByteString action_text() const override;
+    ByteString const& text() const { return m_new_text; }
 
 private:
-    String m_text;
-    GUI::TextRange m_range;
-    String m_action_text;
+    ByteString m_original_text;
+    ByteString m_new_text;
+    ByteString m_action_text;
 };
 
 class IndentSelection : public TextDocumentUndoCommand {
@@ -284,6 +263,32 @@ public:
 
 private:
     size_t m_tab_width { 0 };
+    TextRange m_range;
+};
+
+class CommentSelection : public TextDocumentUndoCommand {
+public:
+    CommentSelection(TextDocument&, StringView, StringView, TextRange const&);
+    virtual void undo() override;
+    virtual void redo() override;
+    TextRange const& range() const { return m_range; }
+
+private:
+    StringView m_prefix;
+    StringView m_suffix;
+    TextRange m_range;
+};
+
+class UncommentSelection : public TextDocumentUndoCommand {
+public:
+    UncommentSelection(TextDocument&, StringView, StringView, TextRange const&);
+    virtual void undo() override;
+    virtual void redo() override;
+    TextRange const& range() const { return m_range; }
+
+private:
+    StringView m_prefix;
+    StringView m_suffix;
     TextRange m_range;
 };
 

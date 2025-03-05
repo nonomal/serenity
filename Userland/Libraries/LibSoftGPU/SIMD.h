@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Stephan Unverwerth <s.unverwerth@serenityos.org>
+ * Copyright (c) 2023, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,6 +8,7 @@
 #pragma once
 
 #include <AK/SIMDExtras.h>
+#include <AK/SIMDMath.h>
 #include <LibGfx/Vector2.h>
 #include <LibGfx/Vector3.h>
 #include <LibGfx/Vector4.h>
@@ -118,7 +120,7 @@ ALWAYS_INLINE static AK::SIMD::f32x4 log2_approximate(AK::SIMD::f32x4 v)
     } u { v };
 
     // Extract just the exponent minus 1, giving a lower integral bound for log2.
-    auto log = AK::SIMD::to_f32x4(((u.int_val >> 23) & 255) - 128);
+    auto log = AK::SIMD::simd_cast<AK::SIMD::f32x4>(((u.int_val >> 23) & 255) - 128);
 
     // Replace the exponent with 0, giving a value between 1 and 2.
     u.int_val &= ~(255 << 23);
@@ -132,9 +134,14 @@ ALWAYS_INLINE static AK::SIMD::f32x4 log2_approximate(AK::SIMD::f32x4 v)
 ALWAYS_INLINE static Vector2<AK::SIMD::f32x4> to_vec2_f32x4(Vector2<AK::SIMD::i32x4> const& v)
 {
     return {
-        AK::SIMD::to_f32x4(v.x()),
-        AK::SIMD::to_f32x4(v.y()),
+        AK::SIMD::simd_cast<AK::SIMD::f32x4>(v.x()),
+        AK::SIMD::simd_cast<AK::SIMD::f32x4>(v.y()),
     };
+}
+
+ALWAYS_INLINE static constexpr Vector4<AK::SIMD::f32x4> to_vec4(AK::SIMD::f32x4 v)
+{
+    return { v, v, v, v };
 }
 
 }

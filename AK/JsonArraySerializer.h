@@ -43,11 +43,6 @@ public:
 
     JsonArraySerializer(JsonArraySerializer const&) = delete;
 
-    ~JsonArraySerializer()
-    {
-        VERIFY(m_finished);
-    }
-
 #ifndef KERNEL
     ErrorOr<void> add(JsonValue const& value)
     {
@@ -73,7 +68,7 @@ public:
     }
 
 #ifndef KERNEL
-    ErrorOr<void> add(String const& value)
+    ErrorOr<void> add(ByteString const& value)
     {
         TRY(begin_item());
         if constexpr (IsLegacyBuilder<Builder>) {
@@ -230,4 +225,6 @@ struct JsonArraySerializer<void> {
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::JsonArraySerializer;
+#endif

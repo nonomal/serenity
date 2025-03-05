@@ -11,11 +11,23 @@
 namespace Web::HTML {
 
 class HTMLEmbedElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLEmbedElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLEmbedElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLEmbedElement);
 
-    HTMLEmbedElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLEmbedElement() override;
+
+private:
+    HTMLEmbedElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual bool is_html_embed_element() const override { return true; }
+    virtual void initialize(JS::Realm&) override;
+    virtual void apply_presentational_hints(CSS::StyleProperties&) const override;
 };
 
+}
+
+namespace Web::DOM {
+template<>
+inline bool Node::fast_is<HTML::HTMLEmbedElement>() const { return is_html_embed_element(); }
 }

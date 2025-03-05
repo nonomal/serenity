@@ -14,7 +14,7 @@
 
 namespace HackStudio {
 
-using ViewDiffCallback = Function<void(String const& original_content, String const& diff)>;
+using ViewDiffCallback = Function<void(ByteString const& original_content, ByteString const& diff, ByteString const& file_path)>;
 
 class GitWidget final : public GUI::Widget {
     C_OBJECT(GitWidget)
@@ -23,20 +23,20 @@ public:
 
     void refresh();
     void set_view_diff_callback(ViewDiffCallback callback);
-    bool initialized() const { return !m_git_repo.is_null(); };
-    void change_repo(String const& repo_root);
+    bool initialized() const { return !m_git_repo.is_null(); }
+    void change_repo(ByteString const& repo_root);
 
 private:
-    explicit GitWidget(String const& repo_root);
+    explicit GitWidget();
 
     bool initialize();
     bool initialize_if_needed();
-    void stage_file(String const&);
-    void unstage_file(String const&);
+    void stage_file(ByteString const&);
+    void unstage_file(ByteString const&);
     void commit();
-    void show_diff(String const&);
+    void show_diff(ByteString const&);
 
-    String m_repo_root;
+    ByteString m_repo_root;
     RefPtr<GitFilesView> m_unstaged_files;
     RefPtr<GitFilesView> m_staged_files;
     RefPtr<GitRepo> m_git_repo;

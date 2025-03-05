@@ -7,11 +7,11 @@
 #pragma once
 
 #include <AK/Types.h>
-#include <Kernel/FileSystem/SysFS.h>
+#include <Kernel/FileSystem/SysFS/Component.h>
 
 namespace Kernel {
 
-class FirmwareSysFSDirectory : public SysFSDirectory {
+class SysFSFirmwareDirectory : public SysFSDirectory {
 public:
     virtual StringView name() const override { return "firmware"sv; }
     static void initialize();
@@ -19,7 +19,7 @@ public:
     void create_components();
 
 private:
-    FirmwareSysFSDirectory();
+    SysFSFirmwareDirectory();
 };
 
 }

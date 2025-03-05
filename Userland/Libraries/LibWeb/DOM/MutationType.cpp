@@ -12,13 +12,12 @@ namespace Web::DOM::MutationType {
 ENUMERATE_MUTATION_TYPES
 #undef __ENUMERATE_MUTATION_TYPE
 
-[[gnu::constructor]] static void initialize()
+void initialize_strings()
 {
     static bool s_initialized = false;
-    if (s_initialized)
-        return;
+    VERIFY(!s_initialized);
 
-#define __ENUMERATE_MUTATION_TYPE(name) name = #name;
+#define __ENUMERATE_MUTATION_TYPE(name) name = #name##_fly_string;
     ENUMERATE_MUTATION_TYPES
 #undef __ENUMERATE_MUTATION_TYPE
 

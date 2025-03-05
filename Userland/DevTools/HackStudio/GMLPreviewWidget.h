@@ -14,10 +14,10 @@ namespace HackStudio {
 class GMLPreviewWidget final : public GUI::Widget {
     C_OBJECT(GMLPreviewWidget)
 public:
-    void load_gml(String const&);
+    void load_gml(ByteString const&);
 
 private:
-    explicit GMLPreviewWidget(String const&);
+    explicit GMLPreviewWidget(ByteString const&);
 };
 
 }

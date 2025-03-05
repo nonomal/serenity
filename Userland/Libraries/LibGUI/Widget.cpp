@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -11,6 +11,7 @@
 #include <AK/JsonObject.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/RefPtr.h>
+#include <LibCore/MimeData.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
@@ -31,17 +32,27 @@
 #include <LibGfx/SystemTheme.h>
 #include <unistd.h>
 
-REGISTER_CORE_OBJECT(GUI, Widget)
+REGISTER_GUI_OBJECT(GUI, Widget)
 
 namespace GUI {
 
 Widget::Widget()
-    : Core::Object(nullptr)
-    , m_background_role(Gfx::ColorRole::Window)
+    : m_background_role(Gfx::ColorRole::Window)
     , m_foreground_role(Gfx::ColorRole::WindowText)
     , m_font(Gfx::FontDatabase::default_font())
     , m_palette(Application::the()->palette().impl())
 {
+    REGISTER_READONLY_STRING_PROPERTY("class_name", class_name);
+    REGISTER_DEPRECATED_STRING_PROPERTY("name", name, set_name);
+
+    register_property(
+        "address"sv, [this] { return FlatPtr(this); },
+        nullptr, nullptr);
+
+    register_property(
+        "parent"sv, [this] { return FlatPtr(this->parent()); },
+        nullptr, nullptr);
+
     REGISTER_RECT_PROPERTY("relative_rect", relative_rect, set_relative_rect);
     REGISTER_BOOL_PROPERTY("fill_with_background_color", fill_with_background_color, set_fill_with_background_color);
     REGISTER_BOOL_PROPERTY("visible", is_visible, set_visible);
@@ -72,137 +83,70 @@ Widget::Widget()
     REGISTER_INT_PROPERTY("x", x, set_x);
     REGISTER_INT_PROPERTY("y", y, set_y);
 
-    REGISTER_STRING_PROPERTY("font", m_font->family, set_font_family);
+    REGISTER_STRING_PROPERTY("font", font_family, set_font_family);
     REGISTER_INT_PROPERTY("font_size", m_font->presentation_size, set_font_size);
     REGISTER_FONT_WEIGHT_PROPERTY("font_weight", m_font->weight, set_font_weight);
 
     REGISTER_STRING_PROPERTY("title", title, set_title);
 
+    REGISTER_BOOL_PROPERTY("font_fixed_width", is_font_fixed_width, set_font_fixed_width)
     register_property(
-        "font_type", [this] { return m_font->is_fixed_width() ? "FixedWidth" : "Normal"; },
-        [this](auto& value) {
-            if (value.to_string() == "FixedWidth") {
-                set_font_fixed_width(true);
-                return true;
+        "font_type"sv, [this] { return m_font->is_fixed_width() ? "FixedWidth" : "Normal"; },
+        [](JsonValue const& value) -> ErrorOr<bool> {
+            if (value.is_string()) {
+                auto string = value.as_string();
+                if (string == "FixedWidth")
+                    return true;
+                if (string == "Normal")
+                    return false;
             }
-            if (value.to_string() == "Normal") {
-                set_font_fixed_width(false);
-                return true;
-            }
-            return false;
+            return Error::from_string_literal("\"FixedWidth\" or \"Normal\" is expected");
+        },
+        [this](auto const& value) { return set_font_fixed_width(value); });
+
+    REGISTER_ENUM_PROPERTY("focus_policy", focus_policy, set_focus_policy, GUI::FocusPolicy,
+        { GUI::FocusPolicy::ClickFocus, "ClickFocus" },
+        { GUI::FocusPolicy::NoFocus, "NoFocus" },
+        { GUI::FocusPolicy::TabFocus, "TabFocus" },
+        { GUI::FocusPolicy::StrongFocus, "StrongFocus" });
+
+    register_property(
+        "foreground_color"sv,
+        [this]() { return palette().color(foreground_role()).to_byte_string(); },
+        ::GUI::PropertyDeserializer<Color> {},
+        [this](Gfx::Color const& color) {
+            auto _palette = palette();
+            _palette.set_color(foreground_role(), color);
+            set_palette(_palette);
         });
 
     register_property(
-        "focus_policy", [this]() -> JsonValue {
-        auto policy = focus_policy();
-        if (policy == GUI::FocusPolicy::ClickFocus)
-            return "ClickFocus";
-        if (policy == GUI::FocusPolicy::NoFocus)
-            return "NoFocus";
-        if (policy == GUI::FocusPolicy::TabFocus)
-            return "TabFocus";
-        if (policy == GUI::FocusPolicy::StrongFocus)
-            return "StrongFocus";
-        return JsonValue(); },
-        [this](auto& value) {
-            if (!value.is_string())
-                return false;
-            if (value.as_string() == "ClickFocus") {
-                set_focus_policy(GUI::FocusPolicy::ClickFocus);
-                return true;
-            }
-            if (value.as_string() == "NoFocus") {
-                set_focus_policy(GUI::FocusPolicy::NoFocus);
-                return true;
-            }
-            if (value.as_string() == "TabFocus") {
-                set_focus_policy(GUI::FocusPolicy::TabFocus);
-                return true;
-            }
-            if (value.as_string() == "StrongFocus") {
-                set_focus_policy(GUI::FocusPolicy::StrongFocus);
-                return true;
-            }
-            return false;
+        "background_color"sv,
+        [this]() { return palette().color(background_role()).to_byte_string(); },
+        ::GUI::PropertyDeserializer<Color> {},
+        [this](Gfx::Color const& color) {
+            set_background_color(color);
         });
 
-    register_property(
-        "foreground_color", [this]() -> JsonValue { return palette().color(foreground_role()).to_string(); },
-        [this](auto& value) {
-            auto c = Color::from_string(value.to_string());
-            if (c.has_value()) {
-                auto _palette = palette();
-                _palette.set_color(foreground_role(), c.value());
-                set_palette(_palette);
-                return true;
-            }
-            return false;
-        });
-
-    register_property(
-        "background_color", [this]() -> JsonValue { return palette().color(background_role()).to_string(); },
-        [this](auto& value) {
-            auto c = Color::from_string(value.to_string());
-            if (c.has_value()) {
-                auto _palette = palette();
-                _palette.set_color(background_role(), c.value());
-                set_palette(_palette);
-                return true;
-            }
-            return false;
-        });
-
-    register_property(
-        "foreground_role", [this]() -> JsonValue { return Gfx::to_string(foreground_role()); },
-        [this](auto& value) {
-            if (!value.is_string())
-                return false;
-            auto str = value.as_string();
-            if (str == "NoRole") {
-                set_foreground_role(Gfx::ColorRole::NoRole);
-                return true;
-            }
+#define __ENUMERATE_COLOR_ROLE(role) \
+    {                                \
+        Gfx::ColorRole::role, #role  \
+    },
+    REGISTER_ENUM_PROPERTY("foreground_role", foreground_role, set_foreground_role, Gfx::ColorRole,
+        { Gfx::ColorRole::NoRole, "NoRole" },
+        ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE));
+    REGISTER_ENUM_PROPERTY("background_role", background_role, set_background_role, Gfx::ColorRole,
+        { Gfx::ColorRole::NoRole, "NoRole" },
+        ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE));
 #undef __ENUMERATE_COLOR_ROLE
-#define __ENUMERATE_COLOR_ROLE(role)               \
-    else if (str == #role)                         \
-    {                                              \
-        set_foreground_role(Gfx::ColorRole::role); \
-        return true;                               \
-    }
-            ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE)
-#undef __ENUMERATE_COLOR_ROLE
-            return false;
-        });
-
-    register_property(
-        "background_role", [this]() -> JsonValue { return Gfx::to_string(background_role()); },
-        [this](auto& value) {
-            if (!value.is_string())
-                return false;
-            auto str = value.as_string();
-            if (str == "NoRole") {
-                set_background_role(Gfx::ColorRole::NoRole);
-                return true;
-            }
-#undef __ENUMERATE_COLOR_ROLE
-#define __ENUMERATE_COLOR_ROLE(role)               \
-    else if (str == #role)                         \
-    {                                              \
-        set_background_role(Gfx::ColorRole::role); \
-        return true;                               \
-    }
-            ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE)
-#undef __ENUMERATE_COLOR_ROLE
-            return false;
-        });
 }
 
 Widget::~Widget() = default;
 
-void Widget::layout_relevant_change_occured()
+void Widget::layout_relevant_change_occurred()
 {
     if (auto* parent = parent_widget())
-        parent->layout_relevant_change_occured();
+        parent->layout_relevant_change_occurred();
     else if (window())
         window()->schedule_relayout();
 }
@@ -215,22 +159,31 @@ void Widget::child_event(Core::ChildEvent& event)
                 layout()->insert_widget_before(verify_cast<Widget>(*event.child()), verify_cast<Widget>(*event.insertion_before_child()));
             else
                 layout()->add_widget(verify_cast<Widget>(*event.child()));
-            layout_relevant_change_occured();
+            layout_relevant_change_occurred();
         }
         if (window() && event.child() && is<Widget>(*event.child()))
             window()->did_add_widget({}, verify_cast<Widget>(*event.child()));
+
+        if (event.child() && is<Widget>(*event.child()) && static_cast<Widget const&>(*event.child()).is_visible()) {
+            ShowEvent show_event;
+            event.child()->dispatch_event(show_event);
+        }
     }
     if (event.type() == Event::ChildRemoved) {
         if (layout()) {
             if (event.child() && is<Widget>(*event.child()))
                 layout()->remove_widget(verify_cast<Widget>(*event.child()));
-            layout_relevant_change_occured();
+            layout_relevant_change_occurred();
         }
         if (window() && event.child() && is<Widget>(*event.child()))
             window()->did_remove_widget({}, verify_cast<Widget>(*event.child()));
+        if (event.child() && is<Widget>(*event.child())) {
+            HideEvent hide_event;
+            event.child()->dispatch_event(hide_event);
+        }
         update();
     }
-    return Core::Object::child_event(event);
+    return Core::EventReceiver::child_event(event);
 }
 
 void Widget::set_relative_rect(Gfx::IntRect const& a_rect)
@@ -328,17 +281,29 @@ void Widget::event(Core::Event& event)
     case Event::AppletAreaRectChange:
         return applet_area_rect_change_event(static_cast<AppletAreaRectChangeEvent&>(event));
     default:
-        return Core::Object::event(event);
+        return Core::EventReceiver::event(event);
     }
 }
 
 void Widget::handle_keydown_event(KeyEvent& event)
 {
     keydown_event(event);
-    if (event.key() == KeyCode::Key_Menu) {
-        ContextMenuEvent c_event(window_relative_rect().bottom_right(), screen_relative_rect().bottom_right());
-        dispatch_event(c_event);
+    if (event.is_accepted())
+        return;
+
+    if (auto action = Action::find_action_for_shortcut(*this, Shortcut(event.modifiers(), event.key()))) {
+        action->process_event(*window(), event);
+        if (event.is_accepted())
+            return;
     }
+
+    if (event.key() == KeyCode::Key_Menu) {
+        ContextMenuEvent c_event(window_relative_rect().bottom_right().translated(-1), screen_relative_rect().bottom_right().translated(-1));
+        dispatch_event(c_event);
+        return;
+    }
+
+    event.ignore();
 }
 
 void Widget::handle_paint_event(PaintEvent& event)
@@ -384,11 +349,6 @@ void Widget::handle_paint_event(PaintEvent& event)
         Painter painter(*this);
         painter.draw_rect(rect(), Color::Red);
     }
-
-    if (is_being_inspected()) {
-        Painter painter(*this);
-        painter.draw_rect(rect(), Color::Magenta);
-    }
 }
 
 void Widget::set_layout(NonnullRefPtr<Layout> layout)
@@ -405,7 +365,7 @@ void Widget::set_layout(NonnullRefPtr<Layout> layout)
     } else {
         update();
     }
-    layout_relevant_change_occured();
+    layout_relevant_change_occurred();
 }
 
 void Widget::do_layout()
@@ -466,7 +426,8 @@ void Widget::handle_leave_event(Core::Event& event)
 {
     if (auto* window = this->window())
         window->update_cursor({});
-    Application::the()->hide_tooltip();
+    if (Application::the()->tooltip_source_widget() == this)
+        Application::the()->hide_tooltip();
     leave_event(event);
 }
 
@@ -572,9 +533,7 @@ void Widget::drag_move_event(DragEvent&)
 
 void Widget::drag_enter_event(DragEvent& event)
 {
-    StringBuilder builder;
-    builder.join(',', event.mime_types());
-    dbgln_if(DRAG_DEBUG, "{} {:p} DRAG ENTER @ {}, {}", class_name(), this, event.position(), builder.string_view());
+    dbgln_if(DRAG_DEBUG, "{} {:p} DRAG ENTER @ {}, {}", class_name(), this, event.position(), event.mime_data().formats());
 }
 
 void Widget::drag_leave_event(Event&)
@@ -611,6 +570,11 @@ void Widget::update()
     if (rect().is_empty())
         return;
     update(rect());
+
+    for (auto& it : m_focus_delegators) {
+        if (!it.is_null() && !it->rect().is_empty())
+            it->update(it->rect());
+    }
 }
 
 void Widget::update(Gfx::IntRect const& rect)
@@ -670,12 +634,12 @@ Gfx::IntRect Widget::screen_relative_rect() const
     return window_relative_rect().translated(window_position);
 }
 
-Widget* Widget::child_at(Gfx::IntPoint const& point) const
+Widget* Widget::child_at(Gfx::IntPoint point) const
 {
     for (int i = children().size() - 1; i >= 0; --i) {
         if (!is<Widget>(children()[i]))
             continue;
-        auto& child = verify_cast<Widget>(children()[i]);
+        auto& child = verify_cast<Widget>(*children()[i]);
         if (!child.is_visible())
             continue;
         if (child.relative_non_grabbable_rect().contains(point))
@@ -684,7 +648,7 @@ Widget* Widget::child_at(Gfx::IntPoint const& point) const
     return nullptr;
 }
 
-Widget::HitTestResult Widget::hit_test(Gfx::IntPoint const& position, ShouldRespectGreediness should_respect_greediness)
+Widget::HitTestResult Widget::hit_test(Gfx::IntPoint position, ShouldRespectGreediness should_respect_greediness)
 {
     if (should_respect_greediness == ShouldRespectGreediness::Yes && is_greedy_for_hits())
         return { this, position };
@@ -704,8 +668,26 @@ void Widget::set_focus_proxy(Widget* proxy)
 {
     if (m_focus_proxy == proxy)
         return;
-
+    if (proxy)
+        proxy->add_focus_delegator(this);
+    else if (m_focus_proxy)
+        m_focus_proxy->remove_focus_delegator(this);
     m_focus_proxy = proxy;
+}
+
+void Widget::add_focus_delegator(Widget* delegator)
+{
+    m_focus_delegators.remove_all_matching([&](auto& entry) {
+        return entry.is_null() || entry == delegator;
+    });
+    m_focus_delegators.append(delegator);
+}
+
+void Widget::remove_focus_delegator(Widget* delegator)
+{
+    m_focus_delegators.remove_first_matching([&](auto& entry) {
+        return entry == delegator;
+    });
 }
 
 FocusPolicy Widget::focus_policy() const
@@ -730,10 +712,7 @@ bool Widget::is_focused() const
     auto* win = window();
     if (!win)
         return false;
-    // Accessory windows are not active despite being the active
-    // input window. So we can have focus if either we're the active
-    // input window or we're the active window
-    if (win->is_active_input() || win->is_active())
+    if (win->is_focusable())
         return win->focused_widget() == this;
     return false;
 }
@@ -773,25 +752,30 @@ void Widget::set_font(Gfx::Font const* font)
 
 void Widget::set_font_family(String const& family)
 {
-    set_font(Gfx::FontDatabase::the().get(family, m_font->presentation_size(), m_font->weight(), m_font->slope()));
+    set_font(Gfx::FontDatabase::the().get(family, m_font->presentation_size(), m_font->weight(), m_font->width(), m_font->slope()));
 }
 
 void Widget::set_font_size(unsigned size)
 {
-    set_font(Gfx::FontDatabase::the().get(m_font->family(), size, m_font->weight(), m_font->slope()));
+    set_font(Gfx::FontDatabase::the().get(m_font->family(), size, m_font->weight(), m_font->width(), m_font->slope()));
 }
 
 void Widget::set_font_weight(unsigned weight)
 {
-    set_font(Gfx::FontDatabase::the().get(m_font->family(), m_font->presentation_size(), weight, m_font->slope()));
+    set_font(Gfx::FontDatabase::the().get(m_font->family(), m_font->presentation_size(), weight, m_font->width(), m_font->slope()));
 }
 
 void Widget::set_font_fixed_width(bool fixed_width)
 {
     if (fixed_width)
-        set_font(Gfx::FontDatabase::the().get(Gfx::FontDatabase::the().default_fixed_width_font().family(), m_font->presentation_size(), m_font->weight(), m_font->slope()));
+        set_font(Gfx::FontDatabase::the().get(Gfx::FontDatabase::the().default_fixed_width_font().family(), m_font->presentation_size(), m_font->weight(), m_font->width(), m_font->slope()));
     else
-        set_font(Gfx::FontDatabase::the().get(Gfx::FontDatabase::the().default_font().family(), m_font->presentation_size(), m_font->weight(), m_font->slope()));
+        set_font(Gfx::FontDatabase::the().get(Gfx::FontDatabase::the().default_font().family(), m_font->presentation_size(), m_font->weight(), m_font->width(), m_font->slope()));
+}
+
+bool Widget::is_font_fixed_width()
+{
+    return font().is_fixed_width();
 }
 
 void Widget::set_min_size(UISize const& size)
@@ -800,7 +784,7 @@ void Widget::set_min_size(UISize const& size)
     if (m_min_size == size)
         return;
     m_min_size = size;
-    layout_relevant_change_occured();
+    layout_relevant_change_occurred();
 }
 
 void Widget::set_max_size(UISize const& size)
@@ -809,7 +793,7 @@ void Widget::set_max_size(UISize const& size)
     if (m_max_size == size)
         return;
     m_max_size = size;
-    layout_relevant_change_occured();
+    layout_relevant_change_occurred();
 }
 
 void Widget::set_preferred_size(UISize const& size)
@@ -817,7 +801,7 @@ void Widget::set_preferred_size(UISize const& size)
     if (m_preferred_size == size)
         return;
     m_preferred_size = size;
-    layout_relevant_change_occured();
+    layout_relevant_change_occurred();
 }
 
 Optional<UISize> Widget::calculated_preferred_size() const
@@ -849,7 +833,7 @@ void Widget::set_visible(bool visible)
     if (visible == m_visible)
         return;
     m_visible = visible;
-    layout_relevant_change_occured();
+    layout_relevant_change_occurred();
     if (m_visible)
         update();
     if (!m_visible && is_focused())
@@ -934,7 +918,7 @@ bool Widget::is_frontmost() const
     auto* parent = parent_widget();
     if (!parent)
         return true;
-    return &parent->children().last() == this;
+    return parent->children().last() == this;
 }
 
 bool Widget::is_backmost() const
@@ -942,20 +926,12 @@ bool Widget::is_backmost() const
     auto* parent = parent_widget();
     if (!parent)
         return true;
-    return &parent->children().first() == this;
+    return parent->children().first() == this;
 }
 
 Action* Widget::action_for_shortcut(Shortcut const& shortcut)
 {
-    Action* found_action = nullptr;
-    for_each_child_of_type<Action>([&](auto& action) {
-        if (action.shortcut() == shortcut || action.alternate_shortcut() == shortcut) {
-            found_action = &action;
-            return IterationDecision::Break;
-        }
-        return IterationDecision::Continue;
-    });
-    return found_action;
+    return Action::find_action_for_shortcut(*this, shortcut);
 }
 
 void Widget::set_updates_enabled(bool enabled)
@@ -1002,13 +978,13 @@ Vector<Widget&> Widget::child_widgets() const
     Vector<Widget&> widgets;
     widgets.ensure_capacity(children().size());
     for (auto& child : const_cast<Widget*>(this)->children()) {
-        if (is<Widget>(child))
-            widgets.append(static_cast<Widget&>(child));
+        if (is<Widget>(*child))
+            widgets.append(static_cast<Widget&>(*child));
     }
     return widgets;
 }
 
-void Widget::set_palette(Palette const& palette)
+void Widget::set_palette(Palette& palette)
 {
     m_palette = palette.impl();
     update();
@@ -1017,7 +993,7 @@ void Widget::set_palette(Palette const& palette)
 void Widget::set_title(String title)
 {
     m_title = move(title);
-    layout_relevant_change_occured();
+    layout_relevant_change_occurred();
     // For tab widget children, our change in title also affects the parent.
     if (parent_widget())
         parent_widget()->update();
@@ -1040,19 +1016,16 @@ void Widget::set_foreground_role(ColorRole role)
     update();
 }
 
+void Widget::set_background_color(Gfx::Color color)
+{
+    auto _palette = palette();
+    _palette.set_color(background_role(), color);
+    set_palette(_palette);
+}
+
 Gfx::Palette Widget::palette() const
 {
     return Gfx::Palette(*m_palette);
-}
-
-void Widget::did_begin_inspection()
-{
-    update();
-}
-
-void Widget::did_end_inspection()
-{
-    update();
 }
 
 void Widget::set_grabbable_margins(Margins const& margins)
@@ -1060,7 +1033,7 @@ void Widget::set_grabbable_margins(Margins const& margins)
     if (m_grabbable_margins == margins)
         return;
     m_grabbable_margins = margins;
-    layout_relevant_change_occured();
+    layout_relevant_change_occurred();
 }
 
 Gfx::IntRect Widget::relative_non_grabbable_rect() const
@@ -1092,17 +1065,9 @@ Gfx::IntRect Widget::children_clip_rect() const
     return rect();
 }
 
-void Widget::set_override_cursor(AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> cursor)
+void Widget::set_override_cursor(AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap const>> cursor)
 {
-    auto const& are_cursors_the_same = [](AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const& a, AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const& b) {
-        if (a.has<Gfx::StandardCursor>() != b.has<Gfx::StandardCursor>())
-            return false;
-        if (a.has<Gfx::StandardCursor>())
-            return a.get<Gfx::StandardCursor>() == b.get<Gfx::StandardCursor>();
-        return a.get<NonnullRefPtr<Gfx::Bitmap>>().ptr() == b.get<NonnullRefPtr<Gfx::Bitmap>>().ptr();
-    };
-
-    if (are_cursors_the_same(m_override_cursor, cursor))
+    if (m_override_cursor == cursor)
         return;
 
     m_override_cursor = move(cursor);
@@ -1111,56 +1076,50 @@ void Widget::set_override_cursor(AK::Variant<Gfx::StandardCursor, NonnullRefPtr<
     }
 }
 
-bool Widget::load_from_gml(StringView gml_string)
+ErrorOr<void> Widget::load_from_gml(StringView gml_string)
 {
-    return load_from_gml(gml_string, [](String const& class_name) -> RefPtr<Core::Object> {
+    return load_from_gml(gml_string, [](StringView class_name) -> ErrorOr<NonnullRefPtr<Core::EventReceiver>> {
         dbgln("Class '{}' not registered", class_name);
-        return nullptr;
+        return Error::from_string_literal("Class not registered");
     });
 }
 
-bool Widget::load_from_gml(StringView gml_string, RefPtr<Core::Object> (*unregistered_child_handler)(String const&))
+ErrorOr<void> Widget::load_from_gml(StringView gml_string, UnregisteredChildHandler unregistered_child_handler)
 {
-    auto value = GML::parse_gml(gml_string);
-    if (value.is_error()) {
-        // FIXME: We don't report the error, so at least print it.
-        dbgln("Error while parsing GML: {}", value.error());
-        return false;
-    }
-    return load_from_gml_ast(value.release_value(), unregistered_child_handler);
+    auto value = TRY(GML::parse_gml(gml_string));
+    return load_from_gml_ast(value, unregistered_child_handler);
 }
 
-bool Widget::load_from_gml_ast(NonnullRefPtr<GUI::GML::Node> ast, RefPtr<Core::Object> (*unregistered_child_handler)(String const&))
+ErrorOr<void> Widget::load_from_gml_ast(NonnullRefPtr<GUI::GML::Node const> ast, UnregisteredChildHandler unregistered_child_handler)
 {
     if (is<GUI::GML::GMLFile>(ast.ptr()))
-        return load_from_gml_ast(static_ptr_cast<GUI::GML::GMLFile>(ast)->main_class(), unregistered_child_handler);
+        return load_from_gml_ast(static_cast<GUI::GML::GMLFile const&>(*ast).main_class(), unregistered_child_handler);
 
     VERIFY(is<GUI::GML::Object>(ast.ptr()));
-    auto object = static_ptr_cast<GUI::GML::Object>(ast);
+    auto const& object = static_cast<GUI::GML::Object const&>(*ast);
 
-    object->for_each_property([&](auto key, auto value) {
+    object.for_each_property([&](auto key, auto value) {
         set_property(key, value);
     });
 
-    auto layout = object->layout_object();
+    auto layout = object.layout_object();
     if (!layout.is_null()) {
         auto class_name = layout->name();
         if (class_name.is_null()) {
-            dbgln("Invalid layout class name");
-            return false;
+            return Error::from_string_literal("Invalid layout class name");
         }
 
-        auto& layout_class = *Core::ObjectClassRegistration::find("GUI::Layout"sv);
-        if (auto* registration = Core::ObjectClassRegistration::find(class_name)) {
-            auto layout = registration->construct();
-            if (!layout || !registration->is_derived_from(layout_class)) {
-                dbgln("Invalid layout class: '{}'", class_name.to_string());
-                return false;
+        auto& layout_class = *GUI::ObjectClassRegistration::find("GUI::Layout"sv);
+        if (auto* registration = GUI::ObjectClassRegistration::find(class_name)) {
+            auto layout = TRY(registration->construct());
+            if (!registration->is_derived_from(layout_class)) {
+                dbgln("Invalid layout class: '{}'", class_name.to_byte_string());
+                return Error::from_string_literal("Invalid layout class");
             }
-            set_layout(static_ptr_cast<Layout>(layout).release_nonnull());
+            set_layout(static_ptr_cast<Layout>(layout));
         } else {
-            dbgln("Unknown layout class: '{}'", class_name.to_string());
-            return false;
+            dbgln("Unknown layout class: '{}'", class_name.to_byte_string());
+            return Error::from_string_literal("Unknown layout class");
         }
 
         layout->for_each_property([&](auto key, auto value) {
@@ -1168,35 +1127,34 @@ bool Widget::load_from_gml_ast(NonnullRefPtr<GUI::GML::Node> ast, RefPtr<Core::O
         });
     }
 
-    auto& widget_class = *Core::ObjectClassRegistration::find("GUI::Widget"sv);
+    auto& widget_class = *GUI::ObjectClassRegistration::find("GUI::Widget"sv);
     bool is_tab_widget = is<TabWidget>(*this);
-    object->for_each_child_object_interruptible([&](auto child_data) {
-        auto class_name = child_data->name();
+    TRY(object.try_for_each_child_object([&](auto const& child_data) -> ErrorOr<void> {
+        auto class_name = child_data.name();
 
         // It is very questionable if this pseudo object should exist, but it works fine like this for now.
         if (class_name == "GUI::Layout::Spacer") {
             if (!this->layout()) {
-                dbgln("Specified GUI::Layout::Spacer in GML, but the parent has no Layout.");
-                return IterationDecision::Break;
+                return Error::from_string_literal("Specified GUI::Layout::Spacer in GML, but the parent has no Layout.");
             }
-            this->layout()->add_spacer();
+            add_spacer();
         } else {
-            RefPtr<Core::Object> child;
-            if (auto* registration = Core::ObjectClassRegistration::find(class_name)) {
-                child = registration->construct();
-                if (!child || !registration->is_derived_from(widget_class)) {
+            RefPtr<Core::EventReceiver> child;
+            if (auto* registration = GUI::ObjectClassRegistration::find(class_name)) {
+                child = TRY(registration->construct());
+                if (!registration->is_derived_from(widget_class)) {
                     dbgln("Invalid widget class: '{}'", class_name);
-                    return IterationDecision::Break;
+                    return Error::from_string_literal("Invalid widget class");
                 }
             } else {
-                child = unregistered_child_handler(class_name);
+                child = TRY(unregistered_child_handler(class_name));
             }
             if (!child)
-                return IterationDecision::Break;
+                return Error::from_string_literal("Unable to construct a Widget class for child");
             add_child(*child);
 
             // This is possible as we ensure that Widget is a base class above.
-            static_ptr_cast<Widget>(child)->load_from_gml_ast(child_data, unregistered_child_handler);
+            TRY(static_ptr_cast<Widget>(child)->load_from_gml_ast(child_data, unregistered_child_handler));
 
             if (is_tab_widget) {
                 // FIXME: We need to have the child added before loading it so that it can access us. But the TabWidget logic requires the child to not be present yet.
@@ -1205,10 +1163,10 @@ bool Widget::load_from_gml_ast(NonnullRefPtr<GUI::GML::Node> ast, RefPtr<Core::O
             }
         }
 
-        return IterationDecision::Continue;
-    });
+        return {};
+    }));
 
-    return true;
+    return {};
 }
 
 bool Widget::has_focus_within() const
@@ -1237,6 +1195,17 @@ bool Widget::has_pending_drop() const
 bool Widget::is_visible_for_timer_purposes() const
 {
     return is_visible() && Object::is_visible_for_timer_purposes();
+}
+
+void Widget::add_spacer()
+{
+    VERIFY(layout());
+    return layout()->add_spacer();
+}
+
+String Widget::font_family() const
+{
+    return m_font->family();
 }
 
 }

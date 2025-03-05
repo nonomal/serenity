@@ -1,13 +1,11 @@
 /*
  * Copyright (c) 2020-2021, the SerenityOS developers.
- * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/CSS/Parser/Block.h>
 #include <LibWeb/CSS/Parser/ComponentValue.h>
-#include <LibWeb/CSS/Parser/Function.h>
 
 namespace Web::CSS::Parser {
 
@@ -15,37 +13,49 @@ ComponentValue::ComponentValue(Token token)
     : m_value(token)
 {
 }
-ComponentValue::ComponentValue(NonnullRefPtr<Function> function)
+ComponentValue::ComponentValue(Function&& function)
     : m_value(function)
 {
 }
-ComponentValue::ComponentValue(NonnullRefPtr<Block> block)
+ComponentValue::ComponentValue(SimpleBlock&& block)
     : m_value(block)
 {
 }
 
 ComponentValue::~ComponentValue() = default;
 
+bool ComponentValue::is_function(StringView name) const
+{
+    return is_function() && function().name.equals_ignoring_ascii_case(name);
+}
+
+bool ComponentValue::is_ident(StringView ident) const
+{
+    return is(Token::Type::Ident) && token().ident().equals_ignoring_ascii_case(ident);
+}
+
 String ComponentValue::to_string() const
 {
-    return m_value.visit(
-        [](Token const& token) { return token.to_string(); },
-        [](NonnullRefPtr<Block> const& block) { return block->to_string(); },
-        [](NonnullRefPtr<Function> const& function) { return function->to_string(); });
+    return m_value.visit([](auto const& it) { return it.to_string(); });
 }
 
 String ComponentValue::to_debug_string() const
 {
     return m_value.visit(
         [](Token const& token) {
-            return String::formatted("Token: {}", token.to_debug_string());
+            return MUST(String::formatted("Token: {}", token.to_debug_string()));
         },
-        [](NonnullRefPtr<Block> const& block) {
-            return String::formatted("Block: {}", block->to_string());
+        [](SimpleBlock const& block) {
+            return MUST(String::formatted("Block: {}", block.to_string()));
         },
-        [](NonnullRefPtr<Function> const& function) {
-            return String::formatted("Function: {}", function->to_string());
+        [](Function const& function) {
+            return MUST(String::formatted("Function: {}", function.to_string()));
         });
+}
+
+String ComponentValue::original_source_text() const
+{
+    return m_value.visit([](auto const& it) { return it.original_source_text(); });
 }
 
 }

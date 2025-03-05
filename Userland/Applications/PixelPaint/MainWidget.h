@@ -19,6 +19,8 @@
 #include "ToolPropertiesWidget.h"
 #include "ToolboxWidget.h"
 #include "Tools/Tool.h"
+#include "VectorscopeWidget.h"
+#include <LibFileSystemAccessClient/Client.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ComboBox.h>
 #include <LibGUI/Forward.h>
@@ -37,11 +39,12 @@ class MainWidget : public GUI::Widget {
 public:
     virtual ~MainWidget() {};
 
-    void initialize_menubar(GUI::Window&);
+    ErrorOr<void> initialize_menubar(GUI::Window&);
 
-    void open_image(Core::File&);
-    void create_default_image();
+    void open_image(FileSystemAccessClient::File);
+    ErrorOr<void> create_default_image();
 
+    void refresh_crop_to_selection_menu_actions();
     bool request_close();
 
 private:
@@ -49,17 +52,25 @@ private:
 
     ImageEditor* current_image_editor();
     ImageEditor& create_new_editor(NonnullRefPtr<Image>);
-    void create_image_from_clipboard();
+    ErrorOr<void> create_image_from_clipboard();
+
+    void image_editor_did_update_undo_stack();
 
     void set_actions_enabled(bool enabled);
+    void set_mask_actions_for_layer(Layer* active_layer);
 
+    virtual void drag_enter_event(GUI::DragEvent&) override;
     virtual void drop_event(GUI::DropEvent&) override;
+
+    void update_window_modified();
+    void update_status_bar(ByteString appended_text = ByteString::empty());
 
     ProjectLoader m_loader;
 
     RefPtr<ToolboxWidget> m_toolbox;
     RefPtr<PaletteWidget> m_palette_widget;
     RefPtr<HistogramWidget> m_histogram_widget;
+    RefPtr<VectorscopeWidget> m_vectorscope_widget;
     RefPtr<LayerListWidget> m_layer_list_widget;
     RefPtr<LayerPropertiesWidget> m_layer_properties_widget;
     RefPtr<ToolPropertiesWidget> m_tool_properties_widget;
@@ -97,6 +108,23 @@ private:
     RefPtr<GUI::Action> m_show_guides_action;
     RefPtr<GUI::Action> m_show_rulers_action;
     RefPtr<GUI::Action> m_show_active_layer_boundary_action;
+
+    RefPtr<GUI::Action> m_layer_via_copy;
+    RefPtr<GUI::Action> m_layer_via_cut;
+
+    RefPtr<GUI::Action> m_add_mask_action;
+    RefPtr<GUI::Action> m_delete_mask_action;
+    RefPtr<GUI::Action> m_apply_mask_action;
+    RefPtr<GUI::Action> m_add_editing_mask_action;
+    RefPtr<GUI::Action> m_invert_mask_action;
+    RefPtr<GUI::Action> m_clear_mask_action;
+    RefPtr<GUI::Action> m_toggle_mask_visibility_action;
+    RefPtr<GUI::Action> m_open_luminosity_masking_action;
+    RefPtr<GUI::Action> m_open_color_masking_action;
+    RefPtr<GUI::Action> m_crop_image_to_selection_action;
+    RefPtr<GUI::Action> m_crop_layer_to_selection_action;
+
+    Gfx::IntPoint m_last_image_editor_mouse_position;
 };
 
 }

@@ -24,7 +24,7 @@
 
 namespace PixelPaint {
 
-void RectangleTool::draw_using(GUI::Painter& painter, Gfx::IntPoint const& start_position, Gfx::IntPoint const& end_position, int thickness, int corner_radius)
+void RectangleTool::draw_using(GUI::Painter& painter, Gfx::IntPoint start_position, Gfx::IntPoint end_position, int thickness, int corner_radius)
 {
     Gfx::IntRect rect;
     if (m_draw_mode == DrawMode::FromCenter) {
@@ -87,12 +87,13 @@ void RectangleTool::on_mouseup(Layer* layer, MouseEvent& event)
         return;
 
     if (event.layer_event().button() == m_drawing_button) {
-        GUI::Painter painter(layer->currently_edited_bitmap());
+        GUI::Painter painter(layer->get_scratch_edited_bitmap());
         draw_using(painter, m_rectangle_start_position, m_rectangle_end_position, m_thickness, m_corner_radius);
         m_drawing_button = GUI::MouseButton::None;
-        layer->did_modify_bitmap();
+        auto modified_rect = Gfx::IntRect::from_two_points(m_rectangle_start_position, m_rectangle_end_position).inflated(m_thickness * 2, m_thickness * 2);
+        layer->did_modify_bitmap(modified_rect);
         m_editor->update();
-        m_editor->did_complete_action();
+        m_editor->did_complete_action(tool_name());
     }
 }
 
@@ -123,28 +124,29 @@ void RectangleTool::on_second_paint(Layer const* layer, GUI::PaintEvent& event)
 
     GUI::Painter painter(*m_editor);
     painter.add_clip_rect(event.rect());
+    painter.translate(editor_layer_location(*layer));
     auto start_position = editor_stroke_position(m_rectangle_start_position, m_thickness);
     auto end_position = editor_stroke_position(m_rectangle_end_position, m_thickness);
     draw_using(painter, start_position, end_position, AK::max(m_thickness * m_editor->scale(), 1), m_corner_radius * m_editor->scale());
 }
 
-void RectangleTool::on_keydown(GUI::KeyEvent& event)
+bool RectangleTool::on_keydown(GUI::KeyEvent& event)
 {
-    Tool::on_keydown(event);
     if (event.key() == Key_Escape && m_drawing_button != GUI::MouseButton::None) {
         m_drawing_button = GUI::MouseButton::None;
         m_editor->update();
-        event.accept();
+        return true;
     }
+    return Tool::on_keydown(event);
 }
 
-GUI::Widget* RectangleTool::get_properties_widget()
+NonnullRefPtr<GUI::Widget> RectangleTool::get_properties_widget()
 {
     if (!m_properties_widget) {
-        m_properties_widget = GUI::Widget::construct();
-        m_properties_widget->set_layout<GUI::VerticalBoxLayout>();
+        auto properties_widget = GUI::Widget::construct();
+        properties_widget->set_layout<GUI::VerticalBoxLayout>();
 
-        auto& thickness_or_radius_container = m_properties_widget->add<GUI::Widget>();
+        auto& thickness_or_radius_container = properties_widget->add<GUI::Widget>();
         thickness_or_radius_container.set_fixed_height(20);
         thickness_or_radius_container.set_layout<GUI::HorizontalBoxLayout>();
 
@@ -152,7 +154,7 @@ GUI::Widget* RectangleTool::get_properties_widget()
         thickness_or_radius_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
         thickness_or_radius_label.set_fixed_size(80, 20);
 
-        auto& thickness_or_radius_slider = thickness_or_radius_container.add<GUI::ValueSlider>(Orientation::Horizontal, "px");
+        auto& thickness_or_radius_slider = thickness_or_radius_container.add<GUI::ValueSlider>(Orientation::Horizontal, "px"_string);
 
         thickness_or_radius_slider.on_change = [&](int value) {
             if (m_fill_mode == FillMode::RoundedCorners) {
@@ -161,50 +163,50 @@ GUI::Widget* RectangleTool::get_properties_widget()
                 m_thickness = value;
         };
 
-        auto update_slider = [&] {
+        auto update_slider = [this, &thickness_or_radius_label, &thickness_or_radius_slider] {
             auto update_values = [&](auto label, int value, int range_min, int range_max = 10) {
-                thickness_or_radius_label.set_text(label);
+                thickness_or_radius_label.set_text(String::from_utf8(label).release_value_but_fixme_should_propagate_errors());
                 thickness_or_radius_slider.set_range(range_min, range_max);
                 thickness_or_radius_slider.set_value(value);
             };
             if (m_fill_mode == FillMode::RoundedCorners)
-                update_values("Radius:", m_corner_radius, 0, 50);
+                update_values("Radius:"sv, m_corner_radius, 0, 50);
             else
-                update_values("Thickness:", m_thickness, 1);
+                update_values("Thickness:"sv, m_thickness, 1);
         };
 
         update_slider();
         set_primary_slider(&thickness_or_radius_slider);
 
-        auto& mode_container = m_properties_widget->add<GUI::Widget>();
+        auto& mode_container = properties_widget->add<GUI::Widget>();
         mode_container.set_fixed_height(90);
         mode_container.set_layout<GUI::HorizontalBoxLayout>();
-        auto& mode_label = mode_container.add<GUI::Label>("Mode:");
+        auto& mode_label = mode_container.add<GUI::Label>("Mode:"_string);
         mode_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
         mode_label.set_fixed_size(30, 20);
 
         auto& mode_radio_container = mode_container.add<GUI::Widget>();
         mode_radio_container.set_layout<GUI::VerticalBoxLayout>();
-        auto& outline_mode_radio = mode_radio_container.add<GUI::RadioButton>("Outline");
-        auto& fill_mode_radio = mode_radio_container.add<GUI::RadioButton>("Fill");
-        auto& gradient_mode_radio = mode_radio_container.add<GUI::RadioButton>("Gradient");
+        auto& outline_mode_radio = mode_radio_container.add<GUI::RadioButton>("Outline"_string);
+        auto& fill_mode_radio = mode_radio_container.add<GUI::RadioButton>("Fill"_string);
+        auto& gradient_mode_radio = mode_radio_container.add<GUI::RadioButton>("Gradient"_string);
         mode_radio_container.set_fixed_width(70);
 
-        auto& rounded_corners_mode_radio = mode_radio_container.add<GUI::RadioButton>("Rounded");
+        auto& rounded_corners_mode_radio = mode_radio_container.add<GUI::RadioButton>("Rounded"_string);
 
-        outline_mode_radio.on_checked = [&, update_slider](bool) {
+        outline_mode_radio.on_checked = [this, update_slider](bool) {
             m_fill_mode = FillMode::Outline;
             update_slider();
         };
-        fill_mode_radio.on_checked = [&, update_slider](bool) {
+        fill_mode_radio.on_checked = [this, update_slider](bool) {
             m_fill_mode = FillMode::Fill;
             update_slider();
         };
-        gradient_mode_radio.on_checked = [&, update_slider](bool) {
+        gradient_mode_radio.on_checked = [this, update_slider](bool) {
             m_fill_mode = FillMode::Gradient;
             update_slider();
         };
-        rounded_corners_mode_radio.on_checked = [&, update_slider](bool) {
+        rounded_corners_mode_radio.on_checked = [this, update_slider](bool) {
             m_fill_mode = FillMode::RoundedCorners;
             update_slider();
         };
@@ -213,16 +215,17 @@ GUI::Widget* RectangleTool::get_properties_widget()
         auto& mode_extras_container = mode_container.add<GUI::Widget>();
         mode_extras_container.set_layout<GUI::VerticalBoxLayout>();
 
-        auto& aa_enable_checkbox = mode_extras_container.add<GUI::CheckBox>("Anti-alias");
-        aa_enable_checkbox.on_checked = [&](bool checked) {
+        auto& aa_enable_checkbox = mode_extras_container.add<GUI::CheckBox>("Anti-alias"_string);
+        aa_enable_checkbox.on_checked = [this](bool checked) {
             m_antialias_enabled = checked;
         };
+        aa_enable_checkbox.set_checked(true);
 
         auto& aspect_container = mode_extras_container.add<GUI::Widget>();
         aspect_container.set_layout<GUI::VerticalBoxLayout>();
         aspect_container.set_fixed_width(75);
 
-        auto& aspect_label = aspect_container.add<GUI::Label>("Aspect Ratio:");
+        auto& aspect_label = aspect_container.add<GUI::Label>("Aspect Ratio:"_string);
         aspect_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
         aspect_label.set_fixed_size(75, 20);
 
@@ -233,9 +236,9 @@ GUI::Widget* RectangleTool::get_properties_widget()
         m_aspect_w_textbox = aspect_fields_container.add<GUI::TextBox>();
         m_aspect_w_textbox->set_fixed_height(20);
         m_aspect_w_textbox->set_fixed_width(25);
-        m_aspect_w_textbox->on_change = [&] {
-            auto x = m_aspect_w_textbox->text().to_int().value_or(0);
-            auto y = m_aspect_h_textbox->text().to_int().value_or(0);
+        m_aspect_w_textbox->on_change = [this] {
+            auto x = m_aspect_w_textbox->text().to_number<int>().value_or(0);
+            auto y = m_aspect_h_textbox->text().to_number<int>().value_or(0);
             if (x > 0 && y > 0) {
                 m_aspect_ratio = (float)x / (float)y;
             } else {
@@ -243,17 +246,19 @@ GUI::Widget* RectangleTool::get_properties_widget()
             }
         };
 
-        auto& multiply_label = aspect_fields_container.add<GUI::Label>("x");
+        auto& multiply_label = aspect_fields_container.add<GUI::Label>("x"_string);
         multiply_label.set_text_alignment(Gfx::TextAlignment::Center);
         multiply_label.set_fixed_size(10, 20);
 
         m_aspect_h_textbox = aspect_fields_container.add<GUI::TextBox>();
         m_aspect_h_textbox->set_fixed_height(20);
         m_aspect_h_textbox->set_fixed_width(25);
-        m_aspect_h_textbox->on_change = [&] { m_aspect_w_textbox->on_change(); };
+        m_aspect_h_textbox->on_change = [this] { m_aspect_w_textbox->on_change(); };
+
+        m_properties_widget = properties_widget;
     }
 
-    return m_properties_widget.ptr();
+    return *m_properties_widget;
 }
 
 }

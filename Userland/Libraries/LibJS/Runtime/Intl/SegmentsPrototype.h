@@ -13,13 +13,15 @@ namespace JS::Intl {
 
 class SegmentsPrototype final : public PrototypeObject<SegmentsPrototype, Segments> {
     JS_PROTOTYPE_OBJECT(SegmentsPrototype, Segments, Segments);
+    JS_DECLARE_ALLOCATOR(SegmentsPrototype);
 
 public:
-    explicit SegmentsPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~SegmentsPrototype() override = default;
 
 private:
+    explicit SegmentsPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(containing);
     JS_DECLARE_NATIVE_FUNCTION(symbol_iterator);
 };

@@ -6,6 +6,11 @@
 
 #pragma once
 
+// Includes essentially mandated by POSIX:
+// https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/semaphore.h.html
+#include <fcntl.h>
+#include <time.h>
+
 #include <limits.h>
 #include <pthread.h>
 #include <sys/cdefs.h>
@@ -13,8 +18,12 @@
 
 __BEGIN_DECLS
 
+#define SEM_FLAG_PROCESS_SHARED (1 << 0)
+#define SEM_FLAG_NAMED (1 << 1)
 typedef struct {
+    uint32_t magic;
     uint32_t value;
+    uint8_t flags;
 } sem_t;
 
 int sem_close(sem_t*);

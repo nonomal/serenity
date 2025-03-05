@@ -122,6 +122,14 @@ describe("correct behavior", () => {
         Object.setPrototypeOf(derived, base);
         expect(derived.getNumber()).toBe(30);
     });
+
+    test("assigning object expression with destination referenced in object expression", () => {
+        function go(i) {
+            var i = { f: i };
+            return i;
+        }
+        expect(go("foo")).toEqual({ f: "foo" });
+    });
 });
 
 describe("side effects", () => {
@@ -213,5 +221,44 @@ describe("errors", () => {
         expect("({ set foo(...bar) {} })").not.toEval();
         expect("({ set foo(bar, baz) {} })").not.toEval();
         expect("({ ...foo: bar })").not.toEval();
+    });
+});
+
+describe("naming of anon functions", () => {
+    test("method has name", () => {
+        expect({ func() {} }.func.name).toBe("func");
+    });
+
+    test("getter has name", () => {
+        expect(Object.getOwnPropertyDescriptor({ get func() {} }, "func").get.name).toBe(
+            "get func"
+        );
+    });
+
+    test("setter has name", () => {
+        expect(Object.getOwnPropertyDescriptor({ set func(v) {} }, "func").set.name).toBe(
+            "set func"
+        );
+    });
+
+    test("anon function property", () => {
+        expect({ func: function () {} }.func.name).toBe("func");
+    });
+
+    test("anon function from within parenthesis", () => {
+        expect({ func: function () {} }.func.name).toBe("func");
+    });
+
+    test("anon function from indirect expression", () => {
+        expect({ func: (0, function () {}) }.func.name).toBe("");
+    });
+
+    test("function from function call does not get named", () => {
+        function f() {
+            return function () {};
+        }
+
+        expect(f().name).toBe("");
+        expect({ func: f() }.func.name).toBe("");
     });
 });

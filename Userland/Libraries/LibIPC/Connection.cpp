@@ -7,80 +7,50 @@
 
 #include <LibCore/System.h>
 #include <LibIPC/Connection.h>
+#include <LibIPC/File.h>
 #include <LibIPC/Stub.h>
 #include <sys/select.h>
 
 namespace IPC {
 
-ConnectionBase::ConnectionBase(IPC::Stub& local_stub, NonnullOwnPtr<Core::Stream::LocalSocket> socket, u32 local_endpoint_magic)
+struct CoreEventLoopDeferredInvoker final : public DeferredInvoker {
+    virtual ~CoreEventLoopDeferredInvoker() = default;
+
+    virtual void schedule(Function<void()> callback) override
+    {
+        Core::deferred_invoke(move(callback));
+    }
+};
+
+ConnectionBase::ConnectionBase(IPC::Stub& local_stub, NonnullOwnPtr<Core::LocalSocket> socket, u32 local_endpoint_magic)
     : m_local_stub(local_stub)
     , m_socket(move(socket))
     , m_local_endpoint_magic(local_endpoint_magic)
+    , m_deferred_invoker(make<CoreEventLoopDeferredInvoker>())
 {
     m_responsiveness_timer = Core::Timer::create_single_shot(3000, [this] { may_have_become_unresponsive(); });
 }
 
-ErrorOr<void> ConnectionBase::post_message(Message const& message)
+void ConnectionBase::set_deferred_invoker(NonnullOwnPtr<DeferredInvoker> deferred_invoker)
 {
-    return post_message(message.encode());
+    m_deferred_invoker = move(deferred_invoker);
 }
 
-ErrorOr<void> ConnectionBase::post_message(MessageBuffer buffer)
+ErrorOr<void> ConnectionBase::post_message(Message const& message, MessageKind kind)
+{
+    return post_message(TRY(message.encode()), kind);
+}
+
+ErrorOr<void> ConnectionBase::post_message(MessageBuffer buffer, MessageKind kind)
 {
     // NOTE: If this connection is being shut down, but has not yet been destroyed,
     //       the socket will be closed. Don't try to send more messages.
     if (!m_socket->is_open())
         return Error::from_string_literal("Trying to post_message during IPC shutdown");
 
-    // Prepend the message size.
-    uint32_t message_size = buffer.data.size();
-    TRY(buffer.data.try_prepend(reinterpret_cast<u8 const*>(&message_size), sizeof(message_size)));
-
-#ifdef __serenity__
-    for (auto& fd : buffer.fds) {
-        if (auto result = m_socket->send_fd(fd.value()); result.is_error()) {
-            shutdown_with_error(result.error());
-            return result;
-        }
-    }
-#else
-    if (!buffer.fds.is_empty())
-        warnln("fd passing is not supported on this platform, sorry :(");
-#endif
-
-    ReadonlyBytes bytes_to_write { buffer.data.span() };
-    int writes_done = 0;
-    size_t initial_size = bytes_to_write.size();
-    while (!bytes_to_write.is_empty()) {
-        auto maybe_nwritten = m_socket->write(bytes_to_write);
-        writes_done++;
-        if (maybe_nwritten.is_error()) {
-            auto error = maybe_nwritten.release_error();
-            if (error.is_errno()) {
-                // FIXME: This is a hacky way to at least not crash on large messages
-                // The limit of 100 writes is arbitrary, and there to prevent indefinite spinning on the EventLoop
-                if (error.code() == EAGAIN && writes_done < 100) {
-                    sched_yield();
-                    continue;
-                }
-                shutdown_with_error(error);
-                switch (error.code()) {
-                case EPIPE:
-                    return Error::from_string_literal("IPC::Connection::post_message: Disconnected from peer");
-                case EAGAIN:
-                    return Error::from_string_literal("IPC::Connection::post_message: Peer buffer overflowed");
-                default:
-                    return Error::from_syscall("IPC::Connection::post_message write"sv, -error.code());
-                }
-            } else {
-                return error;
-            }
-        }
-
-        bytes_to_write = bytes_to_write.slice(maybe_nwritten.value());
-    }
-    if (writes_done > 1) {
-        dbgln("LibIPC::Connection FIXME Warning, needed {} writes needed to send message of size {}B, this is pretty bad, as it spins on the EventLoop", writes_done, initial_size);
+    if (auto result = buffer.transfer_message(*m_socket, kind == MessageKind::Sync); result.is_error()) {
+        shutdown_with_error(result.error());
+        return result.release_error();
     }
 
     m_responsiveness_timer->start();
@@ -103,10 +73,16 @@ void ConnectionBase::handle_messages()
 {
     auto messages = move(m_unprocessed_messages);
     for (auto& message : messages) {
-        if (message.endpoint_magic() == m_local_endpoint_magic) {
-            if (auto response = m_local_stub.handle(message)) {
-                if (auto result = post_message(*response); result.is_error()) {
-                    dbgln("IPC::ConnectionBase::handle_messages: {}", result.error());
+        if (message->endpoint_magic() == m_local_endpoint_magic) {
+            auto handler_result = m_local_stub.handle(*message);
+            if (handler_result.is_error()) {
+                dbgln("IPC::ConnectionBase::handle_messages: {}", handler_result.error());
+                continue;
+            }
+
+            if (auto response = handler_result.release_value()) {
+                if (auto post_result = post_message(*response, MessageKind::Async); post_result.is_error()) {
+                    dbgln("IPC::ConnectionBase::handle_messages: {}", post_result.error());
                 }
             }
         }
@@ -135,11 +111,26 @@ ErrorOr<Vector<u8>> ConnectionBase::read_as_much_as_possible_from_socket_without
     }
 
     u8 buffer[4096];
+    Vector<int> received_fds;
+
+    bool should_shut_down = false;
+    auto schedule_shutdown = [this, &should_shut_down]() {
+        should_shut_down = true;
+        m_deferred_invoker->schedule([strong_this = NonnullRefPtr(*this)] {
+            strong_this->shutdown();
+        });
+    };
+
     while (m_socket->is_open()) {
-        auto maybe_bytes_read = m_socket->read_without_waiting({ buffer, 4096 });
+        auto maybe_bytes_read = m_socket->receive_message({ buffer, 4096 }, MSG_DONTWAIT, received_fds);
         if (maybe_bytes_read.is_error()) {
             auto error = maybe_bytes_read.release_error();
             if (error.is_syscall() && error.code() == EAGAIN) {
+                break;
+            }
+
+            if (error.is_syscall() && error.code() == ECONNRESET) {
+                schedule_shutdown();
                 break;
             }
 
@@ -150,18 +141,20 @@ ErrorOr<Vector<u8>> ConnectionBase::read_as_much_as_possible_from_socket_without
 
         auto bytes_read = maybe_bytes_read.release_value();
         if (bytes_read.is_empty()) {
-            deferred_invoke([this] { shutdown(); });
-            if (!bytes.is_empty())
-                break;
-            return Error::from_string_literal("IPC connection EOF");
+            schedule_shutdown();
+            break;
         }
 
         bytes.append(bytes_read.data(), bytes_read.size());
+        for (auto const& fd : received_fds)
+            m_unprocessed_fds.enqueue(IPC::File::adopt_fd(fd));
     }
 
     if (!bytes.is_empty()) {
         m_responsiveness_timer->stop();
         did_become_responsive();
+    } else if (should_shut_down) {
+        return Error::from_string_literal("IPC connection EOF");
     }
 
     return bytes;
@@ -187,8 +180,8 @@ ErrorOr<void> ConnectionBase::drain_messages_from_peer()
     }
 
     if (!m_unprocessed_messages.is_empty()) {
-        deferred_invoke([this] {
-            handle_messages();
+        m_deferred_invoker->schedule([strong_this = NonnullRefPtr(*this)] {
+            strong_this->handle_messages();
         });
     }
     return {};
@@ -201,9 +194,9 @@ OwnPtr<IPC::Message> ConnectionBase::wait_for_specific_endpoint_message_impl(u32
         // Otherwise we might end up blocked for a while for no reason.
         for (size_t i = 0; i < m_unprocessed_messages.size(); ++i) {
             auto& message = m_unprocessed_messages[i];
-            if (message.endpoint_magic() != endpoint_magic)
+            if (message->endpoint_magic() != endpoint_magic)
                 continue;
-            if (message.message_id() == message_id)
+            if (message->message_id() == message_id)
                 return m_unprocessed_messages.take(i);
         }
 

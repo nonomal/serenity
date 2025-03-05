@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <Kernel/API/POSIX/signal_numbers.h>
 #include <Kernel/API/POSIX/sys/types.h>
 
 #ifdef __cplusplus
@@ -58,7 +59,7 @@ typedef struct {
 #define SIGSTKSZ 32768   // Recommended size
 
 #define SIG_DFL ((__sighandler_t)0)
-#define SIG_ERR ((__sighandler_t)-1)
+#define SIG_ERR ((__sighandler_t)(-1))
 #define SIG_IGN ((__sighandler_t)1)
 
 #define SA_NOCLDSTOP 1

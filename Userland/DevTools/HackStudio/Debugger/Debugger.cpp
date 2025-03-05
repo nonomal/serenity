@@ -1,11 +1,12 @@
 /*
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
+ * Copyright (c) 2024, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Debugger.h"
-#include <LibDebug/StackFrameUtils.h>
+#include <AK/StackUnwinder.h>
 
 namespace HackStudio {
 
@@ -18,12 +19,13 @@ Debugger& Debugger::the()
 }
 
 void Debugger::initialize(
-    String source_root,
+    ByteString source_root,
     Function<HasControlPassedToUser(PtraceRegisters const&)> on_stop_callback,
     Function<void()> on_continue_callback,
-    Function<void()> on_exit_callback)
+    Function<void()> on_exit_callback,
+    Function<void(float)> on_initialization_progress)
 {
-    s_the = new Debugger(source_root, move(on_stop_callback), move(on_continue_callback), move(on_exit_callback));
+    s_the = new Debugger(source_root, move(on_stop_callback), move(on_continue_callback), move(on_exit_callback), move(on_initialization_progress));
 }
 
 bool Debugger::is_initialized()
@@ -32,52 +34,62 @@ bool Debugger::is_initialized()
 }
 
 Debugger::Debugger(
-    String source_root,
+    ByteString source_root,
     Function<HasControlPassedToUser(PtraceRegisters const&)> on_stop_callback,
     Function<void()> on_continue_callback,
-    Function<void()> on_exit_callback)
+    Function<void()> on_exit_callback,
+    Function<void(float)> on_initialization_progress)
     : m_source_root(source_root)
     , m_on_stopped_callback(move(on_stop_callback))
     , m_on_continue_callback(move(on_continue_callback))
     , m_on_exit_callback(move(on_exit_callback))
+    , m_on_initialization_progress(move(on_initialization_progress))
 {
     pthread_mutex_init(&m_ui_action_mutex, nullptr);
     pthread_cond_init(&m_ui_action_cond, nullptr);
 }
 
-void Debugger::on_breakpoint_change(String const& file, size_t line, BreakpointChange change_type)
+bool Debugger::change_breakpoint(ByteString const& file, size_t line, BreakpointChange change_type)
 {
     auto position = create_source_position(file, line);
-
-    if (change_type == BreakpointChange::Added) {
-        m_breakpoints.append(position);
-    } else {
-        m_breakpoints.remove_all_matching([&](Debug::DebugInfo::SourcePosition const& val) { return val == position; });
-    }
-
     auto session = Debugger::the().session();
-    if (!session)
-        return;
+    if (session) {
+        auto address = session->get_address_from_source_position(position.file_path, position.line_number);
+        if (!address.has_value()) {
+            dbgln("Warning: couldn't get instruction address from source");
+            return false;
+        }
 
-    auto address = session->get_address_from_source_position(position.file_path, position.line_number);
-    if (!address.has_value()) {
-        dbgln("Warning: couldn't get instruction address from source");
-        // TODO: Currently, the GUI will indicate that a breakpoint was inserted/removed at this line,
-        // regardless of whether we actually succeeded to insert it. (For example a breakpoint on a comment, or an include statement).
-        // We should indicate failure via a return value from this function, and not update the breakpoint GUI if we fail.
-        return;
+        switch (change_type) {
+        case BreakpointChange::Added:
+            if (session->insert_breakpoint(address.value().address)) {
+                m_breakpoints.append(position);
+                return true;
+            }
+            break;
+        case BreakpointChange::Removed:
+            if (session->remove_breakpoint(address.value().address)) {
+                m_breakpoints.remove_all_matching([&](Debug::DebugInfo::SourcePosition const& val) { return val == position; });
+                return true;
+            }
+            break;
+        }
+        return false;
     }
 
-    if (change_type == BreakpointChange::Added) {
-        bool success = session->insert_breakpoint(address.value().address);
-        VERIFY(success);
-    } else {
-        bool success = session->remove_breakpoint(address.value().address);
-        VERIFY(success);
+    // No active session, so just modify our internal list of breakpoints
+    switch (change_type) {
+    case BreakpointChange::Added:
+        m_breakpoints.append(position);
+        return true;
+    case BreakpointChange::Removed:
+        m_breakpoints.remove_all_matching([&](Debug::DebugInfo::SourcePosition const& val) { return val == position; });
+        return true;
     }
+    VERIFY_NOT_REACHED();
 }
 
-bool Debugger::set_execution_position(String const& file, size_t line)
+bool Debugger::set_execution_position(ByteString const& file, size_t line)
 {
     auto position = create_source_position(file, line);
     auto session = Debugger::the().session();
@@ -92,11 +104,11 @@ bool Debugger::set_execution_position(String const& file, size_t line)
     return true;
 }
 
-Debug::DebugInfo::SourcePosition Debugger::create_source_position(String const& file, size_t line)
+Debug::DebugInfo::SourcePosition Debugger::create_source_position(ByteString const& file, size_t line)
 {
     if (file.starts_with('/'))
         return { file, line + 1 };
-    return { LexicalPath::canonicalized_path(String::formatted("{}/{}", m_source_root, file)), line + 1 };
+    return { LexicalPath::canonicalized_path(ByteString::formatted("{}/{}", m_source_root, file)), line + 1 };
 }
 
 intptr_t Debugger::start_static()
@@ -112,14 +124,8 @@ void Debugger::stop()
 
 void Debugger::start()
 {
-
-    auto child_setup_callback = [this]() {
-        if (m_child_setup_callback)
-            return m_child_setup_callback();
-        return ErrorOr<void> {};
-    };
-    m_debug_session = Debug::DebugSession::exec_and_attach(m_executable_path, m_source_root, move(child_setup_callback));
-    VERIFY(!!m_debug_session);
+    auto [debug_session, initial_state] = create_debug_session();
+    m_debug_session = move(debug_session);
 
     for (auto const& breakpoint : m_breakpoints) {
         dbgln("inserting breakpoint at: {}:{}", breakpoint.file_path, breakpoint.line_number);
@@ -128,18 +134,52 @@ void Debugger::start()
             bool success = m_debug_session->insert_breakpoint(address.value().address);
             VERIFY(success);
         } else {
+            // FIXME: Report the invalid breakpoint to the GUI somehow.
             dbgln("couldn't insert breakpoint");
         }
     }
 
-    debugger_loop();
+    debugger_loop(initial_state);
 }
 
-int Debugger::debugger_loop()
+Debugger::CreateDebugSessionResult Debugger::create_debug_session()
+{
+    if (!m_executable_path.is_empty()) {
+        auto child_setup_callback = [this]() {
+            if (m_child_setup_callback)
+                return m_child_setup_callback();
+            return ErrorOr<void> {};
+        };
+
+        auto on_initialization_progress = [this](float progress) {
+            if (m_on_initialization_progress)
+                m_on_initialization_progress(progress);
+        };
+
+        auto debug_session = Debug::DebugSession::exec_and_attach(m_executable_path, m_source_root, move(child_setup_callback), move(on_initialization_progress));
+        VERIFY(!!debug_session);
+        return { debug_session.release_nonnull(), Debug::DebugSession::Running };
+    }
+
+    if (m_pid_to_attach.has_value()) {
+        auto on_initialization_progress = [this](float progress) {
+            if (m_on_initialization_progress)
+                m_on_initialization_progress(progress);
+        };
+
+        auto debug_session = Debug::DebugSession::attach(m_pid_to_attach.value(), m_source_root, move(on_initialization_progress));
+        VERIFY(!!debug_session);
+        return { debug_session.release_nonnull(), Debug::DebugSession::Stopped };
+    }
+
+    VERIFY_NOT_REACHED();
+}
+
+int Debugger::debugger_loop(Debug::DebugSession::DesiredInitialDebugeeState initial_state)
 {
     VERIFY(m_debug_session);
 
-    m_debug_session->run(Debug::DebugSession::DesiredInitialDebugeeState::Running, [this](Debug::DebugSession::DebugBreakReason reason, Optional<PtraceRegisters> optional_regs) {
+    m_debug_session->run(initial_state, [this](Debug::DebugSession::DebugBreakReason reason, Optional<PtraceRegisters> optional_regs) {
         if (reason == Debug::DebugSession::DebugBreakReason::Exited) {
             dbgln("Program exited");
             m_on_exit_callback();
@@ -147,7 +187,7 @@ int Debugger::debugger_loop()
         }
         remove_temporary_breakpoints();
         VERIFY(optional_regs.has_value());
-        const PtraceRegisters& regs = optional_regs.value();
+        PtraceRegisters const& regs = optional_regs.value();
 
         auto source_position = m_debug_session->get_source_position(regs.ip());
         if (!source_position.has_value())
@@ -273,10 +313,23 @@ void Debugger::do_step_over(PtraceRegisters const& regs)
 
 void Debugger::insert_temporary_breakpoint_at_return_address(PtraceRegisters const& regs)
 {
-    auto frame_info = Debug::StackFrameUtils::get_info(*m_debug_session, regs.bp());
-    VERIFY(frame_info.has_value());
-    FlatPtr return_address = frame_info.value().return_address;
-    insert_temporary_breakpoint(return_address);
+    Optional<FlatPtr> return_address;
+    MUST(AK::unwind_stack_from_frame_pointer(
+        regs.bp(),
+        [this](FlatPtr address) -> ErrorOr<FlatPtr> {
+            auto maybe_value = m_debug_session->peek(address);
+            if (!maybe_value.has_value())
+                return EFAULT;
+
+            return maybe_value.value();
+        },
+        [&return_address](AK::StackFrame stack_frame) -> ErrorOr<IterationDecision> {
+            return_address = stack_frame.return_address;
+            return IterationDecision::Break;
+        }));
+
+    VERIFY(return_address.has_value());
+    insert_temporary_breakpoint(return_address.value());
 }
 
 void Debugger::insert_temporary_breakpoint(FlatPtr address)
@@ -294,6 +347,10 @@ void Debugger::set_requested_debugger_action(DebuggerAction action)
     m_requested_debugger_action = action;
     pthread_cond_signal(continue_cond());
     pthread_mutex_unlock(continue_mutex());
+}
+void Debugger::stop_debuggee()
+{
+    return m_debug_session->stop_debuggee();
 }
 
 }

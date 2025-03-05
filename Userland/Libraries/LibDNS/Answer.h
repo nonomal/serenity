@@ -7,8 +7,8 @@
 #pragma once
 
 #include "Name.h"
+#include <AK/ByteString.h>
 #include <AK/Format.h>
-#include <AK/String.h>
 #include <AK/Traits.h>
 #include <AK/Types.h>
 #include <LibIPC/Forward.h>
@@ -36,7 +36,7 @@ enum class RecordClass : u16 {
 class Answer {
 public:
     Answer() = default;
-    Answer(Name const& name, RecordType type, RecordClass class_code, u32 ttl, String const& record_data, bool mdns_cache_flush);
+    Answer(Name const& name, RecordType type, RecordClass class_code, u32 ttl, ByteString const& record_data, bool mdns_cache_flush);
 
     Name const& name() const { return m_name; }
     RecordType type() const { return m_type; }
@@ -44,7 +44,7 @@ public:
     u16 raw_class_code() const { return (u16)m_class_code | (m_mdns_cache_flush ? MDNS_CACHE_FLUSH : 0); }
     u32 ttl() const { return m_ttl; }
     time_t received_time() const { return m_received_time; }
-    String const& record_data() const { return m_record_data; }
+    ByteString const& record_data() const { return m_record_data; }
     bool mdns_cache_flush() const { return m_mdns_cache_flush; }
 
     bool has_expired() const;
@@ -58,14 +58,14 @@ private:
     RecordClass m_class_code { 0 };
     u32 m_ttl { 0 };
     time_t m_received_time { 0 };
-    String m_record_data;
+    ByteString m_record_data;
     bool m_mdns_cache_flush { false };
 };
 
 }
 
 template<>
-struct AK::Traits<DNS::Answer> : public GenericTraits<DNS::Answer> {
+struct AK::Traits<DNS::Answer> : public DefaultTraits<DNS::Answer> {
     static constexpr bool is_trivial() { return false; }
     static unsigned hash(DNS::Answer a) { return a.hash(); }
 };
@@ -94,7 +94,10 @@ struct AK::Formatter<DNS::RecordClass> : StandardFormatter {
 
 namespace IPC {
 
-bool encode(Encoder&, DNS::Answer const&);
-ErrorOr<void> decode(Decoder&, DNS::Answer&);
+template<>
+ErrorOr<void> encode(Encoder&, DNS::Answer const&);
+
+template<>
+ErrorOr<DNS::Answer> decode(Decoder&);
 
 }

@@ -6,13 +6,11 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
+#include <AK/Format.h>
 #include <AK/Optional.h>
-#include <AK/StdLibExtras.h>
-#include <AK/String.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Point.h>
-#include <LibGfx/Rect.h>
-#include <stdlib.h>
 
 namespace Gfx {
 
@@ -130,10 +128,44 @@ public:
     Point<T> const& a() const { return m_a; }
     Point<T> const& b() const { return m_b; }
 
+    Line<T> rotated(float radians)
+    {
+        Gfx::AffineTransform rotation_transform;
+        rotation_transform.rotate_radians(radians);
+
+        Line<T> line = *this;
+        line.set_a(line.a().transformed(rotation_transform));
+        line.set_b(line.b().transformed(rotation_transform));
+        return line;
+    }
+
     void set_a(Point<T> const& a) { m_a = a; }
     void set_b(Point<T> const& b) { m_b = b; }
 
-    String to_string() const;
+    Line<T> scaled(T sx, T sy) const
+    {
+        Line<T> line = *this;
+        line.set_a(line.a().scaled(sx, sy));
+        line.set_b(line.b().scaled(sx, sy));
+        return line;
+    }
+
+    Line<T> translated(Point<T> const& delta) const
+    {
+        Line<T> line = *this;
+        line.set_a(line.a().translated(delta));
+        line.set_b(line.b().translated(delta));
+        return line;
+    }
+
+    template<typename U>
+    requires(!IsSame<T, U>)
+    [[nodiscard]] ALWAYS_INLINE constexpr Line<U> to_type() const
+    {
+        return Line<U>(*this);
+    }
+
+    ByteString to_byte_string() const;
 
 private:
     Point<T> m_a;
@@ -141,15 +173,27 @@ private:
 };
 
 template<>
-inline String IntLine::to_string() const
+inline ByteString IntLine::to_byte_string() const
 {
-    return String::formatted("[{},{} -> {}x{}]", m_a.x(), m_a.y(), m_b.x(), m_b.y());
+    return ByteString::formatted("[{},{} -> {},{}]", m_a.x(), m_a.y(), m_b.x(), m_b.y());
 }
 
 template<>
-inline String FloatLine::to_string() const
+inline ByteString FloatLine::to_byte_string() const
 {
-    return String::formatted("[{},{} {}x{}]", m_a.x(), m_a.y(), m_b.x(), m_b.y());
+    return ByteString::formatted("[{},{} -> {},{}]", m_a.x(), m_a.y(), m_b.x(), m_b.y());
 }
+
+}
+
+namespace AK {
+
+template<typename T>
+struct Formatter<Gfx::Line<T>> : Formatter<FormatString> {
+    ErrorOr<void> format(FormatBuilder& builder, Gfx::Line<T> const& value)
+    {
+        return Formatter<FormatString>::format(builder, "[{},{} -> {},{}]"sv, value.a().x(), value.a().y(), value.b().x(), value.b().y());
+    }
+};
 
 }

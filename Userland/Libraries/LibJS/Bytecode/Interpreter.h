@@ -6,101 +6,104 @@
 
 #pragma once
 
-#include "Generator.h"
-#include "PassManager.h"
+#include <LibJS/Bytecode/Executable.h>
 #include <LibJS/Bytecode/Label.h>
 #include <LibJS/Bytecode/Register.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
-#include <LibJS/Heap/Handle.h>
+#include <LibJS/Runtime/FunctionKind.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS::Bytecode {
 
-struct RegisterWindow {
-    MarkedVector<Value> registers;
-    MarkedVector<Environment*> saved_lexical_environments;
-    MarkedVector<Environment*> saved_variable_environments;
-};
+class InstructionStreamIterator;
 
 class Interpreter {
 public:
-    Interpreter(GlobalObject&, Realm&);
+    explicit Interpreter(VM&);
     ~Interpreter();
 
-    // FIXME: Remove this thing once we don't need it anymore!
-    static Interpreter* current();
-
-    GlobalObject& global_object() { return m_global_object; }
-    Realm& realm() { return m_realm; }
+    [[nodiscard]] Realm& realm() { return *m_realm; }
+    [[nodiscard]] Object& global_object() { return *m_global_object; }
+    [[nodiscard]] DeclarativeEnvironment& global_declarative_environment() { return *m_global_declarative_environment; }
     VM& vm() { return m_vm; }
+    VM const& vm() const { return m_vm; }
 
-    ThrowCompletionOr<Value> run(Bytecode::Executable const& executable, Bytecode::BasicBlock const* entry_point = nullptr)
+    ThrowCompletionOr<Value> run(Script&, JS::GCPtr<Environment> lexical_environment_override = nullptr);
+    ThrowCompletionOr<Value> run(SourceTextModule&);
+
+    ThrowCompletionOr<Value> run(Bytecode::Executable& executable, Optional<size_t> entry_point = {}, Value initial_accumulator_value = {})
     {
-        auto value_and_frame = run_and_return_frame(executable, entry_point);
-        return move(value_and_frame.value);
+        auto result_and_return_register = run_executable(executable, entry_point, initial_accumulator_value);
+        return move(result_and_return_register.value);
     }
 
-    struct ValueAndFrame {
+    struct ResultAndReturnRegister {
         ThrowCompletionOr<Value> value;
-        OwnPtr<RegisterWindow> frame;
+        Value return_register_value;
     };
-    ValueAndFrame run_and_return_frame(Bytecode::Executable const&, Bytecode::BasicBlock const* entry_point, RegisterWindow* = nullptr);
+    ResultAndReturnRegister run_executable(Bytecode::Executable&, Optional<size_t> entry_point, Value initial_accumulator_value = {});
 
     ALWAYS_INLINE Value& accumulator() { return reg(Register::accumulator()); }
-    Value& reg(Register const& r) { return registers()[r.index()]; }
-
-    auto& saved_lexical_environment_stack() { return window().saved_lexical_environments; }
-    auto& saved_variable_environment_stack() { return window().saved_variable_environments; }
-
-    void jump(Label const& label)
+    ALWAYS_INLINE Value& saved_return_value() { return reg(Register::saved_return_value()); }
+    Value& reg(Register const& r)
     {
-        m_pending_jump = &label.block();
+        return m_registers_and_constants_and_locals.data()[r.index()];
     }
-    void do_return(Value return_value) { m_return_value = return_value; }
+    Value reg(Register const& r) const
+    {
+        return m_registers_and_constants_and_locals.data()[r.index()];
+    }
 
-    void enter_unwind_context(Optional<Label> handler_target, Optional<Label> finalizer_target);
+    [[nodiscard]] Value get(Operand) const;
+    void set(Operand, Value);
+
+    Value do_yield(Value value, Optional<Label> continuation);
+    void do_return(Value value)
+    {
+        reg(Register::return_value()) = value;
+        reg(Register::exception()) = {};
+    }
+
+    void enter_unwind_context();
     void leave_unwind_context();
-    ThrowCompletionOr<void> continue_pending_unwind(Label const& resume_label);
+    void catch_exception(Operand dst);
+    void restore_scheduled_jump();
+    void leave_finally();
 
-    Executable const& current_executable() { return *m_current_executable; }
+    void enter_object_environment(Object&);
 
-    enum class OptimizationLevel {
-        Default,
-        __Count,
-    };
-    static Bytecode::PassManager& optimization_pipeline(OptimizationLevel = OptimizationLevel::Default);
+    Executable& current_executable() { return *m_current_executable; }
+    Executable const& current_executable() const { return *m_current_executable; }
+    Optional<size_t> program_counter() const { return m_program_counter.copy(); }
 
-    VM::InterpreterExecutionScope ast_interpreter_scope();
+    ExecutionContext& running_execution_context() { return *m_running_execution_context; }
 
 private:
-    RegisterWindow& window()
-    {
-        return m_register_windows.last().visit([](auto& x) -> RegisterWindow& { return *x; });
-    }
+    void run_bytecode(size_t entry_point);
 
-    RegisterWindow const& window() const
-    {
-        return const_cast<Interpreter*>(this)->window();
-    }
-
-    MarkedVector<Value>& registers() { return window().registers; }
-
-    static AK::Array<OwnPtr<PassManager>, static_cast<UnderlyingType<Interpreter::OptimizationLevel>>(Interpreter::OptimizationLevel::__Count)> s_optimization_pipelines;
+    enum class HandleExceptionResponse {
+        ExitFromExecutable,
+        ContinueInThisExecutable,
+    };
+    [[nodiscard]] HandleExceptionResponse handle_exception(size_t& program_counter, Value exception);
 
     VM& m_vm;
-    GlobalObject& m_global_object;
-    Realm& m_realm;
-    Vector<Variant<NonnullOwnPtr<RegisterWindow>, RegisterWindow*>> m_register_windows;
-    Optional<BasicBlock const*> m_pending_jump;
-    Value m_return_value;
-    Executable const* m_current_executable { nullptr };
-    Vector<UnwindInfo> m_unwind_contexts;
-    Handle<Value> m_saved_exception;
-    OwnPtr<JS::Interpreter> m_ast_interpreter;
+    Optional<size_t> m_scheduled_jump;
+    GCPtr<Executable> m_current_executable { nullptr };
+    GCPtr<Realm> m_realm { nullptr };
+    GCPtr<Object> m_global_object { nullptr };
+    GCPtr<DeclarativeEnvironment> m_global_declarative_environment { nullptr };
+    Optional<size_t&> m_program_counter;
+    Span<Value> m_arguments;
+    Span<Value> m_registers_and_constants_and_locals;
+    ExecutionContext* m_running_execution_context { nullptr };
 };
 
 extern bool g_dump_bytecode;
+
+ThrowCompletionOr<NonnullGCPtr<Bytecode::Executable>> compile(VM&, ASTNode const&, JS::FunctionKind kind, DeprecatedFlyString const& name);
+ThrowCompletionOr<NonnullGCPtr<Bytecode::Executable>> compile(VM&, ECMAScriptFunctionObject const&);
 
 }

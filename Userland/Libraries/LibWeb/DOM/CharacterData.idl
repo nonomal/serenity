@@ -1,10 +1,12 @@
+#import <DOM/ChildNode.idl>
 #import <DOM/Element.idl>
 #import <DOM/Node.idl>
 
+// https://dom.spec.whatwg.org/#characterdata
+[Exposed=Window]
 interface CharacterData : Node {
-
     [LegacyNullToEmptyString] attribute DOMString data;
-    readonly attribute unsigned long length;
+    [ImplementedAs=length_in_utf16_code_units] readonly attribute unsigned long length;
 
     DOMString substringData(unsigned long offset, unsigned long count);
     undefined appendData(DOMString data);
@@ -12,13 +14,9 @@ interface CharacterData : Node {
     undefined deleteData(unsigned long offset, unsigned long count);
     undefined replaceData(unsigned long offset, unsigned long count, DOMString data);
 
-    readonly attribute Element? nextElementSibling;
+    // https://dom.spec.whatwg.org/#interface-nondocumenttypechildnode
     readonly attribute Element? previousElementSibling;
-
-    // FIXME: These should come from a ChildNode mixin
-    [CEReactions, Unscopable] undefined before((Node or DOMString)... nodes);
-    [CEReactions, Unscopable] undefined after((Node or DOMString)... nodes);
-    [CEReactions, Unscopable] undefined replaceWith((Node or DOMString)... nodes);
-    [CEReactions, Unscopable, ImplementedAs=remove_binding] undefined remove();
-
+    readonly attribute Element? nextElementSibling;
 };
+
+CharacterData includes ChildNode;

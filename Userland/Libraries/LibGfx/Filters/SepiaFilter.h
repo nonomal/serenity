@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/StdLibExtras.h>
 #include <AK/StringView.h>
 #include <LibGfx/Filters/ColorFilter.h>
 #include <math.h>
@@ -15,19 +14,18 @@ namespace Gfx {
 
 class SepiaFilter : public ColorFilter {
 public:
-    SepiaFilter(float amount = 1.0f)
-        : m_amount(amount)
-    {
-    }
+    using ColorFilter::ColorFilter;
     virtual ~SepiaFilter() = default;
 
     virtual StringView class_name() const override { return "SepiaFilter"sv; }
 
-protected:
-    Color convert_color(Color original) override { return original.sepia(m_amount); };
+    virtual bool amount_handled_in_filter() const override
+    {
+        return true;
+    }
 
-private:
-    float m_amount;
+protected:
+    Color convert_color(Color original) override { return original.sepia(m_amount); }
 };
 
 }

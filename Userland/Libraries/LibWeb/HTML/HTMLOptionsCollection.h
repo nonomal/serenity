@@ -7,33 +7,38 @@
 #pragma once
 
 #include <AK/Variant.h>
-#include <LibWeb/DOM/ExceptionOr.h>
 #include <LibWeb/DOM/HTMLCollection.h>
+#include <LibWeb/WebIDL/ExceptionOr.h>
+#include <LibWeb/WebIDL/Types.h>
 
 namespace Web::HTML {
 
-using HTMLOptionOrOptGroupElement = Variant<NonnullRefPtr<HTMLOptionElement>, NonnullRefPtr<HTMLOptGroupElement>>;
-using HTMLElementOrElementIndex = Variant<NonnullRefPtr<HTMLElement>, i32>;
+using HTMLOptionOrOptGroupElement = Variant<JS::Handle<HTMLOptionElement>, JS::Handle<HTMLOptGroupElement>>;
+using HTMLElementOrElementIndex = Variant<JS::Handle<HTMLElement>, i32>;
 
 class HTMLOptionsCollection final : public DOM::HTMLCollection {
+    WEB_PLATFORM_OBJECT(HTMLOptionsCollection, DOM::HTMLCollection);
+    JS_DECLARE_ALLOCATOR(HTMLOptionsCollection);
+
 public:
-    using WrapperType = Bindings::HTMLOptionsCollectionWrapper;
+    [[nodiscard]] static JS::NonnullGCPtr<HTMLOptionsCollection> create(DOM::ParentNode& root, ESCAPING Function<bool(DOM::Element const&)> filter);
+    virtual ~HTMLOptionsCollection() override;
 
-    static NonnullRefPtr<HTMLOptionsCollection> create(DOM::ParentNode& root, Function<bool(DOM::Element const&)> filter)
-    {
-        return adopt_ref(*new HTMLOptionsCollection(root, move(filter)));
-    }
+    WebIDL::ExceptionOr<void> set_value_of_indexed_property(u32, JS::Value) override;
 
-    DOM::ExceptionOr<void> add(HTMLOptionOrOptGroupElement element, Optional<HTMLElementOrElementIndex> before = {});
+    WebIDL::ExceptionOr<void> set_length(WebIDL::UnsignedLong);
 
-protected:
-    HTMLOptionsCollection(DOM::ParentNode& root, Function<bool(DOM::Element const&)> filter);
+    WebIDL::ExceptionOr<void> add(HTMLOptionOrOptGroupElement element, Optional<HTMLElementOrElementIndex> before = {});
+
+    void remove(WebIDL::Long);
+
+    WebIDL::Long selected_index() const;
+    void set_selected_index(WebIDL::Long);
+
+private:
+    HTMLOptionsCollection(DOM::ParentNode& root, ESCAPING Function<bool(DOM::Element const&)> filter);
+
+    virtual void initialize(JS::Realm&) override;
 };
-
-}
-
-namespace Web::Bindings {
-
-HTMLOptionsCollectionWrapper* wrap(JS::GlobalObject&, HTML::HTMLOptionsCollection&);
 
 }

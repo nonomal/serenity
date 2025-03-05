@@ -287,9 +287,15 @@ describe("correct behavior", () => {
         const en4 = new Intl.NumberFormat("en", { useGrouping: true });
         expect(en4.resolvedOptions().useGrouping).toBe("always");
 
+        const en5 = new Intl.NumberFormat("en", { useGrouping: "false" });
+        expect(en5.resolvedOptions().useGrouping).toBe("auto");
+
+        const en6 = new Intl.NumberFormat("en", { useGrouping: "true" });
+        expect(en6.resolvedOptions().useGrouping).toBe("auto");
+
         ["auto", "always", "min2"].forEach(useGrouping => {
-            const en5 = new Intl.NumberFormat("en", { useGrouping: useGrouping });
-            expect(en5.resolvedOptions().useGrouping).toBe(useGrouping);
+            const en7 = new Intl.NumberFormat("en", { useGrouping: useGrouping });
+            expect(en7.resolvedOptions().useGrouping).toBe(useGrouping);
         });
     });
 
@@ -342,11 +348,7 @@ describe("correct behavior", () => {
 
         [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000].forEach(
             roundingIncrement => {
-                const en2 = new Intl.NumberFormat("en", {
-                    roundingIncrement: roundingIncrement,
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                });
+                const en2 = new Intl.NumberFormat("en", { roundingIncrement: roundingIncrement });
                 expect(en2.resolvedOptions().roundingIncrement).toBe(roundingIncrement);
             }
         );

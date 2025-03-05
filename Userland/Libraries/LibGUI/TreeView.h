@@ -43,6 +43,7 @@ public:
 protected:
     TreeView();
 
+    virtual void mousedown_event(MouseEvent&) override;
     virtual void paint_event(PaintEvent&) override;
     virtual void doubleclick_event(MouseEvent&) override;
     virtual void keydown_event(KeyEvent&) override;
@@ -52,9 +53,8 @@ protected:
     virtual void move_cursor(CursorMovement, SelectionUpdate) override;
 
 private:
-    virtual ModelIndex index_at_event_position(Gfx::IntPoint const&, bool& is_toggle) const override;
+    virtual ModelIndex index_at_event_position(Gfx::IntPoint, bool& is_toggle) const override;
 
-    int row_height() const { return 16; }
     int max_item_width() const { return frame_inner_rect().width(); }
     int indent_width_in_pixels() const { return 16; }
     int icon_size() const { return 16; }

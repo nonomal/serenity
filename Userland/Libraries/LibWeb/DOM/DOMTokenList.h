@@ -1,5 +1,7 @@
 /*
  * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Luke Wilde <lukew@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,56 +10,55 @@
 
 #include <AK/FlyString.h>
 #include <AK/Optional.h>
-#include <AK/RefCounted.h>
 #include <AK/String.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/DOM/ExceptionOr.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::DOM {
 
 // https://dom.spec.whatwg.org/#domtokenlist
-class DOMTokenList final
-    : public RefCounted<DOMTokenList>
-    , public Bindings::Wrappable {
+class DOMTokenList final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(DOMTokenList, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(DOMTokenList);
 
 public:
-    using WrapperType = Bindings::DOMTokenListWrapper;
-
-    static NonnullRefPtr<DOMTokenList> create(Element const& associated_element, FlyString associated_attribute);
+    [[nodiscard]] static JS::NonnullGCPtr<DOMTokenList> create(Element& associated_element, FlyString associated_attribute);
     ~DOMTokenList() = default;
 
     void associated_attribute_changed(StringView value);
-    bool is_supported_property_index(u32 index) const;
+
+    virtual Optional<JS::Value> item_value(size_t index) const override;
 
     size_t length() const { return m_token_set.size(); }
-    String const& item(size_t index) const;
-    bool contains(StringView token);
-    ExceptionOr<void> add(Vector<String> const& tokens);
-    ExceptionOr<void> remove(Vector<String> const& tokens);
-    ExceptionOr<bool> toggle(String const& token, Optional<bool> force);
-    ExceptionOr<bool> replace(String const& token, String const& new_token);
-    ExceptionOr<bool> supports(StringView token);
+    Optional<String> item(size_t index) const;
+    bool contains(String const& token);
+    WebIDL::ExceptionOr<void> add(Vector<String> const& tokens);
+    WebIDL::ExceptionOr<void> remove(Vector<String> const& tokens);
+    WebIDL::ExceptionOr<bool> toggle(String const& token, Optional<bool> force);
+    WebIDL::ExceptionOr<bool> replace(String const& token, String const& new_token);
+    WebIDL::ExceptionOr<bool> supports(StringView token);
     String value() const;
-    void set_value(String value);
+    void set_value(String const& value);
 
 private:
-    DOMTokenList(Element const& associated_element, FlyString associated_attribute);
+    DOMTokenList(Element& associated_element, FlyString associated_attribute);
 
-    ExceptionOr<void> validate_token(StringView token) const;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    WebIDL::ExceptionOr<void> validate_token(StringView token) const;
+    WebIDL::ExceptionOr<void> validate_token_not_empty(StringView token) const;
+    WebIDL::ExceptionOr<void> validate_token_not_whitespace(StringView token) const;
     void run_update_steps();
 
-    WeakPtr<Element> m_associated_element;
+    String serialize_ordered_set() const;
+
+    JS::NonnullGCPtr<Element> m_associated_element;
     FlyString m_associated_attribute;
     Vector<String> m_token_set;
 };
-
-}
-
-namespace Web::Bindings {
-
-DOMTokenListWrapper* wrap(JS::GlobalObject&, DOM::DOMTokenList&);
 
 }

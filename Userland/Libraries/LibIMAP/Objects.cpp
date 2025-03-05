@@ -9,18 +9,18 @@
 
 namespace IMAP {
 
-String Sequence::serialize() const
+ByteString Sequence::serialize() const
 {
     if (start == end) {
-        return AK::String::formatted("{}", start);
+        return AK::ByteString::formatted("{}", start);
     } else {
-        auto start_char = start != -1 ? String::formatted("{}", start) : "*";
-        auto end_char = end != -1 ? String::formatted("{}", end) : "*";
-        return String::formatted("{}:{}", start_char, end_char);
+        auto start_char = start != -1 ? ByteString::formatted("{}", start) : "*";
+        auto end_char = end != -1 ? ByteString::formatted("{}", end) : "*";
+        return ByteString::formatted("{}:{}", start_char, end_char);
     }
 }
 
-String FetchCommand::DataItem::Section::serialize() const
+ByteString FetchCommand::DataItem::Section::serialize() const
 {
     StringBuilder headers_builder;
     switch (type) {
@@ -41,7 +41,7 @@ String FetchCommand::DataItem::Section::serialize() const
             first = false;
         }
         headers_builder.append(')');
-        return headers_builder.build();
+        return headers_builder.to_byte_string();
     }
     case SectionType::Text:
         return "TEXT";
@@ -57,12 +57,12 @@ String FetchCommand::DataItem::Section::serialize() const
         if (ends_with_mime) {
             sb.append(".MIME"sv);
         }
-        return sb.build();
+        return sb.to_byte_string();
     }
     }
     VERIFY_NOT_REACHED();
 }
-String FetchCommand::DataItem::serialize() const
+ByteString FetchCommand::DataItem::serialize() const
 {
     switch (type) {
     case DataItemType::Envelope:
@@ -74,22 +74,24 @@ String FetchCommand::DataItem::serialize() const
     case DataItemType::UID:
         return "UID";
     case DataItemType::PeekBody:
-        TODO();
     case DataItemType::BodySection: {
         StringBuilder sb;
-        sb.appendff("BODY[{}]", section.value().serialize());
+        if (type == DataItemType::BodySection)
+            sb.appendff("BODY[{}]", section.value().serialize());
+        else
+            sb.appendff("BODY.PEEK[{}]", section.value().serialize());
         if (partial_fetch) {
             sb.appendff("<{}.{}>", start, octets);
         }
 
-        return sb.build();
+        return sb.to_byte_string();
     }
     case DataItemType::BodyStructure:
         return "BODYSTRUCTURE";
     }
     VERIFY_NOT_REACHED();
 }
-String FetchCommand::serialize()
+ByteString FetchCommand::serialize()
 {
     StringBuilder sequence_builder;
     bool first = true;
@@ -111,9 +113,9 @@ String FetchCommand::serialize()
         first = false;
     }
 
-    return AK::String::formatted("{} ({})", sequence_builder.build(), data_items_builder.build());
+    return AK::ByteString::formatted("{} ({})", sequence_builder.to_byte_string(), data_items_builder.to_byte_string());
 }
-String serialize_astring(StringView string)
+ByteString serialize_astring(StringView string)
 {
     // Try to send an atom
     auto is_non_atom_char = [](char x) {
@@ -129,58 +131,58 @@ String serialize_astring(StringView string)
     auto can_be_quoted = !(string.contains('\n') || string.contains('\r'));
     if (can_be_quoted) {
         auto escaped_str = string.replace("\\"sv, "\\\\"sv, ReplaceMode::All).replace("\""sv, "\\\""sv, ReplaceMode::All);
-        return String::formatted("\"{}\"", escaped_str);
+        return ByteString::formatted("\"{}\"", escaped_str);
     }
 
     // Just send a literal
-    return String::formatted("{{{}}}\r\n{}", string.length(), string);
+    return ByteString::formatted("{{{}}}\r\n{}", string.length(), string);
 }
-String SearchKey::serialize() const
+ByteString SearchKey::serialize() const
 {
     return data.visit(
-        [&](All const&) { return String("ALL"); },
-        [&](Answered const&) { return String("ANSWERED"); },
-        [&](Bcc const& x) { return String::formatted("BCC {}", serialize_astring(x.bcc)); },
-        [&](Cc const& x) { return String::formatted("CC {}", serialize_astring(x.cc)); },
-        [&](Deleted const&) { return String("DELETED"); },
-        [&](Draft const&) { return String("DRAFT"); },
-        [&](From const& x) { return String::formatted("FROM {}", serialize_astring(x.from)); },
-        [&](Header const& x) { return String::formatted("HEADER {} {}", serialize_astring(x.header), serialize_astring(x.value)); },
-        [&](Keyword const& x) { return String::formatted("KEYWORD {}", x.keyword); },
-        [&](Larger const& x) { return String::formatted("LARGER {}", x.number); },
-        [&](New const&) { return String("NEW"); },
-        [&](Not const& x) { return String::formatted("NOT {}", x.operand->serialize()); },
-        [&](Old const&) { return String("OLD"); },
-        [&](On const& x) { return String::formatted("ON {}", x.date.to_string("%d-%b-%Y"sv)); },
-        [&](Or const& x) { return String::formatted("OR {} {}", x.lhs->serialize(), x.rhs->serialize()); },
-        [&](Recent const&) { return String("RECENT"); },
+        [&](All const&) { return ByteString("ALL"); },
+        [&](Answered const&) { return ByteString("ANSWERED"); },
+        [&](Bcc const& x) { return ByteString::formatted("BCC {}", serialize_astring(x.bcc)); },
+        [&](Cc const& x) { return ByteString::formatted("CC {}", serialize_astring(x.cc)); },
+        [&](Deleted const&) { return ByteString("DELETED"); },
+        [&](Draft const&) { return ByteString("DRAFT"); },
+        [&](From const& x) { return ByteString::formatted("FROM {}", serialize_astring(x.from)); },
+        [&](Header const& x) { return ByteString::formatted("HEADER {} {}", serialize_astring(x.header), serialize_astring(x.value)); },
+        [&](Keyword const& x) { return ByteString::formatted("KEYWORD {}", x.keyword); },
+        [&](Larger const& x) { return ByteString::formatted("LARGER {}", x.number); },
+        [&](New const&) { return ByteString("NEW"); },
+        [&](Not const& x) { return ByteString::formatted("NOT {}", x.operand->serialize()); },
+        [&](Old const&) { return ByteString("OLD"); },
+        [&](On const& x) { return ByteString::formatted("ON {}", x.date.to_byte_string("%d-%b-%Y"sv)); },
+        [&](Or const& x) { return ByteString::formatted("OR {} {}", x.lhs->serialize(), x.rhs->serialize()); },
+        [&](Recent const&) { return ByteString("RECENT"); },
         [&](SearchKeys const& x) {
             StringBuilder sb;
             sb.append('(');
             bool first = true;
-            for (const auto& item : x.keys) {
+            for (auto const& item : x.keys) {
                 if (!first)
                     sb.append(", "sv);
                 sb.append(item->serialize());
                 first = false;
             }
-            return sb.build();
+            return sb.to_byte_string();
         },
-        [&](Seen const&) { return String("SEEN"); },
-        [&](SentBefore const& x) { return String::formatted("SENTBEFORE {}", x.date.to_string("%d-%b-%Y"sv)); },
-        [&](SentOn const& x) { return String::formatted("SENTON {}", x.date.to_string("%d-%b-%Y"sv)); },
-        [&](SentSince const& x) { return String::formatted("SENTSINCE {}", x.date.to_string("%d-%b-%Y"sv)); },
+        [&](Seen const&) { return ByteString("SEEN"); },
+        [&](SentBefore const& x) { return ByteString::formatted("SENTBEFORE {}", x.date.to_byte_string("%d-%b-%Y"sv)); },
+        [&](SentOn const& x) { return ByteString::formatted("SENTON {}", x.date.to_byte_string("%d-%b-%Y"sv)); },
+        [&](SentSince const& x) { return ByteString::formatted("SENTSINCE {}", x.date.to_byte_string("%d-%b-%Y"sv)); },
         [&](SequenceSet const& x) { return x.sequence.serialize(); },
-        [&](Since const& x) { return String::formatted("SINCE {}", x.date.to_string("%d-%b-%Y"sv)); },
-        [&](Smaller const& x) { return String::formatted("SMALLER {}", x.number); },
-        [&](Subject const& x) { return String::formatted("SUBJECT {}", serialize_astring(x.subject)); },
-        [&](Text const& x) { return String::formatted("TEXT {}", serialize_astring(x.text)); },
-        [&](To const& x) { return String::formatted("TO {}", serialize_astring(x.to)); },
-        [&](UID const& x) { return String::formatted("UID {}", x.uid); },
-        [&](Unanswered const&) { return String("UNANSWERED"); },
-        [&](Undeleted const&) { return String("UNDELETED"); },
-        [&](Undraft const&) { return String("UNDRAFT"); },
-        [&](Unkeyword const& x) { return String::formatted("UNKEYWORD {}", serialize_astring(x.flag_keyword)); },
-        [&](Unseen const&) { return String("UNSEEN"); });
+        [&](Since const& x) { return ByteString::formatted("SINCE {}", x.date.to_byte_string("%d-%b-%Y"sv)); },
+        [&](Smaller const& x) { return ByteString::formatted("SMALLER {}", x.number); },
+        [&](Subject const& x) { return ByteString::formatted("SUBJECT {}", serialize_astring(x.subject)); },
+        [&](Text const& x) { return ByteString::formatted("TEXT {}", serialize_astring(x.text)); },
+        [&](To const& x) { return ByteString::formatted("TO {}", serialize_astring(x.to)); },
+        [&](UID const& x) { return ByteString::formatted("UID {}", x.uid); },
+        [&](Unanswered const&) { return ByteString("UNANSWERED"); },
+        [&](Undeleted const&) { return ByteString("UNDELETED"); },
+        [&](Undraft const&) { return ByteString("UNDRAFT"); },
+        [&](Unkeyword const& x) { return ByteString::formatted("UNKEYWORD {}", serialize_astring(x.flag_keyword)); },
+        [&](Unseen const&) { return ByteString("UNSEEN"); });
 }
 }

@@ -6,14 +6,14 @@
  */
 
 #include <AK/BuiltinWrappers.h>
+#include <AK/ByteString.h>
 #include <AK/Format.h>
 #include <AK/PrintfImplementation.h>
 #include <AK/ScopedValueRollback.h>
 #include <AK/StdLibExtras.h>
-#include <AK/String.h>
-#include <LibC/bits/mutex_locker.h>
-#include <LibC/bits/stdio_file_implementation.h>
 #include <assert.h>
+#include <bits/mutex_locker.h>
+#include <bits/stdio_file_implementation.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -276,7 +276,7 @@ bool FILE::gets(T* data, size_t size)
         if (m_buffer.may_use()) {
             // Let's see if the buffer has something queued for us.
             size_t queued_size;
-            const T* queued_data = bit_cast<const T*>(m_buffer.begin_dequeue(queued_size));
+            T const* queued_data = bit_cast<T const*>(m_buffer.begin_dequeue(queued_size));
             queued_size /= sizeof(T);
             if (queued_size == 0) {
                 // Nothing buffered; we're going to have to read some.
@@ -631,18 +631,19 @@ char* fgets(char* buffer, int size, FILE* stream)
 int fgetc(FILE* stream)
 {
     VERIFY(stream);
-    char ch;
-    size_t nread = fread(&ch, sizeof(char), 1, stream);
-    if (nread == 1)
+    unsigned char ch;
+    size_t nread = fread(&ch, sizeof(unsigned char), 1, stream);
+    if (nread == 1) {
         return ch;
+    }
     return EOF;
 }
 
 int fgetc_unlocked(FILE* stream)
 {
     VERIFY(stream);
-    char ch;
-    size_t nread = fread_unlocked(&ch, sizeof(char), 1, stream);
+    unsigned char ch;
+    size_t nread = fread_unlocked(&ch, sizeof(unsigned char), 1, stream);
     if (nread == 1)
         return ch;
     return EOF;
@@ -906,6 +907,23 @@ int fprintf(FILE* stream, char const* fmt, ...)
     return ret;
 }
 
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/vdprintf.html
+int vdprintf(int fd, char const* fmt, va_list ap)
+{
+    // FIXME: Implement buffering so that we don't issue one write syscall for every character.
+    return printf_internal([fd](auto, char ch) { write(fd, &ch, 1); }, nullptr, fmt, ap);
+}
+
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/dprintf.html
+int dprintf(int fd, char const* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = vdprintf(fd, fmt, ap);
+    va_end(ap);
+    return ret;
+}
+
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/vprintf.html
 int vprintf(char const* fmt, va_list ap)
 {
@@ -929,7 +947,7 @@ int vasprintf(char** strp, char const* fmt, va_list ap)
     builder.appendvf(fmt, ap);
     VERIFY(builder.length() <= NumericLimits<int>::max());
     int length = builder.length();
-    *strp = strdup(builder.to_string().characters());
+    *strp = strdup(builder.to_byte_string().characters());
     return length;
 }
 
@@ -943,7 +961,7 @@ int asprintf(char** strp, char const* fmt, ...)
     va_end(ap);
     VERIFY(builder.length() <= NumericLimits<int>::max());
     int length = builder.length();
-    *strp = strdup(builder.to_string().characters());
+    *strp = strdup(builder.to_byte_string().characters());
     return length;
 }
 
@@ -1125,11 +1143,17 @@ int fclose(FILE* stream)
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html
 int rename(char const* oldpath, char const* newpath)
 {
+    return renameat(AT_FDCWD, oldpath, AT_FDCWD, newpath);
+}
+
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/renameat.html
+int renameat(int olddirfd, char const* oldpath, int newdirfd, char const* newpath)
+{
     if (!oldpath || !newpath) {
         errno = EFAULT;
         return -1;
     }
-    Syscall::SC_rename_params params { { oldpath, strlen(oldpath) }, { newpath, strlen(newpath) } };
+    Syscall::SC_rename_params params { olddirfd, { oldpath, strlen(oldpath) }, newdirfd, { newpath, strlen(newpath) } };
     int rc = syscall(SC_rename, &params);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }

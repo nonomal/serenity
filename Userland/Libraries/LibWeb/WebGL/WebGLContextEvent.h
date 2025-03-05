@@ -1,45 +1,39 @@
 /*
  * Copyright (c) 2022, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/FlyString.h>
 #include <LibWeb/DOM/Event.h>
 
 namespace Web::WebGL {
 
 struct WebGLContextEventInit final : public DOM::EventInit {
-    String status_message { String::empty() };
+    String status_message;
 };
 
 class WebGLContextEvent final : public DOM::Event {
+    WEB_PLATFORM_OBJECT(WebGLContextEvent, DOM::Event);
+    JS_DECLARE_ALLOCATOR(WebGLContextEvent);
+
 public:
-    using WrapperType = Bindings::WebGLContextEventWrapper;
+    [[nodiscard]] static JS::NonnullGCPtr<WebGLContextEvent> create(JS::Realm&, FlyString const& type, WebGLContextEventInit const&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<WebGLContextEvent>> construct_impl(JS::Realm&, FlyString const& type, WebGLContextEventInit const&);
 
-    static NonnullRefPtr<WebGLContextEvent> create(FlyString const& type, WebGLContextEventInit const& event_init)
-    {
-        return adopt_ref(*new WebGLContextEvent(type, event_init));
-    }
-
-    static NonnullRefPtr<WebGLContextEvent> create_with_global_object(Bindings::WindowObject&, FlyString const& type, WebGLContextEventInit const& event_init)
-    {
-        return adopt_ref(*new WebGLContextEvent(type, event_init));
-    }
-
-    virtual ~WebGLContextEvent() override = default;
+    virtual ~WebGLContextEvent() override;
 
     String const& status_message() const { return m_status_message; }
 
 private:
-    WebGLContextEvent(FlyString const& type, WebGLContextEventInit const& event_init)
-        : DOM::Event(type, event_init)
-        , m_status_message(event_init.status_message)
-    {
-    }
+    WebGLContextEvent(JS::Realm&, FlyString const& type, WebGLContextEventInit const& event_init);
 
-    String m_status_message { String::empty() };
+    virtual void initialize(JS::Realm&) override;
+
+    String m_status_message;
 };
 
 }

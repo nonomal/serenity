@@ -7,8 +7,9 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/OwnPtr.h>
-#include <AK/String.h>
+#include <LibIPC/Forward.h>
 
 namespace AK {
 class BufferStream;
@@ -16,22 +17,19 @@ class BufferStream;
 
 namespace IPC {
 
-class Message;
-struct MessageBuffer;
-
 class Stub {
 public:
     virtual ~Stub() = default;
 
     virtual u32 magic() const = 0;
-    virtual String name() const = 0;
-    virtual OwnPtr<MessageBuffer> handle(Message const&) = 0;
+    virtual ByteString name() const = 0;
+    virtual ErrorOr<OwnPtr<MessageBuffer>> handle(Message const&) = 0;
 
 protected:
     Stub() = default;
 
 private:
-    String m_name;
+    ByteString m_name;
 };
 
 }

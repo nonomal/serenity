@@ -6,13 +6,12 @@
 
 #include <AK/LexicalPath.h>
 #include <LibArchive/Zip.h>
-#include <LibCompress/Deflate.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/DateTime.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
-#include <LibCore/FileStream.h>
 #include <LibCore/System.h>
-#include <LibCrypto/Checksum/CRC32.h>
+#include <LibFileSystem/FileSystem.h>
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
@@ -37,88 +36,77 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     }
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    String zip_file_path { zip_path };
-    if (Core::File::exists(zip_file_path)) {
+    if (FileSystem::exists(zip_path)) {
         if (force) {
-            outln("{} already exists, overwriting...", zip_file_path);
+            outln("{} already exists, overwriting...", zip_path);
         } else {
-            warnln("{} already exists, aborting!", zip_file_path);
+            warnln("{} already exists, aborting!", zip_path);
             return 1;
         }
     }
 
-    auto file_stream = TRY(Core::OutputFileStream::open(zip_file_path));
+    outln("Archive: {}", zip_path);
+    auto file_stream = TRY(Core::File::open(zip_path, Core::File::OpenMode::Write));
+    Archive::ZipOutputStream zip_stream(move(file_stream));
 
-    outln("Archive: {}", zip_file_path);
+    auto add_file = [&](StringView path) -> ErrorOr<void> {
+        auto canonicalized_path = TRY(String::from_byte_string(LexicalPath::canonicalized_path(path)));
 
-    Archive::ZipOutputStream zip_stream { file_stream };
+        auto file = TRY(Core::File::open(path, Core::File::OpenMode::Read));
+        auto stat = TRY(Core::System::fstat(file->fd()));
+        auto date = Core::DateTime::from_timestamp(stat.st_mtim.tv_sec);
 
-    auto add_file = [&](String path) {
-        auto file = Core::File::construct(path);
-        if (!file->open(Core::OpenMode::ReadOnly)) {
-            warnln("Failed to open {}: {}", path, file->error_string());
-            return;
-        }
-
-        auto canonicalized_path = LexicalPath::canonicalized_path(path);
-        auto file_buffer = file->read_all();
-        Archive::ZipMember member {};
-        member.name = canonicalized_path;
-
-        auto deflate_buffer = Compress::DeflateCompressor::compress_all(file_buffer);
-        if (deflate_buffer.has_value() && deflate_buffer.value().size() < file_buffer.size()) {
-            member.compressed_data = deflate_buffer.value().bytes();
-            member.compression_method = Archive::ZipCompressionMethod::Deflate;
-            auto compression_ratio = (double)deflate_buffer.value().size() / file_buffer.size();
-            outln("  adding: {} (deflated {}%)", canonicalized_path, (int)(compression_ratio * 100));
+        auto information = TRY(zip_stream.add_member_from_stream(canonicalized_path, *file, date));
+        if (information.compression_ratio < 1.f) {
+            outln("  adding: {} (deflated {}%)", canonicalized_path, (int)(information.compression_ratio * 100));
         } else {
-            member.compressed_data = file_buffer.bytes();
-            member.compression_method = Archive::ZipCompressionMethod::Store;
-            outln("  adding: {} (stored 0%)", canonicalized_path);
+            outln("  adding: {} (stored)", canonicalized_path);
         }
-        member.uncompressed_size = file_buffer.size();
-        Crypto::Checksum::CRC32 checksum { file_buffer.bytes() };
-        member.crc32 = checksum.digest();
-        member.is_directory = false;
-        zip_stream.add_member(member);
+
+        return {};
     };
 
-    auto add_directory = [&](String path, auto handle_directory) -> void {
-        auto canonicalized_path = String::formatted("{}/", LexicalPath::canonicalized_path(path));
-        Archive::ZipMember member {};
-        member.name = canonicalized_path;
-        member.compressed_data = {};
-        member.compression_method = Archive::ZipCompressionMethod::Store;
-        member.uncompressed_size = 0;
-        member.crc32 = 0;
-        member.is_directory = true;
-        zip_stream.add_member(member);
-        outln("  adding: {} (stored 0%)", canonicalized_path);
+    auto add_directory = [&](StringView path, auto handle_directory) -> ErrorOr<void> {
+        auto canonicalized_path = TRY(String::formatted("{}/", LexicalPath::canonicalized_path(path)));
+
+        auto stat = TRY(Core::System::stat(path));
+        auto date = Core::DateTime::from_timestamp(stat.st_mtim.tv_sec);
+        TRY(zip_stream.add_directory(canonicalized_path, date));
 
         if (!recurse)
-            return;
+            return {};
 
         Core::DirIterator it(path, Core::DirIterator::Flags::SkipParentAndBaseDir);
         while (it.has_next()) {
             auto child_path = it.next_full_path();
-            if (Core::File::is_link(child_path))
-                return;
-            if (!Core::File::is_directory(child_path))
-                add_file(child_path);
-            else
-                handle_directory(child_path, handle_directory);
+            if (FileSystem::is_link(child_path))
+                return {};
+            if (!FileSystem::is_directory(child_path)) {
+                auto result = add_file(child_path);
+                if (result.is_error())
+                    warnln("Couldn't add file '{}': {}", child_path, result.error());
+            } else {
+                auto result = handle_directory(child_path, handle_directory);
+                if (result.is_error())
+                    warnln("Couldn't add directory '{}': {}", child_path, result.error());
+            }
         }
+        return {};
     };
 
     for (auto const& source_path : source_paths) {
-        if (Core::File::is_directory(source_path)) {
-            add_directory(source_path, add_directory);
+        if (FileSystem::is_directory(source_path)) {
+            auto result = add_directory(source_path, add_directory);
+            if (result.is_error())
+                warnln("Couldn't add directory '{}': {}", source_path, result.error());
         } else {
-            add_file(source_path);
+            auto result = add_file(source_path);
+            if (result.is_error())
+                warnln("Couldn't add file '{}': {}", source_path, result.error());
         }
     }
 
-    zip_stream.finish();
+    TRY(zip_stream.finish());
 
     return 0;
 }

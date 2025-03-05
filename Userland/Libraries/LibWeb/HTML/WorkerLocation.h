@@ -6,38 +6,35 @@
 
 #pragma once
 
-#include <AK/RefCounted.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/Forward.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/workers.html#worker-locations
-class WorkerLocation
-    : public RefCounted<WorkerLocation>
-    , public Bindings::Wrappable {
+class WorkerLocation : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(WorkerLocation, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(WorkerLocation);
+
 public:
-    using WrapperType = Bindings::WorkerLocationWrapper;
+    virtual ~WorkerLocation() override;
 
-    static NonnullRefPtr<WorkerLocation> create(WorkerGlobalScope& global_scope)
-    {
-        return adopt_ref(*new WorkerLocation(global_scope));
-    }
-
-    String href() const;
-    String origin() const;
-    String protocol() const;
-    String host() const;
-    String hostname() const;
-    String port() const;
+    WebIDL::ExceptionOr<String> href() const;
+    WebIDL::ExceptionOr<String> origin() const;
+    WebIDL::ExceptionOr<String> protocol() const;
+    WebIDL::ExceptionOr<String> host() const;
+    WebIDL::ExceptionOr<String> hostname() const;
+    WebIDL::ExceptionOr<String> port() const;
     String pathname() const;
-    String search() const;
-    String hash() const;
+    WebIDL::ExceptionOr<String> search() const;
+    WebIDL::ExceptionOr<String> hash() const;
 
 private:
-    WorkerLocation(WorkerGlobalScope&);
+    explicit WorkerLocation(WorkerGlobalScope&);
 
-    WorkerGlobalScope& m_global_scope;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    JS::NonnullGCPtr<WorkerGlobalScope> m_global_scope;
 };
 
 }

@@ -12,14 +12,19 @@
 namespace Web::DOM {
 
 class CDATASection final : public Text {
-public:
-    using WrapperType = Bindings::CDATASectionWrapper;
+    WEB_PLATFORM_OBJECT(CDATASection, Text);
+    JS_DECLARE_ALLOCATOR(CDATASection);
 
-    CDATASection(Document&, String const&);
+public:
     virtual ~CDATASection() override;
 
     // ^Node
-    virtual FlyString node_name() const override { return "#cdata-section"; }
+    virtual FlyString node_name() const override { return "#cdata-section"_fly_string; }
+
+private:
+    CDATASection(Document&, String const&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 template<>

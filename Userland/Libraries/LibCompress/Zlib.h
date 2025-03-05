@@ -6,11 +6,13 @@
 
 #pragma once
 
-#include <AK/BitStream.h>
 #include <AK/ByteBuffer.h>
+#include <AK/Endian.h>
+#include <AK/MaybeOwned.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
 #include <AK/Span.h>
+#include <AK/Stream.h>
 #include <AK/Types.h>
 #include <LibCrypto/Checksum/Adler32.h>
 
@@ -42,42 +44,50 @@ struct ZlibHeader {
 };
 static_assert(sizeof(ZlibHeader) == sizeof(u16));
 
-class Zlib {
+class ZlibDecompressor : public Stream {
 public:
-    Optional<ByteBuffer> decompress();
-    u32 checksum();
+    static ErrorOr<NonnullOwnPtr<ZlibDecompressor>> create(MaybeOwned<Stream>);
 
-    static Optional<Zlib> try_create(ReadonlyBytes data);
-    static Optional<ByteBuffer> decompress_all(ReadonlyBytes);
+    virtual ErrorOr<Bytes> read_some(Bytes) override;
+    virtual ErrorOr<size_t> write_some(ReadonlyBytes) override;
+    virtual bool is_eof() const override;
+    virtual bool is_open() const override;
+    virtual void close() override;
 
 private:
-    Zlib(ZlibHeader, ReadonlyBytes data);
+    ZlibDecompressor(ZlibHeader, NonnullOwnPtr<Stream>);
 
     ZlibHeader m_header;
-
-    u32 m_checksum { 0 };
-    ReadonlyBytes m_input_data;
-    ReadonlyBytes m_data_bytes;
+    NonnullOwnPtr<Stream> m_stream;
 };
 
-class ZlibCompressor : public OutputStream {
+class ZlibCompressor : public Stream {
 public:
-    ZlibCompressor(OutputStream&, ZlibCompressionLevel = ZlibCompressionLevel::Default);
+    static ErrorOr<NonnullOwnPtr<ZlibCompressor>> construct(MaybeOwned<Stream>, ZlibCompressionLevel = ZlibCompressionLevel::Default);
     ~ZlibCompressor();
 
-    size_t write(ReadonlyBytes) override;
-    bool write_or_error(ReadonlyBytes) override;
-    void finish();
+    virtual ErrorOr<Bytes> read_some(Bytes) override;
+    virtual ErrorOr<size_t> write_some(ReadonlyBytes) override;
+    virtual bool is_eof() const override;
+    virtual bool is_open() const override;
+    virtual void close() override;
+    ErrorOr<void> finish();
 
-    static Optional<ByteBuffer> compress_all(ReadonlyBytes bytes, ZlibCompressionLevel = ZlibCompressionLevel::Default);
+    static ErrorOr<ByteBuffer> compress_all(ReadonlyBytes bytes, ZlibCompressionLevel = ZlibCompressionLevel::Default);
 
 private:
-    void write_header(ZlibCompressionMethod, ZlibCompressionLevel);
+    ZlibCompressor(MaybeOwned<Stream> stream, NonnullOwnPtr<Stream> compressor_stream);
+    ErrorOr<void> write_header(ZlibCompressionMethod, ZlibCompressionLevel);
 
     bool m_finished { false };
-    OutputBitStream m_output_stream;
-    OwnPtr<OutputStream> m_compressor;
+    MaybeOwned<Stream> m_output_stream;
+    NonnullOwnPtr<Stream> m_compressor;
     Crypto::Checksum::Adler32 m_adler32_checksum;
 };
 
 }
+
+template<>
+struct AK::Traits<Compress::ZlibHeader> : public AK::DefaultTraits<Compress::ZlibHeader> {
+    static constexpr bool is_trivially_serializable() { return true; }
+};

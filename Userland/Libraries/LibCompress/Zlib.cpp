@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BitStream.h>
+#include <AK/IntegralMath.h>
 #include <AK/MemoryStream.h>
 #include <AK/Span.h>
 #include <AK/TypeCasts.h>
@@ -13,68 +15,73 @@
 
 namespace Compress {
 
-constexpr static size_t Adler32Size = sizeof(u32);
-
-Optional<Zlib> Zlib::try_create(ReadonlyBytes data)
+ErrorOr<NonnullOwnPtr<ZlibDecompressor>> ZlibDecompressor::create(MaybeOwned<Stream> stream)
 {
-    if (data.size() < (sizeof(ZlibHeader) + Adler32Size))
-        return {};
-
-    ZlibHeader header { .as_u16 = data.at(0) << 8 | data.at(1) };
+    auto header = TRY(stream->read_value<ZlibHeader>());
 
     if (header.compression_method != ZlibCompressionMethod::Deflate || header.compression_info > 7)
-        return {}; // non-deflate compression
+        return Error::from_string_literal("Non-DEFLATE compression inside Zlib is not supported");
 
     if (header.present_dictionary)
-        return {}; // we dont support pre-defined dictionaries
+        return Error::from_string_literal("Zlib compression with a pre-defined dictionary is currently not supported");
 
     if (header.as_u16 % 31 != 0)
-        return {}; // error correction code doesn't match
+        return Error::from_string_literal("Zlib error correction code does not match");
 
-    Zlib zlib { header, data };
-    zlib.m_data_bytes = data.slice(2, data.size() - sizeof(ZlibHeader) - Adler32Size);
-    return zlib;
+    auto bit_stream = make<LittleEndianInputBitStream>(move(stream));
+    auto deflate_stream = TRY(Compress::DeflateDecompressor::construct(move(bit_stream)));
+
+    return adopt_nonnull_own_or_enomem(new (nothrow) ZlibDecompressor(header, move(deflate_stream)));
 }
 
-Zlib::Zlib(ZlibHeader header, ReadonlyBytes data)
+ZlibDecompressor::ZlibDecompressor(ZlibHeader header, NonnullOwnPtr<Stream> stream)
     : m_header(header)
-    , m_input_data(data)
+    , m_stream(move(stream))
 {
 }
 
-Optional<ByteBuffer> Zlib::decompress()
+ErrorOr<Bytes> ZlibDecompressor::read_some(Bytes bytes)
 {
-    return DeflateDecompressor::decompress_all(m_data_bytes);
+    return m_stream->read_some(bytes);
 }
 
-Optional<ByteBuffer> Zlib::decompress_all(ReadonlyBytes bytes)
+ErrorOr<size_t> ZlibDecompressor::write_some(ReadonlyBytes)
 {
-    auto zlib = try_create(bytes);
-    if (!zlib.has_value())
-        return {};
-    return zlib->decompress();
+    return Error::from_errno(EBADF);
 }
 
-u32 Zlib::checksum()
+bool ZlibDecompressor::is_eof() const
 {
-    if (!m_checksum) {
-        auto bytes = m_input_data.slice_from_end(Adler32Size);
-        m_checksum = bytes.at(0) << 24 | bytes.at(1) << 16 | bytes.at(2) << 8 || bytes.at(3);
-    }
-
-    return m_checksum;
+    return m_stream->is_eof();
 }
 
-ZlibCompressor::ZlibCompressor(OutputStream& stream, ZlibCompressionLevel compression_level)
-    : m_output_stream(stream)
+bool ZlibDecompressor::is_open() const
+{
+    return m_stream->is_open();
+}
+
+void ZlibDecompressor::close()
+{
+}
+
+ErrorOr<NonnullOwnPtr<ZlibCompressor>> ZlibCompressor::construct(MaybeOwned<Stream> stream, ZlibCompressionLevel compression_level)
 {
     // Zlib only defines Deflate as a compression method.
     auto compression_method = ZlibCompressionMethod::Deflate;
 
-    write_header(compression_method, compression_level);
-
     // FIXME: Find a way to compress with Deflate's "Best" compression level.
-    m_compressor = make<DeflateCompressor>(stream, static_cast<DeflateCompressor::CompressionLevel>(compression_level));
+    auto compressor_stream = TRY(DeflateCompressor::construct(MaybeOwned(*stream), static_cast<DeflateCompressor::CompressionLevel>(compression_level)));
+
+    auto zlib_compressor = TRY(adopt_nonnull_own_or_enomem(new (nothrow) ZlibCompressor(move(stream), move(compressor_stream))));
+    TRY(zlib_compressor->write_header(compression_method, compression_level));
+
+    return zlib_compressor;
+}
+
+ZlibCompressor::ZlibCompressor(MaybeOwned<Stream> stream, NonnullOwnPtr<Stream> compressor_stream)
+    : m_output_stream(move(stream))
+    , m_compressor(move(compressor_stream))
+{
 }
 
 ZlibCompressor::~ZlibCompressor()
@@ -82,7 +89,7 @@ ZlibCompressor::~ZlibCompressor()
     VERIFY(m_finished);
 }
 
-void ZlibCompressor::write_header(ZlibCompressionMethod compression_method, ZlibCompressionLevel compression_level)
+ErrorOr<void> ZlibCompressor::write_header(ZlibCompressionMethod compression_method, ZlibCompressionLevel compression_level)
 {
     u8 compression_info = 0;
     if (compression_method == ZlibCompressionMethod::Deflate) {
@@ -101,54 +108,64 @@ void ZlibCompressor::write_header(ZlibCompressionMethod compression_method, Zlib
 
     // FIXME: Support pre-defined dictionaries.
 
-    m_output_stream << header.as_u16;
+    TRY(m_output_stream->write_value(header.as_u16));
+
+    return {};
 }
 
-size_t ZlibCompressor::write(ReadonlyBytes bytes)
+ErrorOr<Bytes> ZlibCompressor::read_some(Bytes)
+{
+    return Error::from_errno(EBADF);
+}
+
+ErrorOr<size_t> ZlibCompressor::write_some(ReadonlyBytes bytes)
 {
     VERIFY(!m_finished);
 
-    size_t n_written = m_compressor->write(bytes);
+    size_t n_written = TRY(m_compressor->write_some(bytes));
     m_adler32_checksum.update(bytes.trim(n_written));
     return n_written;
 }
 
-bool ZlibCompressor::write_or_error(ReadonlyBytes bytes)
+bool ZlibCompressor::is_eof() const
 {
-    if (write(bytes) < bytes.size()) {
-        set_fatal_error();
-        return false;
-    }
-
-    return true;
+    return false;
 }
 
-void ZlibCompressor::finish()
+bool ZlibCompressor::is_open() const
+{
+    return m_output_stream->is_open();
+}
+
+void ZlibCompressor::close()
+{
+}
+
+ErrorOr<void> ZlibCompressor::finish()
 {
     VERIFY(!m_finished);
 
     if (is<DeflateCompressor>(m_compressor.ptr()))
-        static_cast<DeflateCompressor*>(m_compressor.ptr())->final_flush();
+        TRY(static_cast<DeflateCompressor*>(m_compressor.ptr())->final_flush());
 
     NetworkOrdered<u32> adler_sum = m_adler32_checksum.digest();
-    m_output_stream << adler_sum;
+    TRY(m_output_stream->write_value(adler_sum));
 
     m_finished = true;
+
+    return {};
 }
 
-Optional<ByteBuffer> ZlibCompressor::compress_all(ReadonlyBytes bytes, ZlibCompressionLevel compression_level)
+ErrorOr<ByteBuffer> ZlibCompressor::compress_all(ReadonlyBytes bytes, ZlibCompressionLevel compression_level)
 {
-    DuplexMemoryStream output_stream;
-    ZlibCompressor zlib_stream { output_stream, compression_level };
+    auto output_stream = TRY(try_make<AllocatingMemoryStream>());
+    auto zlib_stream = TRY(ZlibCompressor::construct(MaybeOwned<Stream>(*output_stream), compression_level));
 
-    zlib_stream.write_or_error(bytes);
+    TRY(zlib_stream->write_until_depleted(bytes));
 
-    zlib_stream.finish();
+    TRY(zlib_stream->finish());
 
-    if (zlib_stream.handle_any_error())
-        return {};
-
-    return output_stream.copy_into_contiguous_buffer();
+    return output_stream->read_until_eof();
 }
 
 }

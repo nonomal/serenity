@@ -11,18 +11,20 @@
 namespace Web::SVG {
 
 class SVGPolylineElement final : public SVGGeometryElement {
-public:
-    using WrapperType = Bindings::SVGPolylineElementWrapper;
+    WEB_PLATFORM_OBJECT(SVGPolylineElement, SVGGeometryElement);
+    JS_DECLARE_ALLOCATOR(SVGPolylineElement);
 
-    SVGPolylineElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~SVGPolylineElement() override = default;
 
-    virtual void parse_attribute(FlyString const& name, String const& value) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value) override;
 
-    virtual Gfx::Path& get_path() override;
+    virtual Gfx::Path get_path(CSSPixelSize viewport_size) override;
 
 private:
-    Optional<Gfx::Path> m_path;
+    SVGPolylineElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 
     Vector<Gfx::FloatPoint> m_points;
 };

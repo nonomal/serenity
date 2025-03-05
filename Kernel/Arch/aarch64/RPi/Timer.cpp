@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Nico Weber <thakis@chromium.org>
+ * Copyright (c) 2022, Timon Kruiper <timonkruiper@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,6 +10,9 @@
 #include <Kernel/Arch/aarch64/RPi/MMIO.h>
 #include <Kernel/Arch/aarch64/RPi/Mailbox.h>
 #include <Kernel/Arch/aarch64/RPi/Timer.h>
+#include <Kernel/Firmware/DeviceTree/DeviceTree.h>
+#include <Kernel/Firmware/DeviceTree/Driver.h>
+#include <Kernel/Firmware/DeviceTree/Management.h>
 
 namespace Kernel::RPi {
 
@@ -29,17 +33,18 @@ enum FlagBits {
     SystemTimerMatch3 = 1 << 3,
 };
 
-Timer::Timer()
-    : IRQHandler(1)
-    , m_registers(MMIO::the().peripheral<TimerRegisters>(0x3000))
+Timer::Timer(Memory::TypedMapping<TimerRegisters volatile> registers_mapping, size_t interrupt_number)
+    : HardwareTimer(interrupt_number)
+    , m_registers(move(registers_mapping))
 {
+    // FIXME: Actually query the frequency of the timer. By default it is 100MHz.
+    m_frequency = 1e6;
+
+    set_interrupt_interval_usec(m_frequency / OPTIMAL_TICKS_PER_SECOND_RATE);
+    enable_interrupt_mode();
 }
 
-Timer& Timer::the()
-{
-    static AK::NeverDestroyed<Timer> instance;
-    return *instance;
-}
+Timer::~Timer() = default;
 
 u64 Timer::microseconds_since_boot()
 {
@@ -52,23 +57,45 @@ u64 Timer::microseconds_since_boot()
     return (static_cast<u64>(high) << 32) | low;
 }
 
-bool Timer::handle_irq(RegisterState const&)
+bool Timer::handle_irq()
 {
-    dbgln("Timer fired: {} us", m_current_timer_value);
+    auto result = HardwareTimer::handle_irq();
 
-    m_current_timer_value += m_interrupt_interval;
-    set_compare(TimerID::Timer1, m_current_timer_value);
-
+    set_compare(TimerID::Timer1, microseconds_since_boot() + m_interrupt_interval);
     clear_interrupt(TimerID::Timer1);
-    return true;
-};
+
+    return result;
+}
+
+u64 Timer::update_time(u64& seconds_since_boot, u32& ticks_this_second, bool query_only)
+{
+    // Should only be called by the time keeper interrupt handler!
+    u64 current_value = microseconds_since_boot();
+    u64 delta_ticks = m_main_counter_drift;
+    if (current_value >= m_main_counter_last_read) {
+        delta_ticks += current_value - m_main_counter_last_read;
+    } else {
+        // the counter wrapped around
+        delta_ticks += (NumericLimits<u64>::max() - m_main_counter_last_read + 1) + current_value;
+    }
+
+    u64 ticks_since_last_second = (u64)ticks_this_second + delta_ticks;
+    auto frequency = ticks_per_second();
+    seconds_since_boot += ticks_since_last_second / frequency;
+    ticks_this_second = ticks_since_last_second % frequency;
+
+    if (!query_only) {
+        m_main_counter_drift = 0;
+        m_main_counter_last_read = current_value;
+    }
+
+    // Return the time passed (in ns) since last time update_time was called
+    return (delta_ticks * 1000000000ull) / frequency;
+}
 
 void Timer::enable_interrupt_mode()
 {
-    m_current_timer_value = microseconds_since_boot();
-    m_current_timer_value += m_interrupt_interval;
-    set_compare(TimerID::Timer1, m_current_timer_value);
-
+    set_compare(TimerID::Timer1, microseconds_since_boot() + m_interrupt_interval);
     enable_irq();
 }
 
@@ -120,6 +147,76 @@ u32 Timer::set_clock_rate(ClockID clock_id, u32 rate_hz, bool skip_setting_turbo
     }
 
     return message_queue.set_clock_rate.rate_hz;
+}
+
+class GetClockRateMboxMessage : Mailbox::Message {
+public:
+    u32 clock_id;
+    u32 rate_hz;
+
+    GetClockRateMboxMessage()
+        : Mailbox::Message(0x0003'0002, 8)
+    {
+        clock_id = 0;
+        rate_hz = 0;
+    }
+};
+
+u32 Timer::get_clock_rate(ClockID clock_id)
+{
+    struct __attribute__((aligned(16))) {
+        Mailbox::MessageHeader header;
+        GetClockRateMboxMessage get_clock_rate;
+        Mailbox::MessageTail tail;
+    } message_queue;
+
+    message_queue.get_clock_rate.clock_id = static_cast<u32>(clock_id);
+
+    if (!Mailbox::the().send_queue(&message_queue, sizeof(message_queue))) {
+        dbgln("Timer::get_clock_rate() failed!");
+        return 0;
+    }
+
+    return message_queue.get_clock_rate.rate_hz;
+}
+
+static constinit Array const compatibles_array = {
+    "brcm,bcm2835-system-timer"sv,
+};
+
+DEVICETREE_DRIVER(BCM2835TimerDriver, compatibles_array);
+
+// https://www.kernel.org/doc/Documentation/devicetree/bindings/timer/brcm,bcm2835-system-timer.txt
+ErrorOr<void> BCM2835TimerDriver::probe(DeviceTree::Device const& device, StringView) const
+{
+    auto const interrupts = TRY(device.node().interrupts(DeviceTree::get()));
+    if (interrupts.size() != 4)
+        return EINVAL; // The devicetree binding requires 4 interrupts.
+
+    // This driver currently only uses channel 1.
+    auto const& interrupt = interrupts[1];
+
+    // FIXME: Don't depend on a specific interrupt descriptor format and implement proper devicetree interrupt mapping/translation.
+    if (!interrupt.domain_root->is_compatible_with("brcm,bcm2836-armctrl-ic"sv))
+        return ENOTSUP;
+    if (interrupt.interrupt_identifier.size() != sizeof(BigEndian<u64>))
+        return ENOTSUP;
+    auto const interrupt_number = *reinterpret_cast<BigEndian<u64> const*>(interrupt.interrupt_identifier.data()) & 0xffff'ffff;
+
+    auto physical_address = TRY(device.get_resource(0)).paddr;
+
+    DeviceTree::DeviceRecipe<NonnullLockRefPtr<HardwareTimerBase>> recipe {
+        name(),
+        device.node_name(),
+        [physical_address, interrupt_number]() -> ErrorOr<NonnullLockRefPtr<HardwareTimerBase>> {
+            auto registers_mapping = TRY(Memory::map_typed_writable<TimerRegisters volatile>(physical_address));
+            return adopt_nonnull_lock_ref_or_enomem(new (nothrow) Timer(move(registers_mapping), interrupt_number));
+        },
+    };
+
+    TimeManagement::add_recipe(move(recipe));
+
+    return {};
 }
 
 }

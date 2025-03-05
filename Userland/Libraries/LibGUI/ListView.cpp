@@ -21,6 +21,7 @@ ListView::ListView()
     set_background_role(ColorRole::Base);
     set_foreground_role(ColorRole::BaseText);
     set_searchable(true);
+    vertical_scrollbar().set_step(item_height());
 }
 
 ListView::~ListView() = default;
@@ -42,9 +43,8 @@ void ListView::update_content_size()
     int content_width = 0;
     for (int row = 0, row_count = model()->row_count(); row < row_count; ++row) {
         auto text = model()->index(row, m_model_column).data();
-        content_width = max(content_width, font().width(text.to_string()) + horizontal_padding() + 1);
+        content_width = max(content_width, font().width(text.to_byte_string()) + horizontal_padding() * 2);
     }
-
     content_width = max(content_width, widget_inner_rect().width());
 
     int content_height = item_count() * item_height();
@@ -55,6 +55,12 @@ void ListView::resize_event(ResizeEvent& event)
 {
     update_content_size();
     AbstractView::resize_event(event);
+}
+
+void ListView::layout_relevant_change_occurred()
+{
+    update_content_size();
+    AbstractView::layout_relevant_change_occurred();
 }
 
 void ListView::model_did_update(unsigned flags)
@@ -74,7 +80,7 @@ Gfx::IntRect ListView::content_rect(ModelIndex const& index) const
     return content_rect(index.row());
 }
 
-ModelIndex ListView::index_at_event_position(Gfx::IntPoint const& point) const
+ModelIndex ListView::index_at_event_position(Gfx::IntPoint point) const
 {
     VERIFY(model());
 
@@ -87,7 +93,7 @@ ModelIndex ListView::index_at_event_position(Gfx::IntPoint const& point) const
     return {};
 }
 
-Gfx::IntPoint ListView::adjusted_position(Gfx::IntPoint const& position) const
+Gfx::IntPoint ListView::adjusted_position(Gfx::IntPoint position) const
 {
     return position.translated(horizontal_scrollbar().value() - frame_thickness(), vertical_scrollbar().value() - frame_thickness());
 }
@@ -127,7 +133,7 @@ void ListView::paint_list_item(Painter& painter, int row_index, int painted_item
         text_rect.translate_by(horizontal_padding(), 0);
         text_rect.set_width(text_rect.width() - horizontal_padding() * 2);
         auto text_alignment = index.data(ModelRole::TextAlignment).to_text_alignment(Gfx::TextAlignment::CenterLeft);
-        draw_item_text(painter, index, is_selected_row, text_rect, data.to_string(), font, text_alignment, Gfx::TextElision::None);
+        draw_item_text(painter, index, is_selected_row, text_rect, data.to_byte_string(), font, text_alignment, Gfx::TextElision::None);
     }
 }
 

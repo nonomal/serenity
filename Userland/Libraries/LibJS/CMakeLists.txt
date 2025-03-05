@@ -2,36 +2,40 @@ set(SOURCES
     AST.cpp
     Bytecode/ASTCodegen.cpp
     Bytecode/BasicBlock.cpp
+    Bytecode/Builtins.cpp
+    Bytecode/CodeGenerationError.cpp
     Bytecode/Executable.cpp
     Bytecode/Generator.cpp
     Bytecode/IdentifierTable.cpp
     Bytecode/Instruction.cpp
     Bytecode/Interpreter.cpp
-    Bytecode/Op.cpp
-    Bytecode/Pass/DumpCFG.cpp
-    Bytecode/Pass/GenerateCFG.cpp
-    Bytecode/Pass/MergeBlocks.cpp
-    Bytecode/Pass/PlaceBlocks.cpp
-    Bytecode/Pass/UnifySameBlocks.cpp
+    Bytecode/Label.cpp
+    Bytecode/RegexTable.cpp
+    Bytecode/ScopedOperand.cpp
     Bytecode/StringTable.cpp
     Console.cpp
-    Contrib/Test262/$262Object.cpp
+    Contrib/Test262/262Object.cpp
     Contrib/Test262/AgentObject.cpp
     Contrib/Test262/GlobalObject.cpp
     Contrib/Test262/IsHTMLDDA.cpp
     CyclicModule.cpp
     Heap/BlockAllocator.cpp
+    Heap/Cell.cpp
     Heap/CellAllocator.cpp
+    Heap/ConservativeVector.cpp
     Heap/Handle.cpp
     Heap/Heap.cpp
     Heap/HeapBlock.cpp
     Heap/MarkedVector.cpp
-    Interpreter.cpp
     Lexer.cpp
     MarkupGenerator.cpp
     Module.cpp
     Parser.cpp
+    ParserError.cpp
+    Print.cpp
     Runtime/AbstractOperations.cpp
+    Runtime/Accessor.cpp
+    Runtime/Agent.cpp
     Runtime/AggregateError.cpp
     Runtime/AggregateErrorConstructor.cpp
     Runtime/AggregateErrorPrototype.cpp
@@ -64,6 +68,7 @@ set(SOURCES
     Runtime/BooleanPrototype.cpp
     Runtime/BoundFunction.cpp
     Runtime/Completion.cpp
+    Runtime/ConsoleObjectPrototype.cpp
     Runtime/ConsoleObject.cpp
     Runtime/DataView.cpp
     Runtime/DataViewConstructor.cpp
@@ -72,12 +77,16 @@ set(SOURCES
     Runtime/DateConstructor.cpp
     Runtime/DatePrototype.cpp
     Runtime/DeclarativeEnvironment.cpp
+    Runtime/DisposableStack.cpp
+    Runtime/DisposableStackConstructor.cpp
+    Runtime/DisposableStackPrototype.cpp
     Runtime/ECMAScriptFunctionObject.cpp
     Runtime/Environment.cpp
     Runtime/Error.cpp
     Runtime/ErrorConstructor.cpp
     Runtime/ErrorPrototype.cpp
     Runtime/ErrorTypes.cpp
+    Runtime/ExecutionContext.cpp
     Runtime/FinalizationRegistry.cpp
     Runtime/FinalizationRegistryConstructor.cpp
     Runtime/FinalizationRegistryPrototype.cpp
@@ -114,6 +123,7 @@ set(SOURCES
     Runtime/Intl/Locale.cpp
     Runtime/Intl/LocaleConstructor.cpp
     Runtime/Intl/LocalePrototype.cpp
+    Runtime/Intl/MathematicalValue.cpp
     Runtime/Intl/NumberFormat.cpp
     Runtime/Intl/NumberFormatConstructor.cpp
     Runtime/Intl/NumberFormatFunction.cpp
@@ -131,9 +141,15 @@ set(SOURCES
     Runtime/Intl/SegmentIterator.cpp
     Runtime/Intl/SegmentIteratorPrototype.cpp
     Runtime/Intl/SegmentsPrototype.cpp
-    Runtime/IteratorOperations.cpp
+    Runtime/Intrinsics.cpp
+    Runtime/Iterator.cpp
+    Runtime/IteratorConstructor.cpp
+    Runtime/IteratorHelper.cpp
+    Runtime/IteratorHelperPrototype.cpp
     Runtime/IteratorPrototype.cpp
     Runtime/JSONObject.cpp
+    Runtime/JobCallback.cpp
+    Runtime/KeyedCollections.cpp
     Runtime/Map.cpp
     Runtime/MapConstructor.cpp
     Runtime/MapIterator.cpp
@@ -153,6 +169,7 @@ set(SOURCES
     Runtime/PrimitiveString.cpp
     Runtime/PrivateEnvironment.cpp
     Runtime/Promise.cpp
+    Runtime/PromiseCapability.cpp
     Runtime/PromiseConstructor.cpp
     Runtime/PromiseJobs.cpp
     Runtime/PromisePrototype.cpp
@@ -166,6 +183,7 @@ set(SOURCES
     Runtime/Reference.cpp
     Runtime/ReflectObject.cpp
     Runtime/RegExpConstructor.cpp
+    Runtime/RegExpLegacyStaticProperties.cpp
     Runtime/RegExpObject.cpp
     Runtime/RegExpPrototype.cpp
     Runtime/RegExpStringIterator.cpp
@@ -179,11 +197,16 @@ set(SOURCES
     Runtime/ShadowRealmConstructor.cpp
     Runtime/ShadowRealmPrototype.cpp
     Runtime/Shape.cpp
+    Runtime/SharedArrayBufferConstructor.cpp
+    Runtime/SharedArrayBufferPrototype.cpp
     Runtime/StringConstructor.cpp
     Runtime/StringIterator.cpp
     Runtime/StringIteratorPrototype.cpp
     Runtime/StringObject.cpp
     Runtime/StringPrototype.cpp
+    Runtime/SuppressedError.cpp
+    Runtime/SuppressedErrorConstructor.cpp
+    Runtime/SuppressedErrorPrototype.cpp
     Runtime/Symbol.cpp
     Runtime/SymbolConstructor.cpp
     Runtime/SymbolObject.cpp
@@ -218,6 +241,7 @@ set(SOURCES
     Runtime/Temporal/Temporal.cpp
     Runtime/Temporal/TimeZone.cpp
     Runtime/Temporal/TimeZoneConstructor.cpp
+    Runtime/Temporal/TimeZoneMethods.cpp
     Runtime/Temporal/TimeZonePrototype.cpp
     Runtime/Temporal/ZonedDateTime.cpp
     Runtime/Temporal/ZonedDateTimeConstructor.cpp
@@ -238,8 +262,10 @@ set(SOURCES
     Runtime/WeakSet.cpp
     Runtime/WeakSetConstructor.cpp
     Runtime/WeakSetPrototype.cpp
+    Runtime/WrapForValidIteratorPrototype.cpp
     Runtime/WrappedFunction.cpp
     Script.cpp
+    SourceCode.cpp
     SourceTextModule.cpp
     SyntaxHighlighter.cpp
     SyntheticModule.cpp
@@ -247,4 +273,15 @@ set(SOURCES
 )
 
 serenity_lib(LibJS js)
-target_link_libraries(LibJS LibM LibCore LibCrypto LibRegex LibSyntax LibUnicode)
+target_link_libraries(LibJS PRIVATE LibCore LibCrypto LibFileSystem LibRegex LibSyntax LibLocale LibUnicode LibTimeZone)
+if("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64")
+    target_link_libraries(LibJS PRIVATE LibX86)
+endif()
+
+# TODO: This is probably also needed on RISC-V.
+if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "i.86.*")
+    target_link_libraries(LibJS PRIVATE atomic)
+endif()
+
+target_compile_options(LibJS PRIVATE -fno-omit-frame-pointer)
+target_link_libraries(LibJS PUBLIC JSClangPlugin)

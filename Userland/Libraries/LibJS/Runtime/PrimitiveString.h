@@ -1,24 +1,38 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/ByteString.h>
+#include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/StringView.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
+#include <LibJS/Heap/CellAllocator.h>
+#include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/Utf16String.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
 class PrimitiveString final : public Cell {
+    JS_CELL(PrimitiveString, Cell);
+    JS_DECLARE_ALLOCATOR(PrimitiveString);
+
 public:
-    explicit PrimitiveString(String);
-    explicit PrimitiveString(Utf16String);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, Utf16String);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, String);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, FlyString const&);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, ByteString);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, DeprecatedFlyString const&);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, PrimitiveString&, PrimitiveString&);
+    [[nodiscard]] static NonnullGCPtr<PrimitiveString> create(VM&, StringView);
+
     virtual ~PrimitiveString();
 
     PrimitiveString(PrimitiveString const&) = delete;
@@ -26,32 +40,41 @@ public:
 
     bool is_empty() const;
 
-    String const& string() const;
-    bool has_utf8_string() const { return m_has_utf8_string; }
+    [[nodiscard]] String utf8_string() const;
+    [[nodiscard]] StringView utf8_string_view() const;
+    bool has_utf8_string() const { return m_utf8_string.has_value(); }
 
-    Utf16String const& utf16_string() const;
-    Utf16View utf16_string_view() const;
-    bool has_utf16_string() const { return m_has_utf16_string; }
+    [[nodiscard]] ByteString byte_string() const;
+    bool has_byte_string() const { return m_byte_string.has_value(); }
 
-    Optional<Value> get(GlobalObject&, PropertyKey const&) const;
+    [[nodiscard]] Utf16String utf16_string() const;
+    [[nodiscard]] Utf16View utf16_string_view() const;
+    bool has_utf16_string() const { return m_utf16_string.has_value(); }
+
+    ThrowCompletionOr<Optional<Value>> get(VM&, PropertyKey const&) const;
 
 private:
-    virtual StringView class_name() const override { return "PrimitiveString"sv; }
+    explicit PrimitiveString(PrimitiveString&, PrimitiveString&);
+    explicit PrimitiveString(String);
+    explicit PrimitiveString(ByteString);
+    explicit PrimitiveString(Utf16String);
 
-    mutable String m_utf8_string;
-    mutable bool m_has_utf8_string { false };
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    mutable Utf16String m_utf16_string;
-    mutable bool m_has_utf16_string { false };
+    enum class EncodingPreference {
+        UTF8,
+        UTF16,
+    };
+    void resolve_rope_if_needed(EncodingPreference) const;
+
+    mutable bool m_is_rope { false };
+
+    mutable GCPtr<PrimitiveString> m_lhs;
+    mutable GCPtr<PrimitiveString> m_rhs;
+
+    mutable Optional<String> m_utf8_string;
+    mutable Optional<ByteString> m_byte_string;
+    mutable Optional<Utf16String> m_utf16_string;
 };
-
-PrimitiveString* js_string(Heap&, Utf16View const&);
-PrimitiveString* js_string(VM&, Utf16View const&);
-
-PrimitiveString* js_string(Heap&, Utf16String);
-PrimitiveString* js_string(VM&, Utf16String);
-
-PrimitiveString* js_string(Heap&, String);
-PrimitiveString* js_string(VM&, String);
 
 }

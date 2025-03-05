@@ -43,12 +43,14 @@
                 @GUI::GroupBox {
                     title: "CPU usage"
                     name: "cpu_graph"
+                    preferred_height: "opportunistic_grow"
                     layout: @GUI::VerticalBoxLayout {}
                 }
 
                 @GUI::GroupBox {
                     title: "Memory usage"
-                    fixed_height: 120
+                    preferred_height: "opportunistic_grow"
+                    min_height: 120
                     layout: @GUI::VerticalBoxLayout {
                         margins: [6]
                     }
@@ -80,37 +82,6 @@
             @SystemMonitor::NetworkStatisticsWidget {
                 title: "Network"
                 name: "network"
-            }
-
-            @SystemMonitor::HardwareTabWidget {
-                title: "Hardware"
-                name: "hardware"
-                layout: @GUI::VerticalBoxLayout {
-                    margins: [4]
-                }
-
-                @GUI::GroupBox {
-                    title: "CPUs"
-                    fixed_height: 128
-                    layout: @GUI::VerticalBoxLayout {
-                        margins: [6]
-                    }
-
-                    @GUI::TableView {
-                        name: "cpus_table"
-                    }
-                }
-
-                @GUI::GroupBox {
-                    title: "PCI devices"
-                    layout: @GUI::VerticalBoxLayout {
-                        margins: [6]
-                    }
-
-                    @GUI::TableView {
-                        name: "pci_dev_table"
-                    }
-                }
             }
         }
     }

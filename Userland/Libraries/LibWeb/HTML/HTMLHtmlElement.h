@@ -6,20 +6,27 @@
 
 #pragma once
 
+#include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/HTML/HTMLElement.h>
 
 namespace Web::HTML {
 
 class HTMLHtmlElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLHtmlElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLHtmlElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLHtmlElement);
 
-    HTMLHtmlElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLHtmlElement() override;
 
     bool should_use_body_background_properties() const;
 
+    // https://www.w3.org/TR/html-aria/#el-html
+    virtual Optional<ARIA::Role> default_role() const override { return ARIA::Role::document; }
+
 private:
+    HTMLHtmlElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
     virtual bool is_html_html_element() const override { return true; }
 };
 

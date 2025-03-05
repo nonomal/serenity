@@ -22,9 +22,9 @@ class FixedArray {
 public:
     FixedArray() = default;
 
-    static ErrorOr<FixedArray<T>> try_create(std::initializer_list<T> initializer)
+    static ErrorOr<FixedArray<T>> create(std::initializer_list<T> initializer)
     {
-        auto array = TRY(try_create(initializer.size()));
+        auto array = TRY(create(initializer.size()));
         auto it = initializer.begin();
         for (size_t i = 0; i < array.size(); ++i) {
             array[i] = move(*it);
@@ -33,11 +33,11 @@ public:
         return array;
     }
 
-    static ErrorOr<FixedArray<T>> try_create(size_t size)
+    static ErrorOr<FixedArray<T>> create(size_t size)
     {
         if (size == 0)
             return FixedArray<T>();
-        T* elements = static_cast<T*>(kmalloc_array(size, sizeof(T)));
+        auto* elements = reinterpret_cast<T*>(kmalloc(storage_allocation_size(size)));
         if (!elements)
             return Error::from_errno(ENOMEM);
         for (size_t i = 0; i < size; ++i)
@@ -47,32 +47,21 @@ public:
 
     static FixedArray<T> must_create_but_fixme_should_propagate_errors(size_t size)
     {
-        return MUST(try_create(size));
+        return MUST(create(size));
     }
 
-    // NOTE:
-    // Even though it may look like there will be a template instantiation of this function for every size,
-    // the compiler will inline this anyway and therefore not generate any duplicate code.
-
     template<size_t N>
-    static ErrorOr<FixedArray<T>> try_create(T (&&array)[N])
+    static ErrorOr<FixedArray<T>> create(T (&&array)[N])
     {
-        if (N == 0)
-            return FixedArray<T>();
-        T* elements = static_cast<T*>(kmalloc_array(N, sizeof(T)));
-        if (!elements)
-            return Error::from_errno(ENOMEM);
-        for (size_t i = 0; i < N; ++i)
-            new (&elements[i]) T(move(array[i]));
-        return FixedArray<T>(N, elements);
+        return create(Span(array, N));
     }
 
     template<typename U>
-    static ErrorOr<FixedArray<T>> try_create(Span<U> span)
+    static ErrorOr<FixedArray<T>> create(Span<U> span)
     {
         if (span.size() == 0)
             return FixedArray<T>();
-        T* elements = static_cast<T*>(kmalloc_array(span.size(), sizeof(T)));
+        auto* elements = reinterpret_cast<T*>(kmalloc(storage_allocation_size(span.size())));
         if (!elements)
             return Error::from_errno(ENOMEM);
         for (size_t i = 0; i < span.size(); ++i)
@@ -80,21 +69,9 @@ public:
         return FixedArray<T>(span.size(), elements);
     }
 
-    ErrorOr<FixedArray<T>> try_clone() const
+    ErrorOr<FixedArray<T>> clone() const
     {
-        if (m_size == 0)
-            return FixedArray<T>();
-        T* elements = static_cast<T*>(kmalloc_array(m_size, sizeof(T)));
-        if (!elements)
-            return Error::from_errno(ENOMEM);
-        for (size_t i = 0; i < m_size; ++i)
-            new (&elements[i]) T(m_elements[i]);
-        return FixedArray<T>(m_size, elements);
-    }
-
-    FixedArray<T> must_clone_but_fixme_should_propagate_errors() const
-    {
-        return MUST(try_clone());
+        return create(span());
     }
 
     // Nobody can ever use these functions, since it would be impossible to make them OOM-safe due to their signatures. We just explicitly delete them.
@@ -102,14 +79,19 @@ public:
     FixedArray<T>& operator=(FixedArray<T> const&) = delete;
 
     FixedArray(FixedArray<T>&& other)
-        : m_size(other.m_size)
-        , m_elements(other.m_elements)
+        : m_size(exchange(other.m_size, 0))
+        , m_elements(exchange(other.m_elements, nullptr))
     {
-        other.m_size = 0;
-        other.m_elements = nullptr;
     }
-    // This function would violate the contract, as it would need to deallocate this FixedArray. As it also has no use case, we delete it.
-    FixedArray<T>& operator=(FixedArray<T>&&) = delete;
+
+    FixedArray<T>& operator=(FixedArray<T>&& other)
+    {
+        if (this != &other) {
+            this->~FixedArray();
+            new (this) FixedArray<T>(move(other));
+        }
+        return *this;
+    }
 
     ~FixedArray()
     {
@@ -117,20 +99,23 @@ public:
             return;
         for (size_t i = 0; i < m_size; ++i)
             m_elements[i].~T();
-        kfree_sized(m_elements, sizeof(T) * m_size);
-        // NOTE: should prevent use-after-free early
-        m_size = 0;
+        kfree_sized(m_elements, storage_allocation_size(m_size));
         m_elements = nullptr;
     }
 
     size_t size() const { return m_size; }
-    bool is_empty() const { return m_size == 0; }
+    bool is_empty() const { return size() == 0; }
     T* data() { return m_elements; }
     T const* data() const { return m_elements; }
 
     T& at(size_t index)
     {
         VERIFY(index < m_size);
+        return m_elements[index];
+    }
+
+    T& unchecked_at(size_t index)
+    {
         return m_elements[index];
     }
 
@@ -152,6 +137,8 @@ public:
 
     bool contains_slow(T const& value) const
     {
+        if (!m_elements)
+            return false;
         for (size_t i = 0; i < m_size; ++i) {
             if (m_elements[i] == value)
                 return true;
@@ -161,8 +148,16 @@ public:
 
     void swap(FixedArray<T>& other)
     {
-        ::swap(m_size, other.m_size);
-        ::swap(m_elements, other.m_elements);
+        AK::swap(m_size, other.m_size);
+        AK::swap(m_elements, other.m_elements);
+    }
+
+    void fill_with(T const& value)
+    {
+        if (!m_elements)
+            return;
+        for (size_t i = 0; i < m_size; ++i)
+            m_elements[i] = value;
     }
 
     using Iterator = SimpleIterator<FixedArray, T>;
@@ -175,9 +170,14 @@ public:
     ConstIterator end() const { return ConstIterator::end(*this); }
 
     Span<T> span() { return { data(), size() }; }
-    Span<T const> span() const { return { data(), size() }; }
+    ReadonlySpan<T> span() const { return { data(), size() }; }
 
 private:
+    static size_t storage_allocation_size(size_t size)
+    {
+        return size * sizeof(T);
+    }
+
     FixedArray(size_t size, T* elements)
         : m_size(size)
         , m_elements(elements)
@@ -190,4 +190,6 @@ private:
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::FixedArray;
+#endif

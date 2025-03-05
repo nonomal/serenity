@@ -13,10 +13,11 @@ to collect and describe the mitigations in one centralized place.
 
 ### SMEP (Supervisor Mode Execution Protection)
 
-[Supervisor Mode Execution Protection](https://software.intel.com/security-software-guidance/best-practices/related-intel-security-features-technologies) is an Intel CPU feature which prevents execution
+[Supervisor Mode Execution Protection](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/best-practices/related-intel-security-features-technologies.html) is an Intel CPU feature which prevents execution
 of userspace code with kernel privileges.
 
 It was enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/8602fa5b49aa4e2b039764a14698f0baa3ad0532):
+
 ```
 commit 8602fa5b49aa4e2b039764a14698f0baa3ad0532
 Author: Andreas Kling <awesomekling@gmail.com>
@@ -49,6 +50,7 @@ These instructions let user mode code query the addresses of various kernel stru
 meaning that they leak kernel addresses that can be exploited to defeat ASLR.
 
 It was enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/9c0836ce97ae36165abd8eb5241bb5239af3a756):
+
 ```
 commit 9c0836ce97ae36165abd8eb5241bb5239af3a756
 Author: Andreas Kling <awesomekling@gmail.com>
@@ -88,6 +90,38 @@ Author: Andreas Kling <kling@serenityos.org>
 Date:   Mon Jan 20 22:12:04 2020 +0100
 
 Kernel: Add a basic implementation of unveil()
+```
+
+### Jails
+
+`jails` are mitigation originating from FreeBSD.
+It allows a program to be placed inside a lightweight OS-level virtualization environment.
+
+Current restrictions on jailed processes (configurable when creating a Jail):
+
+-   Process ID view isolation, being limited (both in `/proc` and `/sys/kernel/processes`) to only processes that share the same jail.
+
+Special restrictions on filesystem also apply:
+
+-   Write access is forbidden to the `/sys/kernel/power_state` node.
+-   Read accesses is forbidden by default to all nodes in `/sys/kernel` directory, except for:
+    `df`, `interrupts`, `keymap`, `memstat`, `processes`, `stats` and `uptime`.
+-   Write access is forbidden to kernel configuration variables (which are located in `/sys/kernel/conf`).
+-   Open access is forbidden to all device nodes except for `/dev/full`, `/dev/null`, `/dev/zero`, `/dev/random` and various
+    other TTY/PTY devices (not including Kernel virtual consoles).
+-   Executing SUID binaries is forbidden.
+
+It was first added in the following [commit](https://github.com/SerenityOS/serenity/commit/5e062414c11df31ed595c363990005eef00fa263),
+for kernel support, and the following commits added basic userspace utilities:
+
+```
+commit 5e062414c11df31ed595c363990005eef00fa263
+Author: Liav A <liavalb@gmail.com>
+Date:   Wed Nov 2 22:26:02 2022 +0200
+
+Kernel: Add support for jails
+
+...
 ```
 
 ### Readonly atexit
@@ -134,6 +168,37 @@ Date:  Tue Feb 2 19:56:11 2021 +0100
 Kernel: Add a way to specify which memory regions can make syscalls
 ```
 
+### Immutable memory mappings
+
+[Immutable memory mappings](https://lwn.net/SubscriberLink/915640/53bc300d11179c62/) is
+a mitigation which originated from OpenBSD.
+In short the annotation of a particular Kernel Region as immutable implies that
+that these virtual memory mappings are locked to their last state (in regard to protection bits, etc),
+and they cannot be unmapped by a process until that process gets finalized.
+
+It was first enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/8585b2dc23ec206777a4cfbd558766d90fc577e7):
+
+```
+commit 8585b2dc23ec206777a4cfbd558766d90fc577e7
+Author: Liav A <liavalb@gmail.com>
+Date:   Thu Dec 15 21:08:57 2022 +0200
+
+Kernel/Memory: Add option to annotate region mapping as immutable
+
+We add this basic functionality to the Kernel so Userspace can request a
+particular virtual memory mapping to be immutable. This will be useful
+later on in the DynamicLoader code.
+
+The annotation of a particular Kernel Region as immutable implies that
+the following restrictions apply, so these features are prohibited:
+- Changing the region's protection bits
+- Unmapping the region
+- Annotating the region with other virtual memory flags
+- Applying further memory advises on the region
+- Changing the region name
+- Re-mapping the region
+```
+
 ### Post-init read-only memory
 
 [Post-init read-only memory](https://lwn.net/Articles/666550/) is
@@ -161,6 +226,7 @@ It can find various issues, including integer overflows, out-of-bounds array
 accesses, type corruption, and more.
 
 It was first enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/d44be968938ecf95023351a358c43c4957638d87):
+
 ```
 commit d44be968938ecf95023351a358c43c4957638d87
 Author: Andreas Kling <kling@serenityos.org>
@@ -182,6 +248,7 @@ With this mitigation it is now more difficult to craft a kernel exploit to do so
 like disabling SMEP / SMAP.
 
 It was first enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/6136faa4ebf6a878606f33bc03c5e62de9d5e662):
+
 ```
 commit 6136faa4ebf6a878606f33bc03c5e62de9d5e662
 Author: Andreas Kling <kling@serenityos.org>
@@ -202,6 +269,7 @@ to make that memory read-only before passing control to the main executable.
 This prevents attackers from overwriting the [Global Offset Table (GOT)](https://en.wikipedia.org/wiki/Global_Offset_Table).
 
 It was first enabled for executables in the following [commit](https://github.com/SerenityOS/serenity/commit/fa4c249425a65076ca04a3cb0c173d49472796fb):
+
 ```
 commit fa4c249425a65076ca04a3cb0c173d49472796fb
 Author: Andreas Kling <kling@serenityos.org>
@@ -211,6 +279,7 @@ LibELF+Userland: Enable RELRO for all userland executables :^)
 ```
 
 Shared libraries were enabled in a follow-up [commit](https://github.com/SerenityOS/serenity/commit/713b3b36be4f659e58e253b6c830509898dbd2fa):
+
 ```
 commit 713b3b36be4f659e58e253b6c830509898dbd2fa
 Author: Andreas Kling <kling@serenityos.org>
@@ -227,6 +296,7 @@ style attacks by generating code that probes the stack in page-sized increments 
 This prevents attackers from using a large stack allocation to "jump over" the stack guard page into adjacent memory.
 
 It was first enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/7142562310e631156d1f64aff22f068ae2c48a5e):
+
 ```
 commit 7142562310e631156d1f64aff22f068ae2c48a5e
 Author: Andreas Kling <kling@serenityos.org>
@@ -276,15 +346,17 @@ Date:   Fri Jan 1 15:27:42 2021 -0800
 
 Build + LibC: Enable -fstack-protector-strong in user space
 ```
+
 ### Protected Kernel Process Data
 
 The kernel applies a exploit mitigation technique where vulnerable data
 related to the state of a process is separated out into it's own region
-in memory which is always remmaped as read-only after it's initialized
+in memory which is always remapped as read-only after it's initialized
 or updated. This means that an attacker needs more than an arbitrary
 kernel write primitive to be able to elevate a process to root for example.
 
 It was first enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/cbcf891040e9921ff628fdda668c9738f358a178):
+
 ```
 commit cbcf891040e9921ff628fdda668c9738f358a178
 Author: Andreas Kling <kling@serenityos.org>
@@ -332,12 +404,12 @@ The location of the kernel code is randomized at boot time, this ensures that at
 can not use a hardcoded kernel addresses when attempting ROP, instead they must first find
 an additional information leak to expose the KASLR offset.
 
-It was first enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/ece5a9a1088012ca9fadfb7e0bc3edd8029d36ad):
+It was first enabled in the following [commit](https://github.com/SerenityOS/serenity/commit/1ad0e05ea1d3491e4724669d6f00f5668d8e0aa1):
 
 ```
-commit ece5a9a1088012ca9fadfb7e0bc3edd8029d36ad
-Author Idan Horowitz <idan.horowitz@gmail.com>
-Date:  Mon Mar 21 22:59:48 2022 +0200
+commit 1ad0e05ea1d3491e4724669d6f00f5668d8e0aa1
+Author: Idan Horowitz <idan.horowitz@gmail.com>
+Date:   Mon Mar 21 22:59:48 2022 +0200
 
 Kernel: Add an extremely primitive version of KASLR
 ```
@@ -362,5 +434,5 @@ Kernel: Enable -ftrivial-auto-var-init as a security mitigation
 
 ## See also
 
-* [`unveil`(2)](help://man/2/unveil)
-* [`pledge`(2)](help://man/2/pledge)
+-   [`unveil`(2)](help://man/2/unveil)
+-   [`pledge`(2)](help://man/2/pledge)

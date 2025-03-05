@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,14 +13,14 @@ namespace Kernel {
 
 class AnonymousFile final : public File {
 public:
-    static ErrorOr<NonnullRefPtr<AnonymousFile>> try_create(NonnullRefPtr<Memory::AnonymousVMObject> vmobject)
+    static ErrorOr<NonnullRefPtr<AnonymousFile>> try_create(NonnullLockRefPtr<Memory::AnonymousVMObject> vmobject)
     {
         return adopt_nonnull_ref_or_enomem(new (nothrow) AnonymousFile(move(vmobject)));
     }
 
     virtual ~AnonymousFile() override;
 
-    virtual ErrorOr<Memory::Region*> mmap(Process&, OpenFileDescription&, Memory::VirtualRange const&, u64 offset, int prot, bool shared) override;
+    virtual ErrorOr<VMObjectAndMemoryType> vmobject_and_memory_type_for_mmap(Process&, Memory::VirtualRange const&, u64& offset, bool shared) override;
 
 private:
     virtual StringView class_name() const override { return "AnonymousFile"sv; }
@@ -30,9 +30,9 @@ private:
     virtual ErrorOr<size_t> read(OpenFileDescription&, u64, UserOrKernelBuffer&, size_t) override { return ENOTSUP; }
     virtual ErrorOr<size_t> write(OpenFileDescription&, u64, UserOrKernelBuffer const&, size_t) override { return ENOTSUP; }
 
-    explicit AnonymousFile(NonnullRefPtr<Memory::AnonymousVMObject>);
+    explicit AnonymousFile(NonnullLockRefPtr<Memory::AnonymousVMObject>);
 
-    NonnullRefPtr<Memory::AnonymousVMObject> m_vmobject;
+    NonnullLockRefPtr<Memory::AnonymousVMObject> m_vmobject;
 };
 
 }

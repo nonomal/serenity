@@ -9,6 +9,7 @@
 
         @GUI::Toolbar {
             name: "toolbar"
+            collapsible: true
         }
     }
 
@@ -22,15 +23,19 @@
 
             @FontEditor::GlyphEditorWidget {
                 name: "glyph_editor_widget"
+                visible: false
             }
 
             @GUI::Widget {
+                name: "width_control_container"
                 preferred_height: "shrink"
+                visible: false
                 layout: @GUI::VerticalBoxLayout {}
 
                 @GUI::SpinBox {
                     name: "glyph_editor_width_spinbox"
                     preferred_width: "fit"
+                    min: 0
                 }
 
                 @GUI::CheckBox {
@@ -61,7 +66,7 @@
             }
 
             @GUI::HorizontalSplitter {
-                fixed_resizee: "Second"
+                opportunistic_resizee: "First"
 
                 @GUI::Widget {
                     layout: @GUI::VerticalBoxLayout {}
@@ -216,7 +221,7 @@
 
                 @GUI::Widget {
                     name: "unicode_block_container"
-                    fixed_width: 175
+                    preferred_width: 175
                     layout: @GUI::VerticalBoxLayout {}
 
                     @GUI::TextBox {
@@ -234,5 +239,6 @@
 
     @GUI::Statusbar {
         name: "statusbar"
+        segment_count: 2
     }
 }

@@ -116,8 +116,8 @@ struct Token {
         VERIFY_NOT_REACHED();
     }
 
-    String to_string() const;
-    String type_as_string() const;
+    ByteString to_byte_string() const;
+    ByteString type_as_byte_string() const;
 
     Position const& start() const { return m_start; }
     Position const& end() const { return m_end; }

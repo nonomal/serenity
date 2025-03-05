@@ -6,41 +6,50 @@
 
 #pragma once
 
-#include <AK/RefCounted.h>
-#include <LibJS/Heap/Handle.h>
-#include <LibWeb/Bindings/CallbackType.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/WebIDL/CallbackType.h>
 
 namespace Web::DOM {
 
-class NodeFilter
-    : public RefCounted<NodeFilter>
-    , public Bindings::Wrappable {
-public:
-    using WrapperType = Bindings::NodeFilterWrapper;
+class NodeFilter final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(NodeFilter, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(NodeFilter);
 
-    explicit NodeFilter(Bindings::CallbackType callback)
-        : m_callback(move(callback))
-    {
-    }
+public:
+    [[nodiscard]] static JS::NonnullGCPtr<NodeFilter> create(JS::Realm&, WebIDL::CallbackType&);
 
     virtual ~NodeFilter() = default;
 
-    Bindings::CallbackType& callback() { return m_callback; }
+    WebIDL::CallbackType& callback() { return m_callback; }
 
-    enum Result {
+    // FIXME: Generate both of these enums from IDL.
+    enum class Result : u8 {
         FILTER_ACCEPT = 1,
         FILTER_REJECT = 2,
         FILTER_SKIP = 3,
     };
 
+    enum class WhatToShow : u32 {
+        SHOW_ALL = 0xFFFFFFFF,
+        SHOW_ELEMENT = 0x1,
+        SHOW_ATTRIBUTE = 0x2,
+        SHOW_TEXT = 0x4,
+        SHOW_CDATA_SECTION = 0x8,
+        SHOW_PROCESSING_INSTRUCTION = 0x40,
+        SHOW_COMMENT = 0x80,
+        SHOW_DOCUMENT = 0x100,
+        SHOW_DOCUMENT_TYPE = 0x200,
+        SHOW_DOCUMENT_FRAGMENT = 0x400,
+    };
+
 private:
-    Bindings::CallbackType m_callback;
+    NodeFilter(JS::Realm&, WebIDL::CallbackType&);
+
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    JS::NonnullGCPtr<WebIDL::CallbackType> m_callback;
 };
 
-inline JS::Object* wrap(JS::GlobalObject&, Web::DOM::NodeFilter& filter)
-{
-    return filter.callback().callback.cell();
-}
+AK_ENUM_BITWISE_OPERATORS(NodeFilter::WhatToShow);
 
 }

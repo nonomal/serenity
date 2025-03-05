@@ -8,41 +8,55 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
-#include <AK/NonnullOwnPtrVector.h>
+#include <AK/Queue.h>
 #include <AK/Try.h>
 #include <LibCore/Event.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Notifier.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Socket.h>
 #include <LibCore/Timer.h>
+#include <LibIPC/File.h>
 #include <LibIPC/Forward.h>
 #include <LibIPC/Message.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 namespace IPC {
 
-class ConnectionBase : public Core::Object {
+// NOTE: This is an abstraction to allow using IPC::Connection without a Core::EventLoop.
+// FIXME: It's not particularly nice, think of something nicer.
+struct DeferredInvoker {
+    virtual ~DeferredInvoker() = default;
+    virtual void schedule(Function<void()>) = 0;
+};
+
+class ConnectionBase : public Core::EventReceiver {
     C_OBJECT_ABSTRACT(ConnectionBase);
 
 public:
     virtual ~ConnectionBase() override = default;
 
+    void set_deferred_invoker(NonnullOwnPtr<DeferredInvoker>);
+    DeferredInvoker& deferred_invoker() { return *m_deferred_invoker; }
+
     bool is_open() const { return m_socket->is_open(); }
-    ErrorOr<void> post_message(Message const&);
+    enum class MessageKind {
+        Async,
+        Sync,
+    };
+    ErrorOr<void> post_message(Message const&, MessageKind = MessageKind::Async);
 
     void shutdown();
     virtual void die() { }
 
-protected:
-    explicit ConnectionBase(IPC::Stub&, NonnullOwnPtr<Core::Stream::LocalSocket>, u32 local_endpoint_magic);
+    Core::LocalSocket& socket() { return *m_socket; }
 
-    Core::Stream::LocalSocket& socket() { return *m_socket; }
+protected:
+    explicit ConnectionBase(IPC::Stub&, NonnullOwnPtr<Core::LocalSocket>, u32 local_endpoint_magic);
 
     virtual void may_have_become_unresponsive() { }
     virtual void did_become_responsive() { }
@@ -54,24 +68,28 @@ protected:
     ErrorOr<Vector<u8>> read_as_much_as_possible_from_socket_without_blocking();
     ErrorOr<void> drain_messages_from_peer();
 
-    ErrorOr<void> post_message(MessageBuffer);
+    ErrorOr<void> post_message(MessageBuffer, MessageKind);
     void handle_messages();
 
     IPC::Stub& m_local_stub;
 
-    NonnullOwnPtr<Core::Stream::LocalSocket> m_socket;
+    NonnullOwnPtr<Core::LocalSocket> m_socket;
+
     RefPtr<Core::Timer> m_responsiveness_timer;
 
-    NonnullOwnPtrVector<Message> m_unprocessed_messages;
+    Vector<NonnullOwnPtr<Message>> m_unprocessed_messages;
+    Queue<IPC::File> m_unprocessed_fds;
     ByteBuffer m_unprocessed_bytes;
 
     u32 m_local_endpoint_magic { 0 };
+
+    NonnullOwnPtr<DeferredInvoker> m_deferred_invoker;
 };
 
 template<typename LocalEndpoint, typename PeerEndpoint>
 class Connection : public ConnectionBase {
 public:
-    Connection(IPC::Stub& local_stub, NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+    Connection(IPC::Stub& local_stub, NonnullOwnPtr<Core::LocalSocket> socket)
         : ConnectionBase(local_stub, move(socket), LocalEndpoint::static_magic())
     {
         m_socket->on_ready_to_read = [this] {
@@ -91,7 +109,7 @@ public:
     template<typename RequestType, typename... Args>
     NonnullOwnPtr<typename RequestType::ResponseType> send_sync(Args&&... args)
     {
-        MUST(post_message(RequestType(forward<Args>(args)...)));
+        MUST(post_message(RequestType(forward<Args>(args)...), MessageKind::Sync));
         auto response = wait_for_specific_endpoint_message<typename RequestType::ResponseType, PeerEndpoint>();
         VERIFY(response);
         return response.release_nonnull();
@@ -100,7 +118,7 @@ public:
     template<typename RequestType, typename... Args>
     OwnPtr<typename RequestType::ResponseType> send_sync_but_allow_failure(Args&&... args)
     {
-        if (post_message(RequestType(forward<Args>(args)...)).is_error())
+        if (post_message(RequestType(forward<Args>(args)...), MessageKind::Sync).is_error())
             return nullptr;
         return wait_for_specific_endpoint_message<typename RequestType::ResponseType, PeerEndpoint>();
     }
@@ -123,14 +141,23 @@ protected:
                 break;
             index += sizeof(message_size);
             auto remaining_bytes = ReadonlyBytes { bytes.data() + index, message_size };
-            if (auto message = LocalEndpoint::decode_message(remaining_bytes, *m_socket)) {
-                m_unprocessed_messages.append(message.release_nonnull());
-            } else if (auto message = PeerEndpoint::decode_message(remaining_bytes, *m_socket)) {
-                m_unprocessed_messages.append(message.release_nonnull());
-            } else {
-                dbgln("Failed to parse a message");
-                break;
+
+            auto local_message = LocalEndpoint::decode_message(remaining_bytes, m_unprocessed_fds);
+            if (!local_message.is_error()) {
+                m_unprocessed_messages.append(local_message.release_value());
+                continue;
             }
+
+            auto peer_message = PeerEndpoint::decode_message(remaining_bytes, m_unprocessed_fds);
+            if (!peer_message.is_error()) {
+                m_unprocessed_messages.append(peer_message.release_value());
+                continue;
+            }
+
+            dbgln("Failed to parse a message");
+            dbgln("Local endpoint error: {}", local_message.error());
+            dbgln("Peer endpoint error: {}", peer_message.error());
+            break;
         }
     }
 };
@@ -138,5 +165,5 @@ protected:
 }
 
 template<typename LocalEndpoint, typename PeerEndpoint>
-struct AK::Formatter<IPC::Connection<LocalEndpoint, PeerEndpoint>> : Formatter<Core::Object> {
+struct AK::Formatter<IPC::Connection<LocalEndpoint, PeerEndpoint>> : Formatter<Core::EventReceiver> {
 };

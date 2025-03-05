@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2021-2023, Liav A. <liavalb@hotmail.co.il>
  * Copyright (c) 2021, Edwin Hoksberg <mail@edwinhoksberg.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -8,273 +8,82 @@
 
 #include <AK/Assertions.h>
 #include <AK/Types.h>
+#include <Kernel/API/Ioctl.h>
+#include <Kernel/API/KeyCode.h>
+#include <Kernel/API/MajorNumberAllocation.h>
+#include <Kernel/Devices/Device.h>
 #include <Kernel/Devices/HID/KeyboardDevice.h>
+#include <Kernel/Devices/TTY/VirtualConsole.h>
 #include <Kernel/Sections.h>
-#include <Kernel/TTY/VirtualConsole.h>
-#include <LibC/sys/ioctl_numbers.h>
+#include <Kernel/Tasks/Scheduler.h>
+#include <Kernel/Tasks/WorkQueue.h>
 
 namespace Kernel {
 
-static constexpr KeyCode unshifted_key_map[0x80] = {
-    Key_Invalid,
-    Key_Escape,
-    Key_1,
-    Key_2,
-    Key_3,
-    Key_4,
-    Key_5,
-    Key_6,
-    Key_7,
-    Key_8,
-    Key_9,
-    Key_0,
-    Key_Minus,
-    Key_Equal,
-    Key_Backspace,
-    Key_Tab, // 15
-    Key_Q,
-    Key_W,
-    Key_E,
-    Key_R,
-    Key_T,
-    Key_Y,
-    Key_U,
-    Key_I,
-    Key_O,
-    Key_P,
-    Key_LeftBracket,
-    Key_RightBracket,
-    Key_Return,  // 28
-    Key_Control, // 29
-    Key_A,
-    Key_S,
-    Key_D,
-    Key_F,
-    Key_G,
-    Key_H,
-    Key_J,
-    Key_K,
-    Key_L,
-    Key_Semicolon,
-    Key_Apostrophe,
-    Key_Backtick,
-    Key_LeftShift, // 42
-    Key_Backslash,
-    Key_Z,
-    Key_X,
-    Key_C,
-    Key_V,
-    Key_B,
-    Key_N,
-    Key_M,
-    Key_Comma,
-    Key_Period,
-    Key_Slash,
-    Key_RightShift, // 54
-    Key_Asterisk,
-    Key_Alt,      // 56
-    Key_Space,    // 57
-    Key_CapsLock, // 58
-    Key_F1,
-    Key_F2,
-    Key_F3,
-    Key_F4,
-    Key_F5,
-    Key_F6,
-    Key_F7,
-    Key_F8,
-    Key_F9,
-    Key_F10,
-    Key_NumLock,
-    Key_Invalid, // 70
-    Key_Home,
-    Key_Up,
-    Key_PageUp,
-    Key_Minus,
-    Key_Left,
-    Key_Invalid,
-    Key_Right, // 77
-    Key_Plus,
-    Key_End,
-    Key_Down, // 80
-    Key_PageDown,
-    Key_Invalid,
-    Key_Delete, // 83
-    Key_Invalid,
-    Key_Invalid,
-    Key_Backslash,
-    Key_F11,
-    Key_F12,
-    Key_Invalid,
-    Key_Invalid,
-    Key_Super,
-    Key_Invalid,
-    Key_Menu,
-};
-
-static constexpr KeyCode shifted_key_map[0x100] = {
-    Key_Invalid,
-    Key_Escape,
-    Key_ExclamationPoint,
-    Key_AtSign,
-    Key_Hashtag,
-    Key_Dollar,
-    Key_Percent,
-    Key_Circumflex,
-    Key_Ampersand,
-    Key_Asterisk,
-    Key_LeftParen,
-    Key_RightParen,
-    Key_Underscore,
-    Key_Plus,
-    Key_Backspace,
-    Key_Tab,
-    Key_Q,
-    Key_W,
-    Key_E,
-    Key_R,
-    Key_T,
-    Key_Y,
-    Key_U,
-    Key_I,
-    Key_O,
-    Key_P,
-    Key_LeftBrace,
-    Key_RightBrace,
-    Key_Return,
-    Key_Control,
-    Key_A,
-    Key_S,
-    Key_D,
-    Key_F,
-    Key_G,
-    Key_H,
-    Key_J,
-    Key_K,
-    Key_L,
-    Key_Colon,
-    Key_DoubleQuote,
-    Key_Tilde,
-    Key_LeftShift, // 42
-    Key_Pipe,
-    Key_Z,
-    Key_X,
-    Key_C,
-    Key_V,
-    Key_B,
-    Key_N,
-    Key_M,
-    Key_LessThan,
-    Key_GreaterThan,
-    Key_QuestionMark,
-    Key_RightShift, // 54
-    Key_Asterisk,
-    Key_Alt,
-    Key_Space,    // 57
-    Key_CapsLock, // 58
-    Key_F1,
-    Key_F2,
-    Key_F3,
-    Key_F4,
-    Key_F5,
-    Key_F6,
-    Key_F7,
-    Key_F8,
-    Key_F9,
-    Key_F10,
-    Key_NumLock,
-    Key_Invalid, // 70
-    Key_Home,
-    Key_Up,
-    Key_PageUp,
-    Key_Minus,
-    Key_Left,
-    Key_Invalid,
-    Key_Right, // 77
-    Key_Plus,
-    Key_End,
-    Key_Down, // 80
-    Key_PageDown,
-    Key_Invalid,
-    Key_Delete, // 83
-    Key_Invalid,
-    Key_Invalid,
-    Key_Pipe,
-    Key_F11,
-    Key_F12,
-    Key_Invalid,
-    Key_Invalid,
-    Key_Super,
-    Key_Invalid,
-    Key_Menu,
-};
-
-void KeyboardDevice::key_state_changed(u8 scan_code, bool pressed)
+void KeyboardDevice::handle_input_event(KeyEvent queued_event)
 {
-    KeyCode key = (m_modifiers & Mod_Shift) ? shifted_key_map[scan_code] : unshifted_key_map[scan_code];
-
-    if (key == Key_NumLock && pressed)
+    if (queued_event.key == Key_NumLock && queued_event.is_press())
         m_num_lock_on = !m_num_lock_on;
 
-    if (m_num_lock_on && !m_has_e0_prefix) {
-        if (scan_code >= 0x47 && scan_code <= 0x53) {
-            u8 index = scan_code - 0x47;
-            constexpr KeyCode numpad_key_map[13] = { Key_7, Key_8, Key_9, Key_Invalid, Key_4, Key_5, Key_6, Key_Invalid, Key_1, Key_2, Key_3, Key_0, Key_Comma };
-            KeyCode newKey = numpad_key_map[index];
+    queued_event.flags |= m_modifiers;
 
-            if (newKey != Key_Invalid) {
-                key = newKey;
-            }
+    if (queued_event.is_press() && (m_modifiers == (Mod_Alt | Mod_Shift) || m_modifiers == (Mod_Ctrl | Mod_Alt | Mod_Shift)) && queued_event.key == Key_F12) {
+        // Alt+Shift+F12 pressed, dump some kernel state to the debug console.
+        VirtualConsole::switch_to_debug_console();
+        Scheduler::dump_scheduler_state(m_modifiers == (Mod_Ctrl | Mod_Alt | Mod_Shift));
+    }
+
+    {
+        auto key = queued_event.key;
+        if (queued_event.is_press() && (m_modifiers & Mod_Alt) != 0 && key >= Key_1 && key < Key_1 + VirtualConsole::s_max_virtual_consoles) {
+            // FIXME: Do something sanely here if we can't allocate a work queue?
+            MUST(g_io_work->try_queue([key]() {
+                VirtualConsole::switch_to(key - Key_1);
+            }));
         }
     }
 
-    Event event;
-    event.key = key;
-    event.scancode = m_has_e0_prefix ? 0xe000 + scan_code : scan_code;
-    event.flags = m_modifiers;
-    event.e0_prefix = m_has_e0_prefix;
-    event.caps_lock_on = m_caps_lock_on;
-    event.code_point = HIDManagement::the().get_char_from_character_map(event);
-
-    // If using a non-QWERTY layout, event.key needs to be updated to be the same as event.code_point
-    KeyCode mapped_key = code_point_to_key_code(event.code_point);
-    if (mapped_key != KeyCode::Key_Invalid) {
-        event.key = mapped_key;
-        key = mapped_key;
-    }
-
-    if (!g_caps_lock_remapped_to_ctrl && key == Key_CapsLock && pressed)
+    if (!g_caps_lock_remapped_to_ctrl && queued_event.key == Key_CapsLock && queued_event.is_press())
         m_caps_lock_on = !m_caps_lock_on;
 
-    if (g_caps_lock_remapped_to_ctrl && key == Key_CapsLock)
-        m_caps_lock_to_ctrl_pressed = pressed;
+    queued_event.caps_lock_on = m_caps_lock_on;
 
-    if (g_caps_lock_remapped_to_ctrl)
+    if (g_caps_lock_remapped_to_ctrl && queued_event.key == Key_CapsLock) {
+        m_caps_lock_to_ctrl_pressed = queued_event.is_press();
         update_modifier(Mod_Ctrl, m_caps_lock_to_ctrl_pressed);
+    }
 
-    if (pressed)
-        event.flags |= Is_Press;
+    if (queued_event.map_entry_index != 0xFF)
+        queued_event.code_point = HIDManagement::the().get_char_from_character_map(queued_event, queued_event.map_entry_index);
+
+    // If using a non-QWERTY layout, queued_event.key needs to be updated to be the same as event.code_point
+    KeyCode mapped_key = code_point_to_key_code(queued_event.code_point);
+    if (mapped_key != KeyCode::Key_Invalid)
+        queued_event.key = mapped_key;
 
     {
         SpinlockLocker locker(HIDManagement::the().m_client_lock);
         if (HIDManagement::the().m_client)
-            HIDManagement::the().m_client->on_key_pressed(event);
+            HIDManagement::the().m_client->on_key_pressed(queued_event);
     }
 
     {
         SpinlockLocker lock(m_queue_lock);
-        m_queue.enqueue(event);
+        m_queue.enqueue(queued_event);
     }
 
-    m_has_e0_prefix = false;
-
     evaluate_block_conditions();
+}
+
+ErrorOr<NonnullRefPtr<KeyboardDevice>> KeyboardDevice::try_to_initialize()
+{
+    return TRY(Device::try_create_device<KeyboardDevice>());
 }
 
 // FIXME: UNMAP_AFTER_INIT is fine for now, but for hot-pluggable devices
 // like USB keyboards, we need to remove this
 UNMAP_AFTER_INIT KeyboardDevice::KeyboardDevice()
-    : HIDDevice(85, HIDManagement::the().generate_minor_device_number_for_keyboard())
+    : HIDDevice(MajorAllocation::CharacterDeviceFamily::Keyboard, HIDManagement::the().generate_minor_device_number_for_keyboard())
 {
 }
 

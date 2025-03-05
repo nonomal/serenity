@@ -7,20 +7,16 @@
 #pragma once
 
 #include <Kernel/Devices/CharacterDevice.h>
-#include <Kernel/Interrupts/IRQHandler.h>
-#include <Kernel/Memory/PhysicalPage.h>
-#include <Kernel/PhysicalAddress.h>
-#include <Kernel/WaitQueue.h>
 
 namespace Kernel {
 
 class AudioController;
 class AudioChannel final
     : public CharacterDevice {
-    friend class DeviceManagement;
+    friend class Device;
 
 public:
-    static NonnullRefPtr<AudioChannel> must_create(AudioController const&, size_t channel_index);
+    static ErrorOr<NonnullRefPtr<AudioChannel>> create(AudioController const&, size_t channel_index);
     virtual ~AudioChannel() override = default;
 
     // ^CharacterDevice
@@ -37,7 +33,7 @@ private:
     // ^CharacterDevice
     virtual StringView class_name() const override { return "AudioChannel"sv; }
 
-    WeakPtr<AudioController> m_controller;
-    const size_t m_channel_index;
+    LockWeakPtr<AudioController> m_controller;
+    size_t const m_channel_index;
 };
 }

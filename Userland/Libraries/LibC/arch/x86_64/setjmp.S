@@ -10,7 +10,9 @@
 // /!\ Read setjmp.h before modifying this file!
 //
 
+.global _setjmp
 .global setjmp
+_setjmp:
 setjmp:
     mov $0, %esi            // Set val argument to 0
 
@@ -40,11 +42,13 @@ sigsetjmp:
     mov %rbp, (5 * 8)(%rdi)
     mov %rsp, (6 * 8)(%rdi)
     mov (%rsp), %rax        // Grab return address
-    mov %rax, (7 * 8)(%rdi)    
+    mov %rax, (7 * 8)(%rdi)
     xor %eax, %eax
     ret
 
+.global _longjmp
 .global longjmp
+_longjmp:
 longjmp:
     mov %esi, %eax
     test %eax, %eax

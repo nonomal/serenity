@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/Badge.h>
 #include <AK/DistinctNumeric.h>
 
 namespace AK {
@@ -66,22 +67,22 @@ struct ArbitrarySizedEnum : public T {
 
     [[nodiscard]] constexpr ArbitrarySizedEnum<T> operator|(ArbitrarySizedEnum<T> const& other) const
     {
-        return { T(this->value() | other.value()), {} };
+        return { T(this->value() | other.value()), Badge<ArbitrarySizedEnum<T>> {} };
     }
 
     [[nodiscard]] constexpr ArbitrarySizedEnum<T> operator&(ArbitrarySizedEnum<T> const& other) const
     {
-        return { T(this->value() & other.value()), {} };
+        return { T(this->value() & other.value()), Badge<ArbitrarySizedEnum<T>> {} };
     }
 
     [[nodiscard]] constexpr ArbitrarySizedEnum<T> operator^(ArbitrarySizedEnum<T> const& other) const
     {
-        return { T(this->value() ^ other.value()), {} };
+        return { T(this->value() ^ other.value()), Badge<ArbitrarySizedEnum<T>> {} };
     }
 
     [[nodiscard]] constexpr ArbitrarySizedEnum<T> operator~() const
     {
-        return { T(~this->value()), {} };
+        return { T(~this->value()), Badge<ArbitrarySizedEnum<T>> {} };
     }
 
     constexpr ArbitrarySizedEnum<T>& operator|=(ArbitrarySizedEnum<T> const& other)
@@ -113,15 +114,16 @@ struct ArbitrarySizedEnum : public T {
     }
 };
 
-#define AK_MAKE_ARBITRARY_SIZED_ENUM(EnumName, T, ...)                               \
-    namespace EnumName {                                                             \
-    using EnumName = ArbitrarySizedEnum<DistinctNumeric<T, struct __##EnumName##Tag, \
-        false, true, false, false, false, false>>;                                   \
-    using Type = EnumName;                                                           \
-    using UnderlyingType = T;                                                        \
-    inline constexpr static EnumName __VA_ARGS__;                                    \
+#define AK_MAKE_ARBITRARY_SIZED_ENUM(EnumName, T, ...)                                                                         \
+    namespace EnumName {                                                                                                       \
+    using EnumName = ArbitrarySizedEnum<DistinctNumeric<T, struct __##EnumName##Tag, AK::DistinctNumericFeature::Comparison>>; \
+    using Type = EnumName;                                                                                                     \
+    using UnderlyingType = T;                                                                                                  \
+    inline constexpr static EnumName __VA_ARGS__;                                                                              \
     }
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::ArbitrarySizedEnum;
+#endif

@@ -21,27 +21,19 @@ public:
         Move
     };
 
-    enum Direction {
-        Clockwise,
-        Counterclockwise
-    };
-
     virtual ~GlyphEditorWidget() override = default;
 
     int glyph() const { return m_glyph; }
     void set_glyph(int);
     bool is_glyph_empty();
 
-    void rotate_90(Direction);
-    void flip_vertically();
-    void flip_horizontally();
+    void rotate_90(Gfx::RotationDirection);
+    void flip(Gfx::Orientation);
 
     int preferred_width() const;
     int preferred_height() const;
 
-    Gfx::BitmapFont& font() { return *m_font; }
-    Gfx::BitmapFont const& font() const { return *m_font; }
-    void set_font(Gfx::BitmapFont&);
+    void initialize(Gfx::BitmapFont*);
 
     int scale() const { return m_scale; }
     void set_scale(int scale);
@@ -50,7 +42,7 @@ public:
     void set_mode(Mode mode) { m_mode = mode; }
 
     Function<void(int)> on_glyph_altered;
-    Function<void()> on_undo_event;
+    Function<void(StringView action_text)> on_undo_event;
 
 private:
     GlyphEditorWidget() = default;
@@ -71,6 +63,7 @@ private:
     u8 m_movable_bits[Gfx::GlyphBitmap::max_width() * 3][Gfx::GlyphBitmap::max_height() * 3] {};
     Mode m_mode { Paint };
     bool m_is_clicking_valid_cell { false };
+    bool m_is_altering_glyph { false };
 };
 
 }

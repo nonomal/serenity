@@ -5,15 +5,18 @@ serenity_component(
     DEPENDS ImageDecoder RequestServer WebContent FileSystemAccessServer
 )
 
-compile_gml(TextEditorWindow.gml TextEditorWindowGML.h text_editor_window_gml)
+compile_gml(TextEditorWindow.gml TextEditorWindowGML.cpp)
 
 set(SOURCES
-    main.cpp
     FileArgument.cpp
     MainWidget.cpp
-    TextEditorWindowGML.h
+    TextEditorWindowGML.cpp
+    main.cpp
+)
+
+set(GENERATED_SOURCES
+    TextEditorWindowGML.cpp
 )
 
 serenity_app(TextEditor ICON app-text-editor)
-target_link_libraries(TextEditor LibWebView LibWeb LibMarkdown LibGUI LibShell LibRegex LibDesktop LibCpp LibJS LibSQL LibFileSystemAccessClient LibConfig LibMain)
-link_with_unicode_data(TextEditor)
+target_link_libraries(TextEditor PRIVATE LibCore LibWebView LibWeb LibMarkdown LibGfx LibGUI LibShell LibRegex LibDesktop LibCpp LibCMake LibJS LibSQL LibSyntax LibFileSystemAccessClient LibConfig LibMain LibURL)

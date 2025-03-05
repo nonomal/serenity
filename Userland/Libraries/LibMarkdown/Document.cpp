@@ -12,34 +12,46 @@
 
 namespace Markdown {
 
-String Document::render_to_html() const
+ByteString Document::render_to_html(StringView extra_head_contents) const
 {
     StringBuilder builder;
-
-    builder.append("<!DOCTYPE html>\n"sv);
-    builder.append("<html>\n"sv);
-    builder.append("<head>\n"sv);
-    builder.append("<style>\n"sv);
-    builder.append("code { white-space: pre; }\n"sv);
-    builder.append("</style>\n"sv);
-    builder.append("</head>\n"sv);
-    builder.append("<body>\n"sv);
+    builder.append(R"~~~(<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        code { white-space: pre; }
+    </style>
+)~~~"sv);
+    if (!extra_head_contents.is_empty())
+        builder.append(extra_head_contents);
+    builder.append(R"~~~(
+</head>
+<body>
+)~~~"sv);
 
     builder.append(render_to_inline_html());
 
-    builder.append("</body>\n"sv);
-    builder.append("</html>\n"sv);
-    return builder.build();
+    builder.append(R"~~~(
+</body>
+</html>)~~~"sv);
+
+    return builder.to_byte_string();
 }
 
-String Document::render_to_inline_html() const
+ByteString Document::render_to_inline_html() const
 {
     return m_container->render_to_html();
 }
 
-String Document::render_for_terminal(size_t view_width) const
+ErrorOr<String> Document::render_for_terminal(size_t view_width) const
 {
-    return m_container->render_for_terminal(view_width);
+    StringBuilder builder;
+    for (auto& line : m_container->render_lines_for_terminal(view_width)) {
+        TRY(builder.try_append(line));
+        TRY(builder.try_append("\n"sv));
+    }
+
+    return builder.to_string();
 }
 
 RecursionDecision Document::walk(Visitor& visitor) const

@@ -1,6 +1,23 @@
+<html>
+<head>
+    <style type="text/css">
+        #placeholder1, #placeholder2 {
+            color: red;
+            width: 250px;
+        }
+
+        #placeholder1::placeholder {
+            color: green;
+        }
+    </style>
+</head>
+
+<body>
 <p>
     <input type="hidden" id="hidden" value="hidden" /><br />
     <input type="text" id="text" value="text" /><br />
+    <input type="text" id="placeholder1" placeholder="This placeholder should be green" /><br />
+    <input type="text" id="placeholder2" placeholder="This placeholder should be grey" /><br />
     <input type="search" id="search" value="search" /><br />
     <input type="tel" id="tel" value="tel" /><br />
     <input type="url" id="url" value="url" /><br />
@@ -12,10 +29,12 @@
     <input type="time" id="time" value="time" /><br />
     <input type="datetime-local" id="datetime-local" value="datetime-local" /><br />
     <input type="number" id="number" value="number" /><br />
-    <input type="range" id="range" value="range" /><br />
+    <input type="range" id="range" value="25" /><br />
     <input type="color" id="color" value="color" /><br />
     <input type="checkbox" id="checkbox" value="checkbox" /><br />
-    <input type="radio" id="radio" value="radio" /><br />
+    <input type="radio" id="radio-a" value="a" name="test-radio" /><br />
+    <input type="radio" id="radio-b" value="b" name="test-radio" /><br />
+    <input type="radio" id="radio-c" value="c" name="test-radio" /><br />
     <input type="file" id="file" value="file" /><br />
     <input type="submit" id="submit" value="submit" /><br />
     <input type="image" id="image" value="image" /><br />
@@ -29,6 +48,8 @@
     var ids = [
         "hidden",
         "text",
+        "placeholder1",
+        "placeholder2",
         "search",
         "tel",
         "url",
@@ -69,3 +90,5 @@
 
     });
 </script>
+</body>
+</html>

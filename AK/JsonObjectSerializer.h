@@ -38,11 +38,6 @@ public:
 
     JsonObjectSerializer(JsonObjectSerializer const&) = delete;
 
-    ~JsonObjectSerializer()
-    {
-        VERIFY(m_finished);
-    }
-
 #ifndef KERNEL
     ErrorOr<void> add(StringView key, JsonValue const& value)
     {
@@ -68,7 +63,7 @@ public:
     }
 
 #ifndef KERNEL
-    ErrorOr<void> add(StringView key, String const& value)
+    ErrorOr<void> add(StringView key, ByteString const& value)
     {
         TRY(begin_item(key));
         if constexpr (IsLegacyBuilder<Builder>) {
@@ -89,11 +84,11 @@ public:
         TRY(begin_item(key));
         if constexpr (IsLegacyBuilder<Builder>) {
             TRY(m_builder.try_append('"'));
-            TRY(m_builder.try_append_escaped_for_json({ value, strlen(value) }));
+            TRY(m_builder.try_append_escaped_for_json({ value, __builtin_strlen(value) }));
             TRY(m_builder.try_append('"'));
         } else {
             TRY(m_builder.append('"'));
-            TRY(m_builder.append_escaped_for_json({ value, strlen(value) }));
+            TRY(m_builder.append_escaped_for_json({ value, __builtin_strlen(value) }));
             TRY(m_builder.append('"'));
         }
         return {};
@@ -267,4 +262,6 @@ ErrorOr<JsonObjectSerializer<Builder>> JsonArraySerializer<Builder>::add_object(
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::JsonObjectSerializer;
+#endif

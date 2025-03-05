@@ -11,13 +11,11 @@ PlaybackManager::PlaybackManager(NonnullRefPtr<Audio::ConnectionToServer> connec
     : m_connection(connection)
 {
     // FIXME: The buffer enqueuing should happen on a wholly independent second thread.
-    m_timer = Core::Timer::construct(PlaybackManager::update_rate_ms, [&]() {
+    m_timer = Core::Timer::create_repeating(PlaybackManager::update_rate_ms, [&]() {
         if (!m_loader)
             return;
         next_buffer();
     });
-    m_timer->stop();
-    m_device_sample_rate = connection->get_sample_rate();
 }
 
 void PlaybackManager::set_loader(NonnullRefPtr<Audio::Loader>&& loader)
@@ -25,10 +23,9 @@ void PlaybackManager::set_loader(NonnullRefPtr<Audio::Loader>&& loader)
     stop();
     m_loader = loader;
     if (m_loader) {
+        m_connection->set_self_sample_rate(loader->sample_rate());
         m_total_length = m_loader->total_samples() / static_cast<float>(m_loader->sample_rate());
-        m_device_samples_per_buffer = PlaybackManager::buffer_size_ms / 1000.0f * m_device_sample_rate;
         m_samples_to_load_per_buffer = PlaybackManager::buffer_size_ms / 1000.0f * m_loader->sample_rate();
-        m_resampler = Audio::ResampleHelper<Audio::Sample>(m_loader->sample_rate(), m_device_sample_rate);
         m_timer->start();
     } else {
         m_timer->stop();
@@ -38,8 +35,8 @@ void PlaybackManager::set_loader(NonnullRefPtr<Audio::Loader>&& loader)
 void PlaybackManager::stop()
 {
     set_paused(true);
+    m_connection->clear_client_buffer();
     m_connection->async_clear_buffer();
-    m_last_seek = 0;
 
     if (m_loader)
         (void)m_loader->reset();
@@ -60,7 +57,6 @@ void PlaybackManager::seek(int const position)
     if (!m_loader)
         return;
 
-    m_last_seek = position;
     bool paused_state = m_paused;
     set_paused(true);
 
@@ -104,7 +100,7 @@ void PlaybackManager::next_buffer()
     if (m_paused)
         return;
 
-    while (m_connection->remaining_samples() < m_device_samples_per_buffer * always_enqueued_buffer_count) {
+    while (m_connection->remaining_samples() < m_samples_to_load_per_buffer * always_enqueued_buffer_count) {
         bool all_samples_loaded = (m_loader->loaded_samples() >= m_loader->total_samples());
         bool audio_server_done = (m_connection->remaining_samples() == 0);
 
@@ -115,15 +111,14 @@ void PlaybackManager::next_buffer()
             return;
         }
 
-        auto maybe_buffer = m_loader->get_more_samples(m_samples_to_load_per_buffer);
-        if (!maybe_buffer.is_error()) {
-            m_current_buffer.swap(maybe_buffer.value());
-            VERIFY(m_resampler.has_value());
-            m_resampler->reset();
-            // FIXME: Handle OOM better.
-            auto resampled = MUST(FixedArray<Audio::Sample>::try_create(m_resampler->resample(move(m_current_buffer)).span()));
-            m_current_buffer.swap(resampled);
-            MUST(m_connection->async_enqueue(m_current_buffer));
+        auto buffer_or_error = m_loader->get_more_samples(m_samples_to_load_per_buffer);
+        if (buffer_or_error.is_error()) {
+            // FIXME: These errors should be shown to the user instead of being logged and then ignored
+            dbgln("Error while loading samples: {}", buffer_or_error.error().description);
+            return;
         }
+        auto buffer = buffer_or_error.release_value();
+        m_current_buffer.swap(buffer);
+        MUST(m_connection->async_enqueue(m_current_buffer));
     }
 }

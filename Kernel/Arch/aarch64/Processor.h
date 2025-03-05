@@ -1,20 +1,25 @@
 /*
  * Copyright (c) 2018-2021, James Mintram <me@jamesrm.com>
+ * Copyright (c) 2022, Timon Kruiper <timonkruiper@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/Array.h>
 #include <AK/Concepts.h>
 #include <AK/Function.h>
 #include <AK/Types.h>
 
+#include <Kernel/Arch/DeferredCallEntry.h>
+#include <Kernel/Arch/DeferredCallPool.h>
 #include <Kernel/Arch/ProcessorSpecificDataID.h>
+#include <Kernel/Arch/aarch64/CPUID.h>
 #include <Kernel/Arch/aarch64/Registers.h>
+#include <Kernel/Memory/VirtualAddress.h>
 
-class VirtualAddress;
+#include <AK/Platform.h>
+VALIDATE_IS_AARCH64()
 
 namespace Kernel {
 
@@ -24,143 +29,179 @@ class PageDirectory;
 
 class Thread;
 class Processor;
+struct TrapFrame;
+enum class InterruptsState;
 
-// FIXME This needs to go behind some sort of platform abstraction
-//       it is used between Thread and Processor.
-struct [[gnu::aligned(16)]] FPUState
-{
-    u8 buffer[512];
-};
+template<typename ProcessorT>
+class ProcessorBase;
 
 // FIXME: Remove this once we support SMP in aarch64
 extern Processor* g_current_processor;
 
-class Processor {
+constexpr size_t MAX_CPU_COUNT = 1;
+
+class Processor final : public ProcessorBase<Processor> {
 public:
-    void initialize(u32 cpu);
-
-    void set_specific(ProcessorSpecificDataID /*specific_id*/, void* /*ptr*/)
+    template<IteratorFunction<Processor&> Callback>
+    static inline IterationDecision for_each(Callback callback)
     {
-        VERIFY_NOT_REACHED();
-    }
-    template<typename T>
-    T* get_specific()
-    {
-        VERIFY_NOT_REACHED();
-        return 0;
+        // FIXME: Once we support SMP for aarch64, make sure to call the callback for every processor.
+        if (callback(*g_current_processor) == IterationDecision::Break)
+            return IterationDecision::Break;
+        return IterationDecision::Continue;
     }
 
-    ALWAYS_INLINE static void pause()
+    template<VoidFunction<Processor&> Callback>
+    static inline IterationDecision for_each(Callback callback)
     {
-        VERIFY_NOT_REACHED();
+        // FIXME: Once we support SMP for aarch64, make sure to call the callback for every processor.
+        callback(*g_current_processor);
+        return IterationDecision::Continue;
     }
-    ALWAYS_INLINE static void wait_check()
-    {
-        VERIFY_NOT_REACHED();
-    }
-
-    ALWAYS_INLINE u8 physical_address_bit_width() const
-    {
-        VERIFY_NOT_REACHED();
-        return 0;
-    }
-
-    ALWAYS_INLINE u8 virtual_address_bit_width() const
-    {
-        VERIFY_NOT_REACHED();
-        return 0;
-    }
-
-    ALWAYS_INLINE static bool is_initialized()
-    {
-        return false;
-    }
-
-    ALWAYS_INLINE static void flush_tlb_local(VirtualAddress&, size_t&)
-    {
-        VERIFY_NOT_REACHED();
-    }
-
-    ALWAYS_INLINE static void flush_tlb(Memory::PageDirectory const*, VirtualAddress const&, size_t)
-    {
-        VERIFY_NOT_REACHED();
-    }
-
-    // FIXME: When aarch64 supports multiple cores, return the correct core id here.
-    ALWAYS_INLINE static u32 current_id()
-    {
-        return 0;
-    }
-
-    // FIXME: Actually return the current thread once aarch64 supports threading.
-    ALWAYS_INLINE static Thread* current_thread()
-    {
-        return nullptr;
-    }
-
-    ALWAYS_INLINE bool has_nx() const
-    {
-        return true;
-    }
-
-    ALWAYS_INLINE bool has_pat() const
-    {
-        return false;
-    }
-
-    ALWAYS_INLINE static FlatPtr current_in_irq()
-    {
-        VERIFY_NOT_REACHED();
-        return 0;
-    }
-
-    ALWAYS_INLINE static u64 read_cpu_counter()
-    {
-        VERIFY_NOT_REACHED();
-        return 0;
-    }
-
-    ALWAYS_INLINE static bool are_interrupts_enabled()
-    {
-        auto daif = Aarch64::DAIF::read();
-        return !daif.I;
-    }
-
-    ALWAYS_INLINE static void enable_interrupts()
-    {
-        Aarch64::DAIF::clear_I();
-    }
-
-    ALWAYS_INLINE static void disable_interrupts()
-    {
-        Aarch64::DAIF::set_I();
-    }
-
-    ALWAYS_INLINE static void enter_critical() { VERIFY_NOT_REACHED(); }
-    ALWAYS_INLINE static void leave_critical() { VERIFY_NOT_REACHED(); }
-    ALWAYS_INLINE static u32 in_critical()
-    {
-        VERIFY_NOT_REACHED();
-        return 0;
-    }
-
-    // FIXME: Actually return the idle thread once aarch64 supports threading.
-    ALWAYS_INLINE static Thread* idle_thread()
-    {
-        return nullptr;
-    }
-
-    ALWAYS_INLINE static Processor& current()
-    {
-        return *g_current_processor;
-    }
-
-    static void deferred_call_queue(Function<void()> /* callback */)
-    {
-        VERIFY_NOT_REACHED();
-    }
-
-    [[noreturn]] static void halt();
 };
+
+template<typename T>
+ALWAYS_INLINE bool ProcessorBase<T>::is_initialized()
+{
+    return g_current_processor != nullptr;
+}
+
+template<typename T>
+ALWAYS_INLINE Thread* ProcessorBase<T>::idle_thread()
+{
+    return current().m_idle_thread;
+}
+
+template<typename T>
+ALWAYS_INLINE void ProcessorBase<T>::set_current_thread(Thread& current_thread)
+{
+    current().m_current_thread = &current_thread;
+}
+
+// FIXME: When aarch64 supports multiple cores, return the correct core id here.
+template<typename T>
+ALWAYS_INLINE u32 ProcessorBase<T>::current_id()
+{
+    return 0;
+}
+
+template<typename T>
+ALWAYS_INLINE u32 ProcessorBase<T>::in_critical()
+{
+    return current().m_in_critical;
+}
+
+template<typename T>
+ALWAYS_INLINE void ProcessorBase<T>::enter_critical()
+{
+    auto& current_processor = current();
+    current_processor.m_in_critical = current_processor.m_in_critical + 1;
+}
+
+template<typename T>
+ALWAYS_INLINE void ProcessorBase<T>::restore_critical(u32 prev_critical)
+{
+    current().m_in_critical = prev_critical;
+}
+
+template<typename T>
+ALWAYS_INLINE T& ProcessorBase<T>::current()
+{
+    return *g_current_processor;
+}
+
+template<typename T>
+void ProcessorBase<T>::idle_begin() const
+{
+    // FIXME: Implement this when SMP for aarch64 is supported.
+}
+
+template<typename T>
+void ProcessorBase<T>::idle_end() const
+{
+    // FIXME: Implement this when SMP for aarch64 is supported.
+}
+
+template<typename T>
+void ProcessorBase<T>::smp_enable()
+{
+    // FIXME: Implement this when SMP for aarch64 is supported.
+}
+
+template<typename T>
+bool ProcessorBase<T>::is_smp_enabled()
+{
+    return false;
+}
+
+template<typename T>
+ALWAYS_INLINE bool ProcessorBase<T>::are_interrupts_enabled()
+{
+    auto daif = Aarch64::DAIF::read();
+    return !daif.I;
+}
+
+template<typename T>
+ALWAYS_INLINE void ProcessorBase<T>::enable_interrupts()
+{
+    Aarch64::DAIF::clear_I();
+}
+
+template<typename T>
+ALWAYS_INLINE void ProcessorBase<T>::disable_interrupts()
+{
+    Aarch64::DAIF::set_I();
+}
+
+template<typename T>
+ALWAYS_INLINE bool ProcessorBase<T>::current_in_scheduler()
+{
+    return current().m_in_scheduler;
+}
+
+template<typename T>
+ALWAYS_INLINE void ProcessorBase<T>::set_current_in_scheduler(bool value)
+{
+    current().m_in_scheduler = value;
+}
+
+template<typename T>
+ALWAYS_INLINE bool ProcessorBase<T>::has_nx() const
+{
+    return true;
+}
+
+template<typename T>
+ALWAYS_INLINE FlatPtr ProcessorBase<T>::current_in_irq()
+{
+    return current().m_in_irq;
+}
+
+template<typename T>
+ALWAYS_INLINE Thread* ProcessorBase<T>::current_thread()
+{
+    return current().m_current_thread;
+}
+
+template<typename T>
+ALWAYS_INLINE void ProcessorBase<T>::pause()
+{
+    asm volatile("isb sy");
+}
+
+template<typename T>
+ALWAYS_INLINE void ProcessorBase<T>::wait_check()
+{
+    asm volatile("yield");
+    // FIXME: Process SMP messages once we support SMP on aarch64; cf. x86_64
+}
+
+template<typename T>
+ALWAYS_INLINE Optional<u64> ProcessorBase<T>::read_cycle_count()
+{
+    if (Processor::current().has_feature(CPUFeature::PMUv3))
+        return Aarch64::PMCCNTR_EL0::read().CCNT;
+    return {};
+}
 
 }

@@ -1,340 +1,236 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/CharacterTypes.h>
+#include <AK/Concepts.h>
 #include <AK/Format.h>
 #include <AK/Forward.h>
-#include <AK/RefPtr.h>
-#include <AK/Stream.h>
+#include <AK/Optional.h>
+#include <AK/RefCounted.h>
+#include <AK/Span.h>
+#include <AK/StringBase.h>
 #include <AK/StringBuilder.h>
-#include <AK/StringImpl.h>
 #include <AK/StringUtils.h>
+#include <AK/StringView.h>
 #include <AK/Traits.h>
+#include <AK/Types.h>
+#include <AK/UnicodeUtils.h>
+#include <AK/Utf8View.h>
+#include <AK/Vector.h>
 
 namespace AK {
 
-// String is a convenience wrapper around StringImpl, suitable for passing
-// around as a value type. It's basically the same as passing around a
-// RefPtr<StringImpl>, with a bit of syntactic sugar.
-//
-// Note that StringImpl is an immutable object that cannot shrink or grow.
-// Its allocation size is snugly tailored to the specific string it contains.
-// Copying a String is very efficient, since the internal StringImpl is
-// retainable and so copying only requires modifying the ref count.
-//
-// There are three main ways to construct a new String:
-//
-//     s = String("some literal");
-//
-//     s = String::formatted("{} little piggies", m_piggies);
-//
-//     StringBuilder builder;
-//     builder.append("abc");
-//     builder.append("123");
-//     s = builder.to_string();
+// FIXME: Remove this when OpenBSD Clang fully supports consteval.
+//        And once oss-fuzz updates to clang >15.
+#if defined(AK_OS_OPENBSD) || defined(OSS_FUZZ)
+#    define AK_SHORT_STRING_CONSTEVAL constexpr
+#else
+#    define AK_SHORT_STRING_CONSTEVAL consteval
+#endif
 
-class String {
+// String is a strongly owned sequence of Unicode code points encoded as UTF-8.
+// The data may or may not be heap-allocated, and may or may not be reference counted.
+// There is no guarantee that the underlying bytes are null-terminated.
+class String : public Detail::StringBase {
+    AK_MAKE_DEFAULT_COPYABLE(String);
+    AK_MAKE_DEFAULT_MOVABLE(String);
+
 public:
-    ~String() = default;
+    // NOTE: For short strings, we avoid heap allocations by storing them in the data pointer slot.
+    static constexpr size_t MAX_SHORT_STRING_BYTE_COUNT = Detail::MAX_SHORT_STRING_BYTE_COUNT;
 
-    String() = default;
+    using StringBase::StringBase;
 
-    String(StringView view)
-        : m_impl(StringImpl::create(view.characters_without_null_termination(), view.length()))
-    {
-    }
+    // Creates a new String from a sequence of UTF-8 encoded code points.
+    static ErrorOr<String> from_utf8(StringView);
 
-    String(String const& other)
-        : m_impl(const_cast<String&>(other).m_impl)
-    {
-    }
+    enum class WithBOMHandling {
+        Yes,
+        No,
+    };
 
-    String(String&& other)
-        : m_impl(move(other.m_impl))
-    {
-    }
-
-    String(char const* cstring, ShouldChomp shouldChomp = NoChomp)
-        : m_impl(StringImpl::create(cstring, shouldChomp))
-    {
-    }
-
-    String(char const* cstring, size_t length, ShouldChomp shouldChomp = NoChomp)
-        : m_impl(StringImpl::create(cstring, length, shouldChomp))
-    {
-    }
-
-    explicit String(ReadonlyBytes bytes, ShouldChomp shouldChomp = NoChomp)
-        : m_impl(StringImpl::create(bytes, shouldChomp))
-    {
-    }
-
-    String(StringImpl const& impl)
-        : m_impl(const_cast<StringImpl&>(impl))
-    {
-    }
-
-    String(StringImpl const* impl)
-        : m_impl(const_cast<StringImpl*>(impl))
-    {
-    }
-
-    String(RefPtr<StringImpl>&& impl)
-        : m_impl(move(impl))
-    {
-    }
-
-    String(NonnullRefPtr<StringImpl>&& impl)
-        : m_impl(move(impl))
-    {
-    }
-
-    String(FlyString const&);
-
-    [[nodiscard]] static String repeated(char, size_t count);
-    [[nodiscard]] static String repeated(StringView, size_t count);
-
-    [[nodiscard]] static String bijective_base_from(size_t value, unsigned base = 26, StringView map = {});
-    [[nodiscard]] static String roman_number_from(size_t value);
-
-    template<class SeparatorType, class CollectionType>
-    [[nodiscard]] static String join(SeparatorType const& separator, CollectionType const& collection, StringView fmtstr = "{}"sv)
-    {
-        StringBuilder builder;
-        builder.join(separator, collection, fmtstr);
-        return builder.build();
-    }
-
-    [[nodiscard]] bool matches(StringView mask, CaseSensitivity = CaseSensitivity::CaseInsensitive) const;
-    [[nodiscard]] bool matches(StringView mask, Vector<MaskSpan>&, CaseSensitivity = CaseSensitivity::CaseInsensitive) const;
-
-    template<typename T = int>
-    [[nodiscard]] Optional<T> to_int(TrimWhitespace = TrimWhitespace::Yes) const;
-    template<typename T = unsigned>
-    [[nodiscard]] Optional<T> to_uint(TrimWhitespace = TrimWhitespace::Yes) const;
-
-    [[nodiscard]] String to_lowercase() const;
-    [[nodiscard]] String to_uppercase() const;
-    [[nodiscard]] String to_snakecase() const;
-    [[nodiscard]] String to_titlecase() const;
-    [[nodiscard]] String invert_case() const;
-
-    [[nodiscard]] bool is_whitespace() const { return StringUtils::is_whitespace(*this); }
-
-    [[nodiscard]] String trim(StringView characters, TrimMode mode = TrimMode::Both) const
-    {
-        auto trimmed_view = StringUtils::trim(view(), characters, mode);
-        if (view() == trimmed_view)
-            return *this;
-        return trimmed_view;
-    }
-
-    [[nodiscard]] String trim_whitespace(TrimMode mode = TrimMode::Both) const
-    {
-        auto trimmed_view = StringUtils::trim_whitespace(view(), mode);
-        if (view() == trimmed_view)
-            return *this;
-        return trimmed_view;
-    }
-
-    [[nodiscard]] bool equals_ignoring_case(StringView) const;
-
-    [[nodiscard]] bool contains(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-    [[nodiscard]] bool contains(char, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-
-    [[nodiscard]] Vector<String> split_limit(char separator, size_t limit, bool keep_empty = false) const;
-    [[nodiscard]] Vector<String> split(char separator, bool keep_empty = false) const;
-    [[nodiscard]] Vector<StringView> split_view(char separator, bool keep_empty = false) const;
-    [[nodiscard]] Vector<StringView> split_view(Function<bool(char)> separator, bool keep_empty = false) const;
-
-    [[nodiscard]] Optional<size_t> find(char needle, size_t start = 0) const { return StringUtils::find(*this, needle, start); }
-    [[nodiscard]] Optional<size_t> find(StringView needle, size_t start = 0) const { return StringUtils::find(*this, needle, start); }
-    [[nodiscard]] Optional<size_t> find_last(char needle) const { return StringUtils::find_last(*this, needle); }
-    // FIXME: Implement find_last(StringView) for API symmetry.
-    Vector<size_t> find_all(StringView needle) const;
-    using SearchDirection = StringUtils::SearchDirection;
-    [[nodiscard]] Optional<size_t> find_any_of(StringView needles, SearchDirection direction) const { return StringUtils::find_any_of(*this, needles, direction); }
-
-    [[nodiscard]] StringView find_last_split_view(char separator) const { return view().find_last_split_view(separator); }
-
-    [[nodiscard]] String substring(size_t start, size_t length) const;
-    [[nodiscard]] String substring(size_t start) const;
-    [[nodiscard]] StringView substring_view(size_t start, size_t length) const;
-    [[nodiscard]] StringView substring_view(size_t start) const;
-
-    [[nodiscard]] bool is_null() const { return !m_impl; }
-    [[nodiscard]] ALWAYS_INLINE bool is_empty() const { return length() == 0; }
-    [[nodiscard]] ALWAYS_INLINE size_t length() const { return m_impl ? m_impl->length() : 0; }
-    // Includes NUL-terminator, if non-nullptr.
-    [[nodiscard]] ALWAYS_INLINE char const* characters() const { return m_impl ? m_impl->characters() : nullptr; }
-
-    [[nodiscard]] bool copy_characters_to_buffer(char* buffer, size_t buffer_size) const;
-
-    [[nodiscard]] ALWAYS_INLINE ReadonlyBytes bytes() const
-    {
-        if (m_impl) {
-            return m_impl->bytes();
-        }
-        return {};
-    }
-
-    [[nodiscard]] ALWAYS_INLINE char const& operator[](size_t i) const
-    {
-        VERIFY(!is_null());
-        return (*m_impl)[i];
-    }
-
-    using ConstIterator = SimpleIterator<const String, char const>;
-
-    [[nodiscard]] constexpr ConstIterator begin() const { return ConstIterator::begin(*this); }
-    [[nodiscard]] constexpr ConstIterator end() const { return ConstIterator::end(*this); }
-
-    [[nodiscard]] bool starts_with(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-    [[nodiscard]] bool ends_with(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-    [[nodiscard]] bool starts_with(char) const;
-    [[nodiscard]] bool ends_with(char) const;
-
-    bool operator==(String const&) const;
-    bool operator!=(String const& other) const { return !(*this == other); }
-
-    bool operator==(StringView) const;
-    bool operator!=(StringView other) const { return !(*this == other); }
-
-    bool operator==(FlyString const&) const;
-    bool operator!=(FlyString const& other) const { return !(*this == other); }
-
-    bool operator<(String const&) const;
-    bool operator<(char const*) const;
-    bool operator>=(String const& other) const { return !(*this < other); }
-    bool operator>=(char const* other) const { return !(*this < other); }
-
-    bool operator>(String const&) const;
-    bool operator>(char const*) const;
-    bool operator<=(String const& other) const { return !(*this > other); }
-    bool operator<=(char const* other) const { return !(*this > other); }
-
-    bool operator==(char const* cstring) const;
-    bool operator!=(char const* cstring) const { return !(*this == cstring); }
-
-    [[nodiscard]] String isolated_copy() const;
-
-    [[nodiscard]] static String empty()
-    {
-        return StringImpl::the_empty_stringimpl();
-    }
-
-    [[nodiscard]] StringImpl* impl() { return m_impl.ptr(); }
-    [[nodiscard]] StringImpl const* impl() const { return m_impl.ptr(); }
-
-    String& operator=(String&& other)
-    {
-        if (this != &other)
-            m_impl = move(other.m_impl);
-        return *this;
-    }
-
-    String& operator=(String const& other)
-    {
-        if (this != &other)
-            m_impl = const_cast<String&>(other).m_impl;
-        return *this;
-    }
-
-    String& operator=(std::nullptr_t)
-    {
-        m_impl = nullptr;
-        return *this;
-    }
-
-    String& operator=(ReadonlyBytes bytes)
-    {
-        m_impl = StringImpl::create(bytes);
-        return *this;
-    }
-
-    [[nodiscard]] u32 hash() const
-    {
-        if (!m_impl)
-            return 0;
-        return m_impl->hash();
-    }
-
-    [[nodiscard]] ByteBuffer to_byte_buffer() const;
-
-    template<typename BufferType>
-    [[nodiscard]] static String copy(BufferType const& buffer, ShouldChomp should_chomp = NoChomp)
-    {
-        if (buffer.is_empty())
-            return empty();
-        return String((char const*)buffer.data(), buffer.size(), should_chomp);
-    }
-
-    [[nodiscard]] static String vformatted(StringView fmtstr, TypeErasedFormatParams&);
-
-    template<typename... Parameters>
-    [[nodiscard]] static String formatted(CheckedFormatString<Parameters...>&& fmtstr, Parameters const&... parameters)
-    {
-        VariadicFormatParams variadic_format_parameters { parameters... };
-        return vformatted(fmtstr.view(), variadic_format_parameters);
-    }
+    // Creates a new String using the replacement character for invalid bytes
+    [[nodiscard]] static String from_utf8_with_replacement_character(StringView, WithBOMHandling = WithBOMHandling::Yes);
 
     template<typename T>
-    [[nodiscard]] static String number(T value) requires IsArithmetic<T>
+    requires(IsOneOf<RemoveCVReference<T>, ByteString, DeprecatedFlyString, FlyString, String>)
+    static ErrorOr<String> from_utf8(T&&) = delete;
+
+    [[nodiscard]] static String from_utf8_without_validation(ReadonlyBytes);
+
+    // Creates a new String by reading byte_count bytes from a UTF-8 encoded Stream.
+    static ErrorOr<String> from_stream(Stream&, size_t byte_count);
+
+    // Creates a new String from a single code point.
+    static constexpr String from_code_point(u32 code_point)
     {
-        return formatted("{}", value);
+        VERIFY(is_unicode(code_point));
+
+        String string;
+        string.replace_with_new_short_string(UnicodeUtils::bytes_to_store_code_point_in_utf8(code_point), [&](Bytes buffer) {
+            size_t i = 0;
+            (void)UnicodeUtils::code_point_to_utf8(code_point, [&](auto byte) {
+                buffer[i++] = static_cast<u8>(byte);
+            });
+        });
+
+        return string;
     }
 
-    [[nodiscard]] StringView view() const
-    {
-        return { characters(), length() };
-    }
+    // Creates a new String with a single code point repeated N times.
+    static ErrorOr<String> repeated(u32 code_point, size_t count);
 
-    [[nodiscard]] String replace(StringView needle, StringView replacement, ReplaceMode replace_mode) const { return StringUtils::replace(*this, needle, replacement, replace_mode); }
-    [[nodiscard]] size_t count(StringView needle) const { return StringUtils::count(*this, needle); }
-    [[nodiscard]] String reverse() const;
+    // Creates a new String from another string, repeated N times.
+    static ErrorOr<String> repeated(String const&, size_t count);
+
+    // Creates a new String by case-transforming this String. Using these methods require linking LibUnicode into your application.
+    ErrorOr<String> to_lowercase(Optional<StringView> const& locale = {}) const;
+    ErrorOr<String> to_uppercase(Optional<StringView> const& locale = {}) const;
+    ErrorOr<String> to_titlecase(Optional<StringView> const& locale = {}, TrailingCodePointTransformation trailing_code_point_transformation = TrailingCodePointTransformation::Lowercase) const;
+    ErrorOr<String> to_casefold() const;
+
+    [[nodiscard]] String to_ascii_lowercase() const;
+    [[nodiscard]] String to_ascii_uppercase() const;
+
+    // Compare this String against another string with caseless matching. Using this method requires linking LibUnicode into your application.
+    [[nodiscard]] bool equals_ignoring_case(String const&) const;
+
+    [[nodiscard]] bool equals_ignoring_ascii_case(String const&) const;
+    [[nodiscard]] bool equals_ignoring_ascii_case(StringView) const;
+
+    [[nodiscard]] bool starts_with(u32 code_point) const;
+    [[nodiscard]] bool starts_with_bytes(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+
+    [[nodiscard]] bool ends_with(u32 code_point) const;
+    [[nodiscard]] bool ends_with_bytes(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+
+    // Creates a substring with a deep copy of the specified data window.
+    ErrorOr<String> substring_from_byte_offset(size_t start, size_t byte_count) const;
+    ErrorOr<String> substring_from_byte_offset(size_t start) const;
+
+    // Creates a substring that strongly references the origin superstring instead of making a deep copy of the data.
+    ErrorOr<String> substring_from_byte_offset_with_shared_superstring(size_t start, size_t byte_count) const;
+    ErrorOr<String> substring_from_byte_offset_with_shared_superstring(size_t start) const;
+
+    // Returns an iterable view over the Unicode code points.
+    [[nodiscard]] Utf8View code_points() const&;
+    [[nodiscard]] Utf8View code_points() const&& = delete;
+
+    // Returns true if the String is zero-length.
+    [[nodiscard]] bool is_empty() const;
+
+    // Returns a StringView covering the full length of the string. Note that iterating this will go byte-at-a-time, not code-point-at-a-time.
+    [[nodiscard]] StringView bytes_as_string_view() const&;
+    [[nodiscard]] StringView bytes_as_string_view() const&& = delete;
+
+    [[nodiscard]] size_t count(StringView needle) const { return StringUtils::count(bytes_as_string_view(), needle); }
+
+    ErrorOr<String> replace(StringView needle, StringView replacement, ReplaceMode replace_mode) const;
+    ErrorOr<String> reverse() const;
+
+    ErrorOr<String> trim(Utf8View const& code_points_to_trim, TrimMode mode = TrimMode::Both) const;
+    ErrorOr<String> trim(StringView code_points_to_trim, TrimMode mode = TrimMode::Both) const;
+    ErrorOr<String> trim_ascii_whitespace(TrimMode mode = TrimMode::Both) const;
+
+    ErrorOr<Vector<String>> split_limit(u32 separator, size_t limit, SplitBehavior = SplitBehavior::Nothing) const;
+    ErrorOr<Vector<String>> split(u32 separator, SplitBehavior = SplitBehavior::Nothing) const;
+
+    Optional<size_t> find_byte_offset(u32 code_point, size_t from_byte_offset = 0) const;
+    Optional<size_t> find_byte_offset(StringView substring, size_t from_byte_offset = 0) const;
+
+    // Using this method requires linking LibUnicode into your application.
+    Optional<size_t> find_byte_offset_ignoring_case(StringView, size_t from_byte_offset = 0) const;
+
+    [[nodiscard]] bool operator==(String const&) const = default;
+    [[nodiscard]] bool operator==(FlyString const&) const;
+    [[nodiscard]] bool operator==(StringView) const;
+    [[nodiscard]] bool operator==(char const* cstring) const;
+
+    // NOTE: UTF-8 is defined in a way that lexicographic ordering of code points is equivalent to lexicographic ordering of bytes.
+    [[nodiscard]] int operator<=>(String const& other) const { return this->bytes_as_string_view().compare(other.bytes_as_string_view()); }
 
     template<typename... Ts>
     [[nodiscard]] ALWAYS_INLINE constexpr bool is_one_of(Ts&&... strings) const
     {
-        return (... || this->operator==(forward<Ts>(strings)));
+        return (this->operator==(forward<Ts>(strings)) || ...);
     }
 
-    template<typename... Ts>
-    [[nodiscard]] ALWAYS_INLINE constexpr bool is_one_of_ignoring_case(Ts&&... strings) const
+    [[nodiscard]] bool contains(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+    [[nodiscard]] bool contains(u32, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
+
+    [[nodiscard]] u32 ascii_case_insensitive_hash() const;
+
+    template<Arithmetic T>
+    [[nodiscard]] static String number(T value)
     {
-        return (... ||
-                [this, &strings]() -> bool {
-            if constexpr (requires(Ts a) { a.view()->StringView; })
-                return this->equals_ignoring_case(forward<Ts>(strings.view()));
-            else
-                return this->equals_ignoring_case(forward<Ts>(strings));
-        }());
+        return MUST(formatted("{}", value));
     }
+
+    template<Arithmetic T>
+    Optional<T> to_number(TrimWhitespace trim_whitespace = TrimWhitespace::Yes) const
+    {
+        return bytes_as_string_view().to_number<T>(trim_whitespace);
+    }
+
+    static ErrorOr<String> vformatted(StringView fmtstr, TypeErasedFormatParams&);
+
+    template<typename... Parameters>
+    static ErrorOr<String> formatted(CheckedFormatString<Parameters...>&& fmtstr, Parameters const&... parameters)
+    {
+        VariadicFormatParams<AllowDebugOnlyFormatters::No, Parameters...> variadic_format_parameters { parameters... };
+        return vformatted(fmtstr.view(), variadic_format_parameters);
+    }
+
+    template<class SeparatorType, class CollectionType>
+    static ErrorOr<String> join(SeparatorType const& separator, CollectionType const& collection, StringView fmtstr = "{}"sv)
+    {
+        StringBuilder builder;
+        TRY(builder.try_join(separator, collection, fmtstr));
+        return builder.to_string();
+    }
+
+    // FIXME: Remove these once all code has been ported to String
+    [[nodiscard]] ByteString to_byte_string() const;
+    static ErrorOr<String> from_byte_string(ByteString const&);
+    template<typename T>
+    requires(IsSame<RemoveCVReference<T>, StringView>)
+    static ErrorOr<String> from_byte_string(T&&) = delete;
 
 private:
-    RefPtr<StringImpl> m_impl;
+    friend class ::AK::FlyString;
+
+    using ShortString = Detail::ShortString;
+
+    explicit constexpr String(StringBase&& base)
+        : StringBase(move(base))
+    {
+    }
 };
 
 template<>
-struct Traits<String> : public GenericTraits<String> {
-    static unsigned hash(String const& s) { return s.impl() ? s.impl()->hash() : 0; }
+struct Traits<String> : public DefaultTraits<String> {
+    static unsigned hash(String const&);
 };
 
-struct CaseInsensitiveStringTraits : public Traits<String> {
-    static unsigned hash(String const& s) { return s.impl() ? s.impl()->case_insensitive_hash() : 0; }
-    static bool equals(String const& a, String const& b) { return a.equals_ignoring_case(b); }
+template<>
+struct Formatter<String> : Formatter<StringView> {
+    ErrorOr<void> format(FormatBuilder&, String const&);
 };
 
-String escape_html_entities(StringView html);
-
-InputStream& operator>>(InputStream& stream, String& string);
+struct ASCIICaseInsensitiveStringTraits : public Traits<String> {
+    static unsigned hash(String const& s) { return s.ascii_case_insensitive_hash(); }
+    static bool equals(String const& a, String const& b) { return a.bytes_as_string_view().equals_ignoring_ascii_case(b.bytes_as_string_view()); }
+};
 
 }
 
-using AK::CaseInsensitiveStringTraits;
-using AK::escape_html_entities;
-using AK::String;
+[[nodiscard]] ALWAYS_INLINE AK::String operator""_string(char const* cstring, size_t length)
+{
+    return AK::String::from_utf8(AK::StringView(cstring, length)).release_value();
+}

@@ -34,24 +34,26 @@ int CookiesModel::row_count(GUI::ModelIndex const& index) const
     return 0;
 }
 
-String CookiesModel::column_name(int column) const
+ErrorOr<String> CookiesModel::column_name(int column) const
 {
     switch (column) {
     case Column::Domain:
-        return "Domain";
+        return "Domain"_string;
     case Column::Path:
-        return "Path";
+        return "Path"_string;
     case Column::Name:
-        return "Name";
+        return "Name"_string;
     case Column::Value:
-        return "Value";
+        return "Value"_string;
     case Column::ExpiryTime:
-        return "Expiry time";
+        return "Expiry time"_string;
+    case Column::SameSite:
+        return "SameSite"_string;
     case Column::__Count:
-        return {};
+        return String {};
     }
 
-    return {};
+    return String {};
 }
 
 GUI::ModelIndex CookiesModel::index(int row, int column, GUI::ModelIndex const&) const
@@ -78,23 +80,44 @@ GUI::Variant CookiesModel::data(GUI::ModelIndex const& index, GUI::ModelRole rol
     case Column::Value:
         return cookie.value;
     case Column::ExpiryTime:
-        return cookie.expiry_time.to_string();
+        return cookie.expiry_time_to_string();
+    case Column::SameSite:
+        return Web::Cookie::same_site_to_string(cookie.same_site);
     }
 
     VERIFY_NOT_REACHED();
 }
 
-TriState CookiesModel::data_matches(GUI::ModelIndex const& index, GUI::Variant const& term) const
+GUI::Model::MatchResult CookiesModel::data_matches(GUI::ModelIndex const& index, GUI::Variant const& term) const
 {
     auto needle = term.as_string();
     if (needle.is_empty())
-        return TriState::True;
+        return { TriState::True };
 
     auto const& cookie = m_cookies[index.row()];
-    auto haystack = String::formatted("{} {} {} {}", cookie.domain, cookie.path, cookie.name, cookie.value);
-    if (fuzzy_match(needle, haystack).score > 0)
-        return TriState::True;
-    return TriState::False;
+    auto haystack = ByteString::formatted("{} {} {} {}", cookie.domain, cookie.path, cookie.name, cookie.value);
+    auto match_result = fuzzy_match(needle, haystack);
+    if (match_result.score > 0)
+        return { TriState::True, match_result.score };
+    return { TriState::False };
+}
+
+Web::Cookie::Cookie CookiesModel::take_cookie(GUI::ModelIndex const& index)
+{
+    VERIFY(index.is_valid());
+
+    auto cookie = m_cookies.take(index.row());
+    did_update(InvalidateAllIndices);
+
+    return cookie;
+}
+
+AK::Vector<Web::Cookie::Cookie> CookiesModel::take_all_cookies()
+{
+    auto cookies = move(m_cookies);
+    did_update(InvalidateAllIndices);
+
+    return cookies;
 }
 
 }

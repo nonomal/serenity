@@ -20,29 +20,33 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd thread rpath cpath wpath unix"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     Config::pledge_domain("TextEditor");
 
+    app->set_config_domain("TextEditor"_string);
+
     auto preview_mode = "auto"sv;
-    char const* file_to_edit = nullptr;
+    StringView file_to_edit;
     Core::ArgsParser parser;
-    parser.add_option(preview_mode, "Preview mode, one of 'none', 'html', 'markdown', 'auto'", "preview-mode", '\0', "mode");
+    parser.add_option(preview_mode, "Preview mode, one of 'none', 'html', 'markdown', 'auto'", "preview-mode", 'p', "mode");
     parser.add_positional_argument(file_to_edit, "File to edit, with optional starting line and column number", "file[:line[:column]]", Core::ArgsParser::Required::No);
     parser.parse(arguments);
 
     TRY(Core::System::unveil("/res", "r"));
-    TRY(Core::System::unveil("/tmp/100/portal/launch", "rw"));
-    TRY(Core::System::unveil("/tmp/portal/webcontent", "rw"));
-    TRY(Core::System::unveil("/tmp/portal/filesystemaccess", "rw"));
+    TRY(Core::System::unveil("/tmp/session/%sid/portal/launch", "rw"));
+    TRY(Core::System::unveil("/tmp/session/%sid/portal/webcontent", "rw"));
+    TRY(Core::System::unveil("/tmp/session/%sid/portal/filesystemaccess", "rw"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
     auto app_icon = GUI::Icon::default_icon("app-text-editor"sv);
 
-    auto window = TRY(GUI::Window::try_create());
-    window->resize(640, 400);
+    auto window = GUI::Window::construct();
+    window->restore_size_and_position("TextEditor"sv, "Window"sv, { { 640, 400 } });
+    window->save_size_and_position_on_close("TextEditor"sv, "Window"sv);
 
-    auto text_widget = TRY(window->try_set_main_widget<MainWidget>());
+    auto text_widget = TRY(TextEditor::MainWidget::try_create());
+    window->set_main_widget(text_widget.ptr());
 
     text_widget->editor().set_focus(true);
 
@@ -65,27 +69,30 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return 1;
     }
 
-    text_widget->initialize_menubar(*window);
+    TRY(text_widget->initialize_menubar(*window));
+    text_widget->update_title();
 
     window->show();
     window->set_icon(app_icon.bitmap_for_size(16));
 
-    if (file_to_edit) {
-        FileArgument parsed_argument(file_to_edit);
-        auto response = FileSystemAccessClient::Client::the().try_request_file_read_only_approved(window, parsed_argument.filename());
+    if (!file_to_edit.is_empty()) {
+        auto filename = TRY(String::from_utf8(file_to_edit));
+        FileArgument parsed_argument(filename);
+
+        FileSystemAccessClient::Client::the().set_silence_errors(FileSystemAccessClient::ErrorFlag::NoEntries);
+        auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(window, parsed_argument.filename().to_byte_string());
 
         if (response.is_error()) {
             if (response.error().code() == ENOENT)
-                text_widget->open_nonexistent_file(parsed_argument.filename());
-            else
-                return 1;
+                text_widget->open_nonexistent_file(parsed_argument.filename().to_byte_string());
         } else {
-            if (!text_widget->read_file(*response.value()))
-                return 1;
+            TRY(text_widget->read_file(response.value().filename(), response.value().stream()));
             text_widget->editor().set_cursor_and_focus_line(parsed_argument.line().value_or(1) - 1, parsed_argument.column().value_or(0));
         }
+
+        text_widget->update_title();
+        FileSystemAccessClient::Client::the().set_silence_errors(FileSystemAccessClient::ErrorFlag::None);
     }
-    text_widget->update_title();
     text_widget->update_statusbar();
 
     return app->exec();

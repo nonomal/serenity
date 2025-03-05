@@ -12,26 +12,29 @@ namespace JS {
 
 class StringObject : public Object {
     JS_OBJECT(StringObject, Object);
+    JS_DECLARE_ALLOCATOR(StringObject);
 
 public:
-    static StringObject* create(GlobalObject&, PrimitiveString&, Object& prototype);
+    [[nodiscard]] static NonnullGCPtr<StringObject> create(Realm&, PrimitiveString&, Object& prototype);
 
-    StringObject(PrimitiveString&, Object& prototype);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~StringObject() override = default;
 
     PrimitiveString const& primitive_string() const { return m_string; }
     PrimitiveString& primitive_string() { return m_string; }
 
+protected:
+    StringObject(PrimitiveString&, Object& prototype);
+
 private:
     virtual ThrowCompletionOr<Optional<PropertyDescriptor>> internal_get_own_property(PropertyKey const&) const override;
-    virtual ThrowCompletionOr<bool> internal_define_own_property(PropertyKey const&, PropertyDescriptor const&) override;
+    virtual ThrowCompletionOr<bool> internal_define_own_property(PropertyKey const&, PropertyDescriptor const&, Optional<PropertyDescriptor>* precomputed_get_own_property = nullptr) override;
     virtual ThrowCompletionOr<MarkedVector<Value>> internal_own_property_keys() const override;
 
     virtual bool is_string_object() const final { return true; }
     virtual void visit_edges(Visitor&) override;
 
-    PrimitiveString& m_string;
+    NonnullGCPtr<PrimitiveString> m_string;
 };
 
 template<>

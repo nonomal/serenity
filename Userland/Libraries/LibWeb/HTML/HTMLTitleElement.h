@@ -11,13 +11,19 @@
 namespace Web::HTML {
 
 class HTMLTitleElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLTitleElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLTitleElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLTitleElement);
 
-    HTMLTitleElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLTitleElement() override;
 
+    String text() const;
+    void set_text(String const& value);
+
 private:
+    HTMLTitleElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void children_changed() override;
 };
 

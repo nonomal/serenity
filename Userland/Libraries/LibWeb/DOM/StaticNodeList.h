@@ -6,30 +6,29 @@
 
 #pragma once
 
-#include <AK/NonnullRefPtrVector.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/NodeList.h>
 
 namespace Web::DOM {
 
-class StaticNodeList : public NodeList {
-public:
-    static NonnullRefPtr<NodeList> create(NonnullRefPtrVector<Node> static_nodes)
-    {
-        return adopt_ref(*new StaticNodeList(move(static_nodes)));
-    }
+class StaticNodeList final : public NodeList {
+    WEB_PLATFORM_OBJECT(StaticNodeList, NodeList);
+    JS_DECLARE_ALLOCATOR(StaticNodeList);
 
-    virtual ~StaticNodeList() override = default;
+public:
+    [[nodiscard]] static JS::NonnullGCPtr<NodeList> create(JS::Realm&, Vector<JS::Handle<Node>>);
+
+    virtual ~StaticNodeList() override;
 
     virtual u32 length() const override;
     virtual Node const* item(u32 index) const override;
 
-    virtual bool is_supported_property_index(u32) const override;
-
 private:
-    StaticNodeList(NonnullRefPtrVector<Node>&& static_nodes);
+    StaticNodeList(JS::Realm&, Vector<JS::Handle<Node>>);
 
-    NonnullRefPtrVector<Node> m_static_nodes;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    Vector<JS::NonnullGCPtr<Node>> m_static_nodes;
 };
 
 }

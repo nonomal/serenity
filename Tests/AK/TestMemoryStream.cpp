@@ -1,222 +1,419 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2021, sin-ack <sin-ack@protonmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BufferedStream.h>
+#include <AK/MemoryStream.h>
+#include <AK/String.h>
 #include <LibTest/TestCase.h>
 
-#include <AK/Array.h>
-#include <AK/MemoryStream.h>
-
-TEST_CASE(read_an_integer)
+TEST_CASE(allocating_memory_stream_empty)
 {
-    u32 expected = 0x01020304, actual;
+    AllocatingMemoryStream stream;
 
-    InputMemoryStream stream { { &expected, sizeof(expected) } };
-    stream >> actual;
+    EXPECT_EQ(stream.used_buffer_size(), 0ul);
 
-    EXPECT(!stream.has_any_error() && stream.eof());
-    EXPECT_EQ(expected, actual);
+    {
+        Array<u8, 32> array;
+        auto read_bytes = MUST(stream.read_some(array));
+        EXPECT_EQ(read_bytes.size(), 0ul);
+    }
+
+    {
+        auto offset = MUST(stream.offset_of("test"sv.bytes()));
+        EXPECT(!offset.has_value());
+    }
 }
 
-TEST_CASE(read_a_bool)
+TEST_CASE(allocating_memory_stream_offset_of)
 {
-    bool expected = true, actual;
+    AllocatingMemoryStream stream;
+    MUST(stream.write_until_depleted("Well Hello Friends! :^)"sv.bytes()));
 
-    InputMemoryStream stream { { &expected, sizeof(expected) } };
-    stream >> actual;
+    {
+        auto offset = MUST(stream.offset_of(" "sv.bytes()));
+        EXPECT(offset.has_value());
+        EXPECT_EQ(offset.value(), 4ul);
+    }
 
-    EXPECT(!stream.has_any_error() && stream.eof());
-    EXPECT_EQ(expected, actual);
+    {
+        auto offset = MUST(stream.offset_of("W"sv.bytes()));
+        EXPECT(offset.has_value());
+        EXPECT_EQ(offset.value(), 0ul);
+    }
+
+    {
+        auto offset = MUST(stream.offset_of(")"sv.bytes()));
+        EXPECT(offset.has_value());
+        EXPECT_EQ(offset.value(), 22ul);
+    }
+
+    {
+        auto offset = MUST(stream.offset_of("-"sv.bytes()));
+        EXPECT(!offset.has_value());
+    }
+
+    MUST(stream.discard(1));
+
+    {
+        auto offset = MUST(stream.offset_of("W"sv.bytes()));
+        EXPECT(!offset.has_value());
+    }
+
+    {
+        auto offset = MUST(stream.offset_of("e"sv.bytes()));
+        EXPECT(offset.has_value());
+        EXPECT_EQ(offset.value(), 0ul);
+    }
 }
 
-TEST_CASE(read_a_double)
+TEST_CASE(allocating_memory_stream_offset_of_oob)
 {
-    double expected = 3.141592653589793, actual;
+    AllocatingMemoryStream stream;
+    // NOTE: This test is to make sure that offset_of() doesn't read past the end of the "initialized" data.
+    //       So we have to assume some things about the behavior of this class:
+    //       - A chunk is moved to the end when it's fully read from
+    //       - A free chunk is used as-is, no new ones are allocated if one exists.
 
-    InputMemoryStream stream { { &expected, sizeof(expected) } };
-    stream >> actual;
+    // First, fill exactly one chunk (in groups of 16 bytes).
+    for (size_t i = 0; i < AllocatingMemoryStream::CHUNK_SIZE / 16; ++i)
+        MUST(stream.write_until_depleted("AAAAAAAAAAAAAAAA"sv.bytes()));
 
-    EXPECT(!stream.has_any_error() && stream.eof());
-    EXPECT_EQ(expected, actual);
+    // Then discard it all.
+    MUST(stream.discard(AllocatingMemoryStream::CHUNK_SIZE));
+    // Now we can write into this chunk again, knowing that it's initialized to all 'A's.
+    MUST(stream.write_until_depleted("Well Hello Friends! :^)"sv.bytes()));
+
+    {
+        auto offset = MUST(stream.offset_of("A"sv.bytes()));
+        EXPECT(!offset.has_value());
+    }
 }
 
-TEST_CASE(recoverable_error)
+TEST_CASE(allocating_memory_stream_offset_of_after_chunk_reorder)
 {
-    u32 expected = 0x01020304, actual = 0;
-    u64 to_large_value = 0;
+    AllocatingMemoryStream stream;
 
-    InputMemoryStream stream { { &expected, sizeof(expected) } };
+    // First, fill exactly one chunk (in groups of 16 bytes). This chunk will be reordered.
+    for (size_t i = 0; i < AllocatingMemoryStream::CHUNK_SIZE / 16; ++i)
+        MUST(stream.write_until_depleted("AAAAAAAAAAAAAAAA"sv.bytes()));
 
-    EXPECT(!stream.has_any_error() && !stream.eof());
-    stream >> to_large_value;
-    EXPECT(stream.has_recoverable_error() && !stream.eof());
+    // Append a few additional bytes to create a second chunk.
+    MUST(stream.write_until_depleted("BCDEFGHIJKLMNOPQ"sv.bytes()));
 
-    EXPECT(stream.handle_recoverable_error());
-    EXPECT(!stream.has_any_error() && !stream.eof());
+    // Read back the first chunk, which should reorder it to the end of the list.
+    // The chunk that we wrote to the second time is now the first one.
+    MUST(stream.discard(AllocatingMemoryStream::CHUNK_SIZE));
 
-    stream >> actual;
-    EXPECT(!stream.has_any_error() && stream.eof());
-    EXPECT_EQ(expected, actual);
+    {
+        auto offset = MUST(stream.offset_of("A"sv.bytes()));
+        EXPECT(!offset.has_value());
+    }
+
+    {
+        auto offset = MUST(stream.offset_of("B"sv.bytes()));
+        EXPECT(offset.has_value());
+        EXPECT_EQ(offset.value(), 0ul);
+    }
+
+    {
+        auto offset = MUST(stream.offset_of("Q"sv.bytes()));
+        EXPECT(offset.has_value());
+        EXPECT_EQ(offset.value(), 15ul);
+    }
 }
 
-TEST_CASE(chain_stream_operator)
+TEST_CASE(allocating_memory_stream_offset_of_with_write_offset_multiple_of_chunk_size)
 {
-    Array<u8, 4> const expected { 0, 1, 2, 3 };
-    Array<u8, 4> actual;
+    // This tests a specific edge case where we would erroneously trim the last searched block
+    // to size 0 if the current write offset is a multiple of the chunk size.
 
-    InputMemoryStream stream { expected };
+    AllocatingMemoryStream stream;
 
-    stream >> actual[0] >> actual[1] >> actual[2] >> actual[3];
-    EXPECT(!stream.has_any_error() && stream.eof());
+    // First, fill exactly one chunk (in groups of 16 bytes).
+    for (size_t i = 0; i < (AllocatingMemoryStream::CHUNK_SIZE / 16) - 1; ++i)
+        MUST(stream.write_until_depleted("AAAAAAAAAAAAAAAA"sv.bytes()));
+    MUST(stream.write_until_depleted("BCDEFGHIJKLMNOPQ"sv.bytes()));
 
-    EXPECT_EQ(expected, actual);
+    // Read a few bytes from the beginning to ensure that we are trying to slice into the zero-sized block.
+    MUST(stream.discard(32));
+
+    {
+        auto offset = MUST(stream.offset_of("B"sv.bytes()));
+        EXPECT(offset.has_value());
+        EXPECT_EQ(offset.value(), AllocatingMemoryStream::CHUNK_SIZE - 32 - 16);
+    }
+
+    {
+        auto offset = MUST(stream.offset_of("Q"sv.bytes()));
+        EXPECT(offset.has_value());
+        EXPECT_EQ(offset.value(), AllocatingMemoryStream::CHUNK_SIZE - 32 - 1);
+    }
 }
 
-TEST_CASE(seeking_slicing_offset)
+TEST_CASE(fixed_memory_read_write)
 {
-    Array<u8, 8> const input { 0, 1, 2, 3, 4, 5, 6, 7 };
-    Array<u8, 4> const expected0 { 0, 1, 2, 3 };
-    Array<u8, 4> const expected1 { 4, 5, 6, 7 };
-    Array<u8, 4> const expected2 { 1, 2, 3, 4 };
+    constexpr auto some_words = "These are some words"sv;
 
-    Array<u8, 4> actual0 {}, actual1 {}, actual2 {};
+    auto empty = TRY_OR_FAIL(ByteBuffer::create_uninitialized(some_words.length()));
+    FixedMemoryStream stream { empty.bytes() };
 
-    InputMemoryStream stream { input };
+    ReadonlyBytes buffer { some_words.characters_without_null_termination(), some_words.length() };
+    TRY_OR_FAIL(stream.write_some(buffer));
 
-    stream >> actual0;
-    EXPECT(!stream.has_any_error() && !stream.eof());
-    EXPECT_EQ(expected0, actual0);
+    EXPECT_EQ(TRY_OR_FAIL(stream.tell()), some_words.length());
+    EXPECT(stream.is_eof());
 
-    stream.seek(4);
-    stream >> actual1;
-    EXPECT(!stream.has_any_error() && stream.eof());
-    EXPECT_EQ(expected1, actual1);
-
-    stream.seek(1);
-    stream >> actual2;
-    EXPECT(!stream.has_any_error() && !stream.eof());
-    EXPECT_EQ(expected2, actual2);
+    TRY_OR_FAIL(stream.seek(0));
+    auto contents = TRY_OR_FAIL(stream.read_until_eof());
+    EXPECT_EQ(contents.bytes(), some_words.bytes());
 }
 
-TEST_CASE(duplex_simple)
+TEST_CASE(fixed_memory_close)
 {
-    DuplexMemoryStream stream;
-
-    EXPECT(stream.eof());
-    stream << 42;
-    EXPECT(!stream.eof());
-
-    int value;
-    stream >> value;
-    EXPECT_EQ(value, 42);
-    EXPECT(stream.eof());
+    auto empty = TRY_OR_FAIL(ByteBuffer::create_uninitialized(64));
+    FixedMemoryStream stream { empty.bytes() };
+    EXPECT(stream.is_open());
+    stream.close();
+    EXPECT(stream.is_open());
 }
 
-TEST_CASE(duplex_large_buffer)
+TEST_CASE(fixed_memory_read_only)
 {
-    DuplexMemoryStream stream;
+    constexpr auto some_words = "These are some words"sv;
 
-    Array<u8, 1024> one_kibibyte;
+    FixedMemoryStream stream { ReadonlyBytes { some_words.bytes() } };
 
-    EXPECT_EQ(stream.size(), 0ul);
+    auto contents = TRY_OR_FAIL(stream.read_until_eof());
+    EXPECT_EQ(contents.bytes(), some_words.bytes());
 
-    for (size_t idx = 0; idx < 256; ++idx)
-        stream << one_kibibyte;
-
-    EXPECT_EQ(stream.size(), 256 * 1024ul);
-
-    for (size_t idx = 0; idx < 128; ++idx)
-        stream >> one_kibibyte;
-
-    EXPECT_EQ(stream.size(), 128 * 1024ul);
-
-    for (size_t idx = 0; idx < 128; ++idx)
-        stream >> one_kibibyte;
-
-    EXPECT(stream.eof());
+    TRY_OR_FAIL(stream.seek(0));
+    ReadonlyBytes buffer { some_words.characters_without_null_termination(), some_words.length() };
+    EXPECT(stream.write_some(buffer).is_error());
+    EXPECT_EQ(TRY_OR_FAIL(stream.tell()), 0ull);
+    EXPECT(!stream.is_eof());
 }
 
-TEST_CASE(read_endian_values)
+TEST_CASE(fixed_memory_seeking_around)
 {
-    Array<u8, 8> const input { 0, 1, 2, 3, 4, 5, 6, 7 };
-    InputMemoryStream stream { input };
+    auto stream_buffer = TRY_OR_FAIL(ByteBuffer::create_uninitialized(8702ul));
+    FixedMemoryStream stream { ReadonlyBytes { stream_buffer.bytes() } };
 
-    LittleEndian<u32> value1;
-    BigEndian<u32> value2;
-    stream >> value1 >> value2;
+    auto buffer = TRY_OR_FAIL(ByteBuffer::create_uninitialized(16));
 
-    EXPECT_EQ(value1, 0x03020100u);
-    EXPECT_EQ(value2, 0x04050607u);
+    TRY_OR_FAIL(stream.seek(500, SeekMode::SetPosition));
+    EXPECT_EQ(stream.tell().release_value(), 500ul);
+    TRY_OR_FAIL(stream.read_until_filled(buffer));
+
+    TRY_OR_FAIL(stream.seek(234, SeekMode::FromCurrentPosition));
+    EXPECT_EQ(stream.tell().release_value(), 750ul);
+    TRY_OR_FAIL(stream.read_until_filled(buffer));
+
+    TRY_OR_FAIL(stream.seek(-105, SeekMode::FromEndPosition));
+    EXPECT_EQ(stream.tell().release_value(), 8597ul);
+    TRY_OR_FAIL(stream.read_until_filled(buffer));
 }
 
-TEST_CASE(write_endian_values)
+BENCHMARK_CASE(fixed_memory_tell)
 {
-    Array<u8, 8> const expected { 4, 3, 2, 1, 1, 2, 3, 4 };
+    auto stream_buffer = TRY_OR_FAIL(ByteBuffer::create_uninitialized(10 * KiB));
+    FixedMemoryStream stream { ReadonlyBytes { stream_buffer.bytes() } };
 
-    DuplexMemoryStream stream;
-    stream << LittleEndian<u32> { 0x01020304 } << BigEndian<u32> { 0x01020304 };
+    auto expected_fixed_memory_offset = 0u;
+    auto ten_byte_buffer = TRY_OR_FAIL(ByteBuffer::create_uninitialized(1));
+    for (auto i = 0u; i < 4000; ++i) {
+        TRY_OR_FAIL(stream.read_until_filled(ten_byte_buffer));
+        expected_fixed_memory_offset += 1u;
+        EXPECT_EQ(expected_fixed_memory_offset, TRY_OR_FAIL(stream.tell()));
+    }
 
-    EXPECT_EQ(stream.size(), 8u);
-    EXPECT(expected.span() == stream.copy_into_contiguous_buffer().span());
+    for (auto i = 0u; i < 4000; ++i) {
+        auto seek_fixed_memory_offset = TRY_OR_FAIL(stream.seek(-1, SeekMode::FromCurrentPosition));
+        expected_fixed_memory_offset -= 1;
+        EXPECT_EQ(seek_fixed_memory_offset, TRY_OR_FAIL(stream.tell()));
+        EXPECT_EQ(expected_fixed_memory_offset, TRY_OR_FAIL(stream.tell()));
+    }
 }
 
-TEST_CASE(new_output_memory_stream)
+TEST_CASE(fixed_memory_truncate)
 {
-    Array<u8, 16> buffer;
-    OutputMemoryStream stream { buffer };
+    auto stream_buffer = TRY_OR_FAIL(ByteBuffer::create_uninitialized(10 * KiB));
+    FixedMemoryStream stream { ReadonlyBytes { stream_buffer.bytes() } };
 
-    EXPECT_EQ(stream.size(), 0u);
-    EXPECT_EQ(stream.remaining(), 16u);
-
-    stream << LittleEndian<u16>(0x12'87);
-
-    EXPECT_EQ(stream.size(), 2u);
-    EXPECT_EQ(stream.remaining(), 14u);
-
-    stream << buffer;
-
-    EXPECT(stream.handle_recoverable_error());
-    EXPECT_EQ(stream.size(), 2u);
-    EXPECT_EQ(stream.remaining(), 14u);
-
-    EXPECT_EQ(stream.bytes().data(), buffer.data());
-    EXPECT_EQ(stream.bytes().size(), 2u);
+    EXPECT(stream.truncate(999).is_error());
 }
 
-TEST_CASE(offset_of_out_of_bounds)
+TEST_CASE(fixed_memory_read_in_place)
 {
-    Array<u8, 4> target { 0xff, 0xff, 0xff, 0xff };
+    constexpr auto some_words = "These are some words"sv;
 
-    Array<u8, DuplexMemoryStream::chunk_size> whole_chunk;
-    whole_chunk.span().fill(0);
+    FixedMemoryStream readonly_stream { ReadonlyBytes { some_words.bytes() } };
 
-    DuplexMemoryStream stream;
+    // Trying to read mutable values from a read-only stream should fail.
+    EXPECT(readonly_stream.read_in_place<u8>(1).is_error());
+    EXPECT_EQ(readonly_stream.offset(), 0u);
 
-    stream << whole_chunk;
+    // Reading const values should succeed.
+    auto characters = TRY_OR_FAIL(readonly_stream.read_in_place<u8 const>(20));
+    EXPECT_EQ(characters, some_words.bytes());
+    EXPECT(readonly_stream.is_eof());
 
-    EXPECT(!stream.offset_of(target).has_value());
+    FixedMemoryStream mutable_stream { Bytes { const_cast<u8*>(some_words.bytes().data()), some_words.bytes().size() }, FixedMemoryStream::Mode::ReadWrite };
+    // Trying to read mutable values from a mutable stream should succeed.
+    TRY_OR_FAIL(mutable_stream.read_in_place<u8>(1));
+    EXPECT_EQ(mutable_stream.offset(), 1u);
+    TRY_OR_FAIL(mutable_stream.seek(0));
+
+    // Reading const values should succeed.
+    auto characters_again = TRY_OR_FAIL(mutable_stream.read_in_place<u8 const>(20));
+    EXPECT_EQ(characters_again, some_words.bytes());
+    EXPECT(mutable_stream.is_eof());
 }
 
-TEST_CASE(unsigned_integer_underflow_regression)
+TEST_CASE(buffered_memory_stream_read_line)
 {
-    Array<u8, DuplexMemoryStream::chunk_size + 1> buffer;
+    auto array = Array<u8, 32> {};
 
-    DuplexMemoryStream stream;
-    stream << buffer;
+    // First line: 8 bytes, second line: 24 bytes
+    array.fill('A');
+    array[7] = '\n';
+    array[31] = '\n';
+
+    auto memory_stream = make<FixedMemoryStream>(array.span(), FixedMemoryStream::Mode::ReadOnly);
+
+    // Buffer for buffered seekable is larger than the stream, so stream goes EOF immediately on read
+    auto buffered_stream = TRY_OR_FAIL(InputBufferedSeekable<FixedMemoryStream>::create(move(memory_stream), 64));
+
+    // Buffer is only 16 bytes, first read succeeds, second fails
+    auto buffer = TRY_OR_FAIL(ByteBuffer::create_zeroed(16));
+
+    auto read_bytes = TRY_OR_FAIL(buffered_stream->read_line(buffer));
+
+    EXPECT_EQ(read_bytes, "AAAAAAA"sv);
+
+    auto read_or_error = buffered_stream->read_line(buffer);
+
+    EXPECT(read_or_error.is_error());
+    EXPECT_EQ(read_or_error.error().code(), EMSGSIZE);
 }
 
-TEST_CASE(offset_calculation_error_regression)
+TEST_CASE(buffered_memory_stream_read_line_with_resizing_where_stream_buffer_is_sufficient)
 {
-    Array<u8, DuplexMemoryStream::chunk_size> input, output;
-    input.span().fill(0xff);
+    auto array = Array<u8, 24> {};
 
-    DuplexMemoryStream stream;
-    stream << 0x00000000 << input << 0x00000000;
+    // The first line is 8 A's, the second line is 14 A's, two bytes are newline characters.
+    array.fill('A');
+    array[8] = '\n';
+    array[23] = '\n';
 
-    stream.discard_or_error(sizeof(int));
-    stream.read(output);
+    auto memory_stream = make<FixedMemoryStream>(array.span(), FixedMemoryStream::Mode::ReadOnly);
 
-    EXPECT_EQ(input, output);
+    auto buffered_stream = TRY_OR_FAIL(InputBufferedSeekable<FixedMemoryStream>::create(move(memory_stream), 64));
+
+    size_t initial_buffer_size = 4;
+    auto buffer = TRY_OR_FAIL(ByteBuffer::create_zeroed(initial_buffer_size));
+
+    auto read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+
+    // The first line, which is 8 A's, should be read in.
+    EXPECT_EQ(read_bytes, "AAAAAAAA"sv);
+
+    read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+
+    // The second line, which is 14 A's, should be read in.
+    EXPECT_EQ(read_bytes, "AAAAAAAAAAAAAA"sv);
+
+    // A resize should have happened because the user supplied buffer was too small.
+    EXPECT(buffer.size() > initial_buffer_size);
+
+    // Reading from the stream again should return an empty StringView.
+    read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+    EXPECT(read_bytes.is_empty());
+}
+
+TEST_CASE(buffered_memory_stream_read_line_with_resizing_where_stream_buffer_is_not_sufficient)
+{
+    // This is the same as "buffered_memory_stream_read_line_with_resizing_where_stream_buffer_is_sufficient"
+    // but with a smaller stream buffer, meaning that the line must be read into the user supplied
+    // buffer in chunks. All assertions and invariants should remain unchanged.
+    auto array = Array<u8, 24> {};
+
+    // The first line is 8 A's, the second line is 14 A's, two bytes are newline characters.
+    array.fill('A');
+    array[8] = '\n';
+    array[23] = '\n';
+
+    auto memory_stream = make<FixedMemoryStream>(array.span(), FixedMemoryStream::Mode::ReadOnly);
+
+    auto buffered_stream = TRY_OR_FAIL(InputBufferedSeekable<FixedMemoryStream>::create(move(memory_stream), 6));
+
+    size_t initial_buffer_size = 4;
+    auto buffer = TRY_OR_FAIL(ByteBuffer::create_zeroed(initial_buffer_size));
+
+    auto read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+
+    // The first line, which is 8 A's, should be read in.
+    EXPECT_EQ(read_bytes, "AAAAAAAA"sv);
+
+    read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+
+    // The second line, which is 14 A's, should be read in.
+    EXPECT_EQ(read_bytes, "AAAAAAAAAAAAAA"sv);
+
+    // A resize should have happened because the user supplied buffer was too small.
+    EXPECT(buffer.size() > initial_buffer_size);
+
+    // Reading from the stream again should return an empty StringView.
+    read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+    EXPECT(read_bytes.is_empty());
+}
+
+TEST_CASE(buffered_memory_stream_read_line_with_resizing_with_no_newline_where_stream_buffer_is_sufficient)
+{
+    auto array = Array<u8, 24> {};
+
+    array.fill('A');
+
+    auto memory_stream = make<FixedMemoryStream>(array.span(), FixedMemoryStream::Mode::ReadOnly);
+
+    auto buffered_stream = TRY_OR_FAIL(InputBufferedSeekable<FixedMemoryStream>::create(move(memory_stream), 64));
+
+    size_t initial_buffer_size = 4;
+    auto buffer = TRY_OR_FAIL(ByteBuffer::create_zeroed(initial_buffer_size));
+
+    auto read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+
+    // All the contents of the buffer should have been read in.
+    EXPECT_EQ(read_bytes.length(), array.size());
+
+    // Reading from the stream again should return an empty StringView.
+    read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+    EXPECT(read_bytes.is_empty());
+}
+
+TEST_CASE(buffered_memory_stream_read_line_with_resizing_with_no_newline_where_stream_buffer_is_not_sufficient)
+{
+    // This should behave as buffered_memory_stream_read_line_with_resizing_with_no_newline_where_stream_buffer_is_sufficient
+    // but the internal buffer of the stream must be copied over in chunks.
+    auto array = Array<u8, 24> {};
+
+    array.fill('A');
+
+    auto memory_stream = make<FixedMemoryStream>(array.span(), FixedMemoryStream::Mode::ReadOnly);
+
+    auto buffered_stream = TRY_OR_FAIL(InputBufferedSeekable<FixedMemoryStream>::create(move(memory_stream), 6));
+
+    size_t initial_buffer_size = 4;
+    auto buffer = TRY_OR_FAIL(ByteBuffer::create_zeroed(initial_buffer_size));
+
+    auto read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+
+    // All the contents of the buffer should have been read in.
+    EXPECT_EQ(read_bytes.length(), array.size());
+
+    // Reading from the stream again should return an empty StringView.
+    read_bytes = TRY_OR_FAIL(buffered_stream->read_line_with_resize(buffer));
+    EXPECT(read_bytes.is_empty());
 }

@@ -17,6 +17,7 @@ enum VendorID {
     QEMUOld = 0x1234,
     VirtualBox = 0x80ee,
     VMWare = 0x15ad,
+    Tdfx = 0x121a,
 };
 
 enum DeviceID {
@@ -25,6 +26,7 @@ enum DeviceID {
     VirtIOConsole = 0x1003,
     VirtIOEntropy = 0x1005,
     VirtIOGPU = 0x1050,
+    VirtIOInput = 0x1052,
 };
 
 }

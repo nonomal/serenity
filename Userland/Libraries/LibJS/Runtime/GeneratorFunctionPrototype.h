@@ -14,11 +14,14 @@ namespace JS {
 // 27.3.3 %GeneratorFunction.prototype%, https://tc39.es/ecma262/#sec-properties-of-the-generatorfunction-prototype-object
 class GeneratorFunctionPrototype final : public Object {
     JS_OBJECT(GeneratorFunctionPrototype, Object);
+    JS_DECLARE_ALLOCATOR(GeneratorFunctionPrototype);
 
 public:
-    explicit GeneratorFunctionPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~GeneratorFunctionPrototype() override = default;
+
+private:
+    explicit GeneratorFunctionPrototype(Realm&);
 };
 
 }

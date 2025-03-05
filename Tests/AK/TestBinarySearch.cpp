@@ -12,6 +12,8 @@
 #include <cstring>
 #include <new>
 
+using namespace Test::Randomized;
+
 TEST_CASE(vector_ints)
 {
     Vector<int> ints;
@@ -49,20 +51,20 @@ TEST_CASE(array_doubles)
 
 TEST_CASE(vector_strings)
 {
-    Vector<String> strings;
+    Vector<ByteString> strings;
     strings.append("bat");
     strings.append("cat");
     strings.append("dog");
 
-    auto string_compare = [](String const& a, String const& b) -> int {
+    auto string_compare = [](ByteString const& a, ByteString const& b) -> int {
         return strcmp(a.characters(), b.characters());
     };
-    auto test1 = *binary_search(strings, String("bat"), nullptr, string_compare);
-    auto test2 = *binary_search(strings, String("cat"), nullptr, string_compare);
-    auto test3 = *binary_search(strings, String("dog"), nullptr, string_compare);
-    EXPECT_EQ(test1, String("bat"));
-    EXPECT_EQ(test2, String("cat"));
-    EXPECT_EQ(test3, String("dog"));
+    auto test1 = *binary_search(strings, ByteString("bat"), nullptr, string_compare);
+    auto test2 = *binary_search(strings, ByteString("cat"), nullptr, string_compare);
+    auto test3 = *binary_search(strings, ByteString("dog"), nullptr, string_compare);
+    EXPECT_EQ(test1, ByteString("bat"));
+    EXPECT_EQ(test2, ByteString("cat"));
+    EXPECT_EQ(test3, ByteString("dog"));
 }
 
 TEST_CASE(single_element)
@@ -116,4 +118,28 @@ TEST_CASE(unsigned_to_signed_regression)
     size_t nearby_index = 1;
     EXPECT_EQ(binary_search(input, 1u, &nearby_index), &input[1]);
     EXPECT_EQ(nearby_index, 1u);
+}
+
+RANDOMIZED_TEST_CASE(finds_number_that_is_present)
+{
+    GEN(vec, Gen::vector(1, 16, []() { return Gen::number_u64(); }));
+    GEN(i, Gen::number_u64(0, vec.size() - 1));
+    AK::quick_sort(vec);
+    u64 n = vec[i];
+    auto ptr = binary_search(vec, n);
+    EXPECT_NE(ptr, nullptr);
+    EXPECT_EQ(*ptr, n);
+}
+
+RANDOMIZED_TEST_CASE(doesnt_find_number_that_is_not_present)
+{
+    GEN(vec, Gen::vector(1, 16, []() { return Gen::number_u64(); }));
+    AK::quick_sort(vec);
+
+    u64 not_present = 0;
+    while (!vec.find(not_present).is_end()) {
+        ++not_present;
+    }
+
+    EXPECT_EQ(binary_search(vec, not_present), nullptr);
 }

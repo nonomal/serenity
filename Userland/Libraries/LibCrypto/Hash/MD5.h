@@ -10,11 +10,10 @@
 #include <LibCrypto/Hash/HashFunction.h>
 
 #ifndef KERNEL
-#    include <AK/String.h>
+#    include <AK/ByteString.h>
 #endif
 
-namespace Crypto {
-namespace Hash {
+namespace Crypto::Hash {
 
 namespace MD5Constants {
 
@@ -57,22 +56,22 @@ public:
     virtual DigestType peek() override;
 
 #ifndef KERNEL
-    virtual String class_name() const override
+    virtual ByteString class_name() const override
     {
         return "MD5";
     }
 #endif
 
-    inline static DigestType hash(u8 const* data, size_t length)
+    static DigestType hash(u8 const* data, size_t length)
     {
         MD5 md5;
         md5.update(data, length);
         return md5.digest();
     }
 
-    inline static DigestType hash(ByteBuffer const& buffer) { return hash(buffer.data(), buffer.size()); }
-    inline static DigestType hash(StringView buffer) { return hash((u8 const*)buffer.characters_without_null_termination(), buffer.length()); }
-    inline virtual void reset() override
+    static DigestType hash(ByteBuffer const& buffer) { return hash(buffer.data(), buffer.size()); }
+    static DigestType hash(StringView buffer) { return hash((u8 const*)buffer.characters_without_null_termination(), buffer.length()); }
+    virtual void reset() override
     {
         m_A = MD5Constants::init_A;
         m_B = MD5Constants::init_B;
@@ -96,7 +95,5 @@ private:
 
     u8 m_data_buffer[64] {};
 };
-
-}
 
 }

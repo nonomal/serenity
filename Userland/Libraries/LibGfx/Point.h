@@ -42,14 +42,13 @@ public:
     {
     }
 
-    [[nodiscard]] ALWAYS_INLINE T x() const { return m_x; }
-    [[nodiscard]] ALWAYS_INLINE T y() const { return m_y; }
+    [[nodiscard]] constexpr ALWAYS_INLINE T x() const { return m_x; }
+    [[nodiscard]] constexpr ALWAYS_INLINE T y() const { return m_y; }
 
     ALWAYS_INLINE void set_x(T x) { m_x = x; }
     ALWAYS_INLINE void set_y(T y) { m_y = y; }
 
-    [[nodiscard]] ALWAYS_INLINE bool is_null() const { return !m_x && !m_y; }
-    [[nodiscard]] ALWAYS_INLINE bool is_empty() const { return m_x <= 0 && m_y <= 0; }
+    [[nodiscard]] ALWAYS_INLINE bool is_zero() const { return m_x == 0 && m_y == 0; }
 
     void translate_by(T dx, T dy)
     {
@@ -92,6 +91,13 @@ public:
         return point;
     }
 
+    [[nodiscard]] Point<T> scaled(T dboth) const
+    {
+        Point<T> point = *this;
+        point.scale_by(dboth);
+        return point;
+    }
+
     [[nodiscard]] Point<T> scaled(Point<T> const& delta) const
     {
         Point<T> point = *this;
@@ -130,12 +136,6 @@ public:
     [[nodiscard]] bool operator==(Point<U> const& other) const
     {
         return x() == other.x() && y() == other.y();
-    }
-
-    template<class U>
-    [[nodiscard]] bool operator!=(Point<U> const& other) const
-    {
-        return !(*this == other);
     }
 
     [[nodiscard]] Point<T> operator+(Point<T> const& other) const { return { m_x + other.m_x, m_y + other.m_y }; }
@@ -235,6 +235,7 @@ public:
     [[nodiscard]] Point end_point_for_aspect_ratio(Point const& previous_end_point, float aspect_ratio) const;
 
     template<typename U>
+    requires(!IsSame<T, U>)
     [[nodiscard]] Point<U> to_type() const
     {
         return Point<U>(*this);
@@ -246,13 +247,26 @@ public:
         return Point<U>(roundf(x()), roundf(y()));
     }
 
-    [[nodiscard]] String to_string() const;
+    template<typename U>
+    requires FloatingPoint<T>
+    [[nodiscard]] Point<U> to_ceiled() const
+    {
+        return Point<U>(ceil(x()), ceil(y()));
+    }
+
+    template<typename U>
+    requires FloatingPoint<T>
+    [[nodiscard]] Point<U> to_floored() const
+    {
+        return Point<U>(AK::floor(x()), AK::floor(y()));
+    }
+
+    [[nodiscard]] ByteString to_byte_string() const;
 
 private:
     T m_x { 0 };
     T m_y { 0 };
 };
-
 using IntPoint = Point<int>;
 using FloatPoint = Point<float>;
 
@@ -279,10 +293,10 @@ inline Point<T> cubic_interpolate(Point<T> const& p1, Point<T> const& p2, Point<
 namespace AK {
 
 template<typename T>
-struct Formatter<Gfx::Point<T>> : Formatter<StringView> {
+struct Formatter<Gfx::Point<T>> : Formatter<FormatString> {
     ErrorOr<void> format(FormatBuilder& builder, Gfx::Point<T> const& value)
     {
-        return Formatter<StringView>::format(builder, value.to_string());
+        return Formatter<FormatString>::format(builder, "[{},{}]"sv, value.x(), value.y());
     }
 };
 
@@ -290,13 +304,20 @@ struct Formatter<Gfx::Point<T>> : Formatter<StringView> {
 
 namespace IPC {
 
-bool encode(Encoder&, Gfx::IntPoint const&);
-ErrorOr<void> decode(Decoder&, Gfx::IntPoint&);
+template<>
+ErrorOr<void> encode(Encoder&, Gfx::IntPoint const&);
+template<>
+ErrorOr<void> encode(Encoder&, Gfx::FloatPoint const&);
+
+template<>
+ErrorOr<Gfx::IntPoint> decode(Decoder&);
+template<>
+ErrorOr<Gfx::FloatPoint> decode(Decoder&);
 
 }
 
 template<typename T>
-struct AK::Traits<Gfx::Point<T>> : public AK::GenericTraits<Gfx::Point<T>> {
+struct AK::Traits<Gfx::Point<T>> : public AK::DefaultTraits<Gfx::Point<T>> {
     static constexpr bool is_trivial() { return false; }
     static unsigned hash(Gfx::Point<T> const& point)
     {

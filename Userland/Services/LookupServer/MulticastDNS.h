@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Sergey Bugaev <bugaevc@serenityos.org>
+ * Copyright (c) 2022, Alexander Narsudinov <a.narsudinov@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,15 +21,15 @@ using namespace DNS;
 class MulticastDNS : public Core::UDPServer {
     C_OBJECT(MulticastDNS)
 public:
-    Vector<Answer> lookup(Name const&, RecordType record_type);
+    ErrorOr<Vector<Answer>> lookup(Name const&, RecordType record_type);
 
 private:
-    explicit MulticastDNS(Object* parent = nullptr);
+    explicit MulticastDNS(Core::EventReceiver* parent = nullptr);
 
     void announce();
     ErrorOr<size_t> emit_packet(Packet const&, sockaddr_in const* destination = nullptr);
 
-    void handle_packet();
+    ErrorOr<void> handle_packet();
     void handle_query(Packet const&);
 
     Vector<IPv4Address> local_addresses() const;
@@ -36,7 +37,7 @@ private:
     Name m_hostname;
 
     static constexpr sockaddr_in mdns_addr {
-#ifdef AK_OS_BSD_GENERIC
+#if defined(AK_OS_BSD_GENERIC) || defined(AK_OS_GNU_HURD)
         .sin_len = sizeof(struct sockaddr_in),
 #endif
         .sin_family = AF_INET,

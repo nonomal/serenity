@@ -4,14 +4,13 @@ serenity_component(
     DEPENDS Help WebContent
 )
 
-compile_gml(WelcomeWindow.gml WelcomeWindowGML.h welcome_window_gml)
+compile_gml(WelcomeWindow.gml WelcomeWindowGML.cpp)
 
 set(SOURCES
-    WelcomeWindowGML.h
+    WelcomeWindowGML.cpp
     WelcomeWidget.cpp
-    WelcomeWidget.h
     main.cpp
 )
 
 serenity_app(Welcome ICON app-welcome)
-target_link_libraries(Welcome LibGUI LibWebView LibWeb LibMain)
+target_link_libraries(Welcome PRIVATE LibConfig LibCore LibGfx LibGUI LibWebView LibWeb LibMain LibURL)

@@ -21,7 +21,7 @@ static bool flag_print_uid = false;
 static bool flag_print_gid = false;
 static bool flag_print_name = false;
 static bool flag_print_gid_all = false;
-static String user_str;
+static ByteString user_str;
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
@@ -50,10 +50,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     Optional<Core::Account> account;
     if (!user_str.is_empty()) {
-        if (auto user_id = user_str.to_uint(); user_id.has_value())
+        if (auto user_id = user_str.to_number<uid_t>(); user_id.has_value())
             account = TRY(Core::Account::from_uid(user_id.value(), Core::Account::Read::PasswdOnly));
         else
-            account = TRY(Core::Account::from_name(user_str.characters(), Core::Account::Read::PasswdOnly));
+            account = TRY(Core::Account::from_name(user_str, Core::Account::Read::PasswdOnly));
     } else {
         account = TRY(Core::Account::self(Core::Account::Read::PasswdOnly));
     }

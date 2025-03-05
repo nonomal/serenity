@@ -8,18 +8,20 @@
 
 namespace JS {
 
-WeakRef* WeakRef::create(GlobalObject& global_object, Object& value)
+JS_DEFINE_ALLOCATOR(WeakRef);
+
+NonnullGCPtr<WeakRef> WeakRef::create(Realm& realm, Object& value)
 {
-    return global_object.heap().allocate<WeakRef>(global_object, value, *global_object.weak_ref_prototype());
+    return realm.heap().allocate<WeakRef>(realm, value, realm.intrinsics().weak_ref_prototype());
 }
 
-WeakRef* WeakRef::create(GlobalObject& global_object, Symbol& value)
+NonnullGCPtr<WeakRef> WeakRef::create(Realm& realm, Symbol& value)
 {
-    return global_object.heap().allocate<WeakRef>(global_object, value, *global_object.weak_ref_prototype());
+    return realm.heap().allocate<WeakRef>(realm, value, realm.intrinsics().weak_ref_prototype());
 }
 
 WeakRef::WeakRef(Object& value, Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
     , WeakContainer(heap())
     , m_value(&value)
     , m_last_execution_generation(vm().execution_generation())
@@ -27,7 +29,7 @@ WeakRef::WeakRef(Object& value, Object& prototype)
 }
 
 WeakRef::WeakRef(Symbol& value, Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
     , WeakContainer(heap())
     , m_value(&value)
     , m_last_execution_generation(vm().execution_generation())

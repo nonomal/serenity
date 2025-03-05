@@ -22,7 +22,7 @@ int disown(pid_t pid)
 
 int profiling_enable(pid_t pid, uint64_t event_mask)
 {
-    int rc = syscall(SC_profiling_enable, pid, &event_mask);
+    int rc = syscall(SC_profiling_enable, pid, event_mask);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
@@ -105,7 +105,8 @@ int serenity_readlink(char const* path, size_t path_length, char* buffer, size_t
 {
     Syscall::SC_readlink_params small_params {
         { path, path_length },
-        { buffer, buffer_size }
+        { buffer, buffer_size },
+        AT_FDCWD
     };
     int rc = syscall(SC_readlink, &small_params);
     __RETURN_WITH_ERRNO(rc, rc, -1);

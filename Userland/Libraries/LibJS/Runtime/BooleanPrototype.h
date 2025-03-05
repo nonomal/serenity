@@ -12,13 +12,15 @@ namespace JS {
 
 class BooleanPrototype final : public BooleanObject {
     JS_OBJECT(BooleanPrototype, BooleanObject);
+    JS_DECLARE_ALLOCATOR(BooleanPrototype);
 
 public:
-    explicit BooleanPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~BooleanPrototype() override = default;
 
 private:
+    explicit BooleanPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(to_string);
     JS_DECLARE_NATIVE_FUNCTION(value_of);
 };

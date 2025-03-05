@@ -4,50 +4,62 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "SVGCircleElement.h"
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGCircleElementPrototype.h>
+#include <LibWeb/CSS/Parser/Parser.h>
+#include <LibWeb/Layout/Node.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/AttributeParser.h>
+#include <LibWeb/SVG/SVGCircleElement.h>
+#include <LibWeb/SVG/SVGViewport.h>
 
 namespace Web::SVG {
+
+JS_DEFINE_ALLOCATOR(SVGCircleElement);
 
 SVGCircleElement::SVGCircleElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : SVGGeometryElement(document, qualified_name)
 {
 }
 
-void SVGCircleElement::parse_attribute(FlyString const& name, String const& value)
+void SVGCircleElement::initialize(JS::Realm& realm)
 {
-    SVGGeometryElement::parse_attribute(name, value);
-
-    if (name == SVG::AttributeNames::cx) {
-        m_center_x = AttributeParser::parse_coordinate(value);
-        m_path.clear();
-    } else if (name == SVG::AttributeNames::cy) {
-        m_center_y = AttributeParser::parse_coordinate(value);
-        m_path.clear();
-    } else if (name == SVG::AttributeNames::r) {
-        m_radius = AttributeParser::parse_positive_length(value);
-        m_path.clear();
-    }
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGCircleElement);
 }
 
-Gfx::Path& SVGCircleElement::get_path()
+void SVGCircleElement::apply_presentational_hints(CSS::StyleProperties& style) const
 {
-    if (m_path.has_value())
-        return m_path.value();
+    Base::apply_presentational_hints(style);
+    auto parsing_context = CSS::Parser::ParsingContext { document(), CSS::Parser::ParsingContext::Mode::SVGPresentationAttribute };
 
-    float cx = m_center_x.value_or(0);
-    float cy = m_center_y.value_or(0);
-    float r = m_radius.value_or(0);
+    auto cx_attribute = attribute(SVG::AttributeNames::cx);
+    if (auto cx_value = parse_css_value(parsing_context, cx_attribute.value_or(String {}), CSS::PropertyID::Cx))
+        style.set_property(CSS::PropertyID::Cx, cx_value.release_nonnull());
 
-    Gfx::Path path;
+    auto cy_attribute = attribute(SVG::AttributeNames::cy);
+    if (auto cy_value = parse_css_value(parsing_context, cy_attribute.value_or(String {}), CSS::PropertyID::Cy))
+        style.set_property(CSS::PropertyID::Cy, cy_value.release_nonnull());
+
+    auto r_attribute = attribute(SVG::AttributeNames::r);
+    if (auto r_value = parse_css_value(parsing_context, r_attribute.value_or(String {}), CSS::PropertyID::R))
+        style.set_property(CSS::PropertyID::R, r_value.release_nonnull());
+}
+
+Gfx::Path SVGCircleElement::get_path(CSSPixelSize viewport_size)
+{
+    auto node = layout_node();
+    auto cx = float(node->computed_values().cx().to_px(*node, viewport_size.width()));
+    auto cy = float(node->computed_values().cy().to_px(*node, viewport_size.height()));
+    // Percentages refer to the normalized diagonal of the current SVG viewport
+    // (see Units: https://svgwg.org/svg2-draft/coords.html#Units)
+    auto r = float(node->computed_values().r().to_px(*node, normalized_diagonal_length(viewport_size)));
 
     // A zero radius disables rendering.
-    if (r == 0) {
-        m_path = move(path);
-        return m_path.value();
-    }
+    if (r == 0)
+        return {};
 
+    Gfx::Path path;
     bool large_arc = false;
     bool sweep = true;
 
@@ -66,38 +78,25 @@ Gfx::Path& SVGCircleElement::get_path()
     // 5. arc with a segment-completing close path operation.
     path.arc_to({ cx + r, cy }, r, large_arc, sweep);
 
-    m_path = move(path);
-    return m_path.value();
+    return path;
 }
 
 // https://www.w3.org/TR/SVG11/shapes.html#CircleElementCXAttribute
-NonnullRefPtr<SVGAnimatedLength> SVGCircleElement::cx() const
+JS::NonnullGCPtr<SVGAnimatedLength> SVGCircleElement::cx() const
 {
-    // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
-    // FIXME: Create a proper animated value when animations are supported.
-    auto base_length = SVGLength::create(0, m_center_x.value_or(0));
-    auto anim_length = SVGLength::create(0, m_center_x.value_or(0));
-    return SVGAnimatedLength::create(move(base_length), move(anim_length));
+    return svg_animated_length_for_property(CSS::PropertyID::Cx);
 }
 
 // https://www.w3.org/TR/SVG11/shapes.html#CircleElementCYAttribute
-NonnullRefPtr<SVGAnimatedLength> SVGCircleElement::cy() const
+JS::NonnullGCPtr<SVGAnimatedLength> SVGCircleElement::cy() const
 {
-    // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
-    // FIXME: Create a proper animated value when animations are supported.
-    auto base_length = SVGLength::create(0, m_center_y.value_or(0));
-    auto anim_length = SVGLength::create(0, m_center_y.value_or(0));
-    return SVGAnimatedLength::create(move(base_length), move(anim_length));
+    return svg_animated_length_for_property(CSS::PropertyID::Cy);
 }
 
 // https://www.w3.org/TR/SVG11/shapes.html#CircleElementRAttribute
-NonnullRefPtr<SVGAnimatedLength> SVGCircleElement::r() const
+JS::NonnullGCPtr<SVGAnimatedLength> SVGCircleElement::r() const
 {
-    // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
-    // FIXME: Create a proper animated value when animations are supported.
-    auto base_length = SVGLength::create(0, m_radius.value_or(0));
-    auto anim_length = SVGLength::create(0, m_radius.value_or(0));
-    return SVGAnimatedLength::create(move(base_length), move(anim_length));
+    return svg_animated_length_for_property(CSS::PropertyID::R);
 }
 
 }

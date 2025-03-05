@@ -6,8 +6,8 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/HashTable.h>
-#include <AK/String.h>
 #include <AK/Variant.h>
 #include <AK/Vector.h>
 #include <LibXML/FundamentalTypes.h>
@@ -73,7 +73,7 @@ struct AttributeListDeclaration {
     };
     struct Enumeration {
         // FIXME: NMToken
-        HashTable<String> tokens;
+        HashTable<ByteString> tokens;
     };
     using Type = Variant<StringType, TokenizedType, NotationType, Enumeration>;
 
@@ -82,10 +82,10 @@ struct AttributeListDeclaration {
     struct Implied {
     };
     struct Fixed {
-        String value;
+        ByteString value;
     };
     struct DefaultValue {
-        String value;
+        ByteString value;
     };
 
     using Default = Variant<Required, Implied, Fixed, DefaultValue>;
@@ -100,11 +100,11 @@ struct AttributeListDeclaration {
 };
 
 struct PublicID {
-    String public_literal;
+    ByteString public_literal;
 };
 
 struct SystemID {
-    String system_literal;
+    ByteString system_literal;
 };
 
 struct ExternalID {
@@ -119,12 +119,12 @@ struct EntityDefinition {
 
 struct GEDeclaration {
     Name name;
-    Variant<String, EntityDefinition> definition;
+    Variant<ByteString, EntityDefinition> definition;
 };
 
 struct PEDeclaration {
     Name name;
-    Variant<String, ExternalID> definition;
+    Variant<ByteString, ExternalID> definition;
 };
 
 using EntityDeclaration = Variant<GEDeclaration, PEDeclaration>;

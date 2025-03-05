@@ -18,13 +18,28 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/WindowTheme.h>
 
+REGISTER_WIDGET(ThemeEditor, PreviewWidget);
+
 namespace ThemeEditor {
 
 class MiniWidgetGallery final : public GUI::Widget {
-    C_OBJECT(MiniWidgetGallery);
+    C_OBJECT_ABSTRACT(MiniWidgetGallery);
 
 public:
-    void set_preview_palette(Gfx::Palette const& palette)
+    static ErrorOr<NonnullRefPtr<MiniWidgetGallery>> try_create()
+    {
+        auto gallery = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) MiniWidgetGallery()));
+        TRY(gallery->load_from_gml(window_preview_gml));
+
+        gallery->for_each_child_widget([](auto& child) {
+            child.set_focus_policy(GUI::FocusPolicy::NoFocus);
+            return IterationDecision::Continue;
+        });
+
+        return gallery;
+    }
+
+    void set_preview_palette(Gfx::Palette& palette)
     {
         set_palette(palette);
         Function<void(GUI::Widget&)> recurse = [&](GUI::Widget& parent_widget) {
@@ -40,19 +55,19 @@ public:
 private:
     MiniWidgetGallery()
     {
-        load_from_gml(window_preview_gml);
-
-        for_each_child_widget([](auto& child) {
-            child.set_focus_policy(GUI::FocusPolicy::NoFocus);
-            return IterationDecision::Continue;
-        });
     }
 };
 
-PreviewWidget::PreviewWidget(Gfx::Palette const& initial_preview_palette)
-    : GUI::AbstractThemePreview(initial_preview_palette)
+ErrorOr<NonnullRefPtr<PreviewWidget>> PreviewWidget::try_create()
 {
-    m_gallery = add<MiniWidgetGallery>();
+    auto preview_widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) PreviewWidget()));
+    preview_widget->m_gallery = TRY(preview_widget->try_add<MiniWidgetGallery>());
+    return preview_widget;
+}
+
+PreviewWidget::PreviewWidget()
+    : GUI::AbstractThemePreview(GUI::Application::the()->palette())
+{
     set_greedy_for_hits(true);
 }
 
@@ -118,41 +133,20 @@ void PreviewWidget::second_paint_event(GUI::PaintEvent&)
     if (!m_color_filter)
         return;
 
-    auto target = painter.target();
-    auto bitmap_clone_or_error = target->clone();
+    auto& target = painter.target();
+    auto bitmap_clone_or_error = target.clone();
     if (bitmap_clone_or_error.is_error())
         return;
 
     auto clone = bitmap_clone_or_error.release_value();
-    auto rect = target->rect();
+    auto rect = target.rect();
 
-    m_color_filter->apply(*target, rect, *clone, rect);
+    m_color_filter->apply(target, rect, *clone, rect);
 }
 
 void PreviewWidget::resize_event(GUI::ResizeEvent&)
 {
     update_preview_window_locations();
-}
-
-void PreviewWidget::drop_event(GUI::DropEvent& event)
-{
-    event.accept();
-    window()->move_to_front();
-
-    if (event.mime_data().has_urls()) {
-        auto urls = event.mime_data().urls();
-        if (urls.is_empty())
-            return;
-        if (urls.size() > 1) {
-            GUI::MessageBox::show(window(), "ThemeEditor can only open one file at a time!"sv, "One at a time please!"sv, GUI::MessageBox::Type::Error);
-            return;
-        }
-
-        auto response = FileSystemAccessClient::Client::the().try_request_file(window(), urls.first().path(), Core::OpenMode::ReadOnly);
-        if (response.is_error())
-            return;
-        set_theme_from_file(*response.value());
-    }
 }
 
 }

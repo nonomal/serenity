@@ -16,7 +16,7 @@ class HeaderView final : public Widget {
     C_OBJECT(HeaderView);
 
 public:
-    virtual ~HeaderView() override = default;
+    virtual ~HeaderView() override;
 
     Gfx::Orientation orientation() const { return m_orientation; }
 
@@ -36,10 +36,27 @@ public:
     bool is_section_visible(int section) const;
     void set_section_visible(int section, bool);
 
+    void set_section_selectable(int section, bool);
+
     int section_count() const;
     Gfx::IntRect section_rect(int section) const;
 
     Function<void(int section)> on_resize_doubleclick;
+
+    static constexpr auto const sorting_arrow_offset = 3;
+    static constexpr auto const sorting_arrow_width = 6;
+
+    static constexpr auto const ascending_arrow_coordinates = Array {
+        Gfx::IntPoint { 4, 2 },
+        Gfx::IntPoint { 1, 5 },
+        Gfx::IntPoint { 7, 5 },
+    };
+
+    static constexpr auto const descending_arrow_coordinates = Array {
+        Gfx::IntPoint { 1, 3 },
+        Gfx::IntPoint { 7, 3 },
+        Gfx::IntPoint { 4, 6 },
+    };
 
 private:
     HeaderView(AbstractTableView&, Gfx::Orientation);
@@ -77,6 +94,7 @@ private:
         bool has_initialized_size { false };
         bool has_initialized_default_size { false };
         bool visibility { true };
+        bool selectable { true };
         RefPtr<Action> visibility_action;
         Gfx::TextAlignment alignment { Gfx::TextAlignment::CenterLeft };
     };

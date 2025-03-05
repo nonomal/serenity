@@ -1,18 +1,21 @@
 /*
  * Copyright (c) 2021-2022, the SerenityOS developers.
+ * Copyright (c) 2022-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "TreeMapWidget.h"
+#include "ProgressWindow.h"
+#include "Tree.h"
 #include <AK/Array.h>
+#include <AK/ByteString.h>
 #include <AK/NumberFormat.h>
 #include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/Painter.h>
+#include <LibGUI/Statusbar.h>
 #include <LibGfx/Font/Font.h>
 #include <WindowServer/WindowManager.h>
-
-REGISTER_WIDGET(SpaceAnalyzer, TreeMapWidget)
 
 namespace SpaceAnalyzer {
 
@@ -35,7 +38,7 @@ static float get_normalized_aspect_ratio(float a, float b)
     }
 }
 
-static bool node_is_leaf(TreeMapNode const& node)
+static bool node_is_leaf(TreeNode const& node)
 {
     return node.num_children() == 0;
 }
@@ -45,7 +48,7 @@ bool TreeMapWidget::rect_can_contain_label(Gfx::IntRect const& rect) const
     return rect.height() >= font().presentation_size() && rect.width() > 20;
 }
 
-void TreeMapWidget::paint_cell_frame(GUI::Painter& painter, TreeMapNode const& node, Gfx::IntRect const& cell_rect, Gfx::IntRect const& inner_rect, int depth, HasLabel has_label) const
+void TreeMapWidget::paint_cell_frame(GUI::Painter& painter, TreeNode const& node, Gfx::IntRect const& cell_rect, Gfx::IntRect const& inner_rect, int depth, HasLabel has_label) const
 {
     if (cell_rect.width() <= 2 || cell_rect.height() <= 2) {
         painter.fill_rect(cell_rect, Color::Black);
@@ -94,14 +97,14 @@ void TreeMapWidget::paint_cell_frame(GUI::Painter& painter, TreeMapNode const& n
             text_rect.take_from_top(font().presentation_size() + 1);
             painter.draw_text(text_rect, human_readable_size(node.area()), font(), Gfx::TextAlignment::TopLeft, Color::Black);
         } else {
-            painter.draw_text(text_rect, String::formatted("{} - {}", node.name(), human_readable_size(node.area())), font(), Gfx::TextAlignment::TopLeft, Color::Black);
+            painter.draw_text(text_rect, ByteString::formatted("{} - {}", node.name(), human_readable_size(node.area())), font(), Gfx::TextAlignment::TopLeft, Color::Black);
         }
         painter.clear_clip_rect();
     }
 }
 
 template<typename Function>
-void TreeMapWidget::lay_out_children(TreeMapNode const& node, Gfx::IntRect const& rect, int depth, Function callback)
+void TreeMapWidget::lay_out_children(TreeNode const& node, Gfx::IntRect const& rect, int depth, Function callback)
 {
     if (node.num_children() == 0) {
         return;
@@ -119,12 +122,12 @@ void TreeMapWidget::lay_out_children(TreeMapNode const& node, Gfx::IntRect const
     Gfx::IntRect canvas = rect;
     bool remaining_nodes_are_too_small = false;
     for (size_t i = 0; !remaining_nodes_are_too_small && i < node.num_children(); i++) {
-        const i64 i_node_area = node.child_at(i).area();
+        i64 const i_node_area = node.child_at(i).area();
         if (i_node_area == 0)
             break;
 
-        const size_t long_side_size = max(canvas.width(), canvas.height());
-        const size_t short_side_size = min(canvas.width(), canvas.height());
+        size_t const long_side_size = max(canvas.width(), canvas.height());
+        size_t const short_side_size = min(canvas.width(), canvas.height());
 
         size_t row_or_column_size = long_side_size * i_node_area / total_area;
         i64 node_area_sum = i_node_area;
@@ -160,7 +163,7 @@ void TreeMapWidget::lay_out_children(TreeMapNode const& node, Gfx::IntRect const
 
         // Paint the elements from 'i' up to and including 'k-1'.
         {
-            const size_t fixed_side_size = row_or_column_size;
+            size_t const fixed_side_size = row_or_column_size;
             i64 placement_area = node_area_sum;
             size_t main_dim = short_side_size;
 
@@ -214,18 +217,18 @@ void TreeMapWidget::lay_out_children(TreeMapNode const& node, Gfx::IntRect const
     }
 }
 
-TreeMapNode const* TreeMapWidget::path_node(size_t n) const
+TreeNode const* TreeMapWidget::path_node(size_t n) const
 {
     if (!m_tree.ptr())
         return nullptr;
-    TreeMapNode const* iter = &m_tree->root();
+    TreeNode const* iter = &m_tree->root();
     size_t path_index = 0;
-    while (iter && path_index < m_path.size() && path_index < n) {
-        size_t child_index = m_path[path_index];
-        if (child_index >= iter->num_children()) {
+    while (iter && path_index < m_path_segments.size() && path_index < n) {
+        auto child_name = m_path_segments[path_index];
+        auto maybe_child = iter->child_with_name(child_name);
+        if (!maybe_child.has_value())
             return nullptr;
-        }
-        iter = &iter->child_at(child_index);
+        iter = &maybe_child.release_value();
         path_index++;
     }
     return iter;
@@ -236,15 +239,15 @@ void TreeMapWidget::paint_event(GUI::PaintEvent& event)
     GUI::Frame::paint_event(event);
     GUI::Painter painter(*this);
 
-    m_selected_node_cache = path_node(m_path.size());
+    m_selected_node_cache = path_node(m_path_segments.size());
 
-    TreeMapNode const* node = path_node(m_viewpoint);
+    TreeNode const* node = path_node(m_viewpoint);
     if (!node) {
         painter.fill_rect(frame_inner_rect(), Color::MidGray);
     } else if (node_is_leaf(*node)) {
         paint_cell_frame(painter, *node, frame_inner_rect(), Gfx::IntRect(), m_viewpoint - 1, HasLabel::Yes);
     } else {
-        lay_out_children(*node, frame_inner_rect(), m_viewpoint, [&](TreeMapNode const& node, int, Gfx::IntRect const& rect, Gfx::IntRect const& inner_rect, int depth, HasLabel has_label, IsRemainder remainder) {
+        lay_out_children(*node, frame_inner_rect(), m_viewpoint, [&](TreeNode const& node, int, Gfx::IntRect const& rect, Gfx::IntRect const& inner_rect, int depth, HasLabel has_label, IsRemainder remainder) {
             if (remainder == IsRemainder::No) {
                 paint_cell_frame(painter, node, rect, inner_rect, depth, has_label);
             } else {
@@ -258,32 +261,47 @@ void TreeMapWidget::paint_event(GUI::PaintEvent& event)
     }
 }
 
-Vector<int> TreeMapWidget::path_to_position(Gfx::IntPoint const& position)
+Vector<ByteString> TreeMapWidget::path_to_position(Gfx::IntPoint position)
 {
-    TreeMapNode const* node = path_node(m_viewpoint);
+    TreeNode const* node = path_node(m_viewpoint);
     if (!node) {
         return {};
     }
-    Vector<int> path;
-    lay_out_children(*node, frame_inner_rect(), m_viewpoint, [&](TreeMapNode const&, int index, Gfx::IntRect const& rect, Gfx::IntRect const&, int, HasLabel, IsRemainder is_remainder) {
+    Vector<ByteString> path;
+    lay_out_children(*node, frame_inner_rect(), m_viewpoint, [&](TreeNode const& node, int, Gfx::IntRect const& rect, Gfx::IntRect const&, int, HasLabel, IsRemainder is_remainder) {
         if (is_remainder == IsRemainder::No && rect.contains(position)) {
-            path.append(index);
+            path.append(node.name());
         }
     });
     return path;
 }
 
+void TreeMapWidget::mousemove_event(GUI::MouseEvent& event)
+{
+    auto* node = path_node(m_viewpoint);
+    if (!node) {
+        set_tooltip({});
+        return;
+    }
+
+    auto* hovered_node = node;
+    lay_out_children(*node, frame_inner_rect(), m_viewpoint, [&](TreeNode const&, int index, Gfx::IntRect const& rect, Gfx::IntRect const&, int, HasLabel, IsRemainder is_remainder) {
+        if (is_remainder == IsRemainder::No && rect.contains(event.position())) {
+            hovered_node = &hovered_node->child_at(index);
+        }
+    });
+
+    set_tooltip(MUST(String::formatted("{}\n{}", hovered_node->name(), human_readable_size(hovered_node->area()))));
+}
+
 void TreeMapWidget::mousedown_event(GUI::MouseEvent& event)
 {
-    TreeMapNode const* node = path_node(m_viewpoint);
+    TreeNode const* node = path_node(m_viewpoint);
     if (node && !node_is_leaf(*node)) {
-        Vector<int> path = path_to_position(event.position());
+        auto path = path_to_position(event.position());
         if (!path.is_empty()) {
-            m_path.shrink(m_viewpoint);
-            m_path.extend(path);
-            if (on_path_change) {
-                on_path_change();
-            }
+            m_path_segments.shrink(m_viewpoint);
+            m_path_segments.extend(path);
             update();
         }
     }
@@ -293,12 +311,12 @@ void TreeMapWidget::doubleclick_event(GUI::MouseEvent& event)
 {
     if (event.button() != GUI::MouseButton::Primary)
         return;
-    TreeMapNode const* node = path_node(m_viewpoint);
+    TreeNode const* node = path_node(m_viewpoint);
     if (node && !node_is_leaf(*node)) {
-        Vector<int> path = path_to_position(event.position());
-        m_path.shrink(m_viewpoint);
-        m_path.extend(path);
-        m_viewpoint = m_path.size();
+        auto path = path_to_position(event.position());
+        m_path_segments.shrink(m_viewpoint);
+        m_path_segments.extend(path);
+        m_viewpoint = m_path_segments.size();
         if (on_path_change) {
             on_path_change();
         }
@@ -309,23 +327,23 @@ void TreeMapWidget::doubleclick_event(GUI::MouseEvent& event)
 void TreeMapWidget::keydown_event(GUI::KeyEvent& event)
 {
     if (event.key() == KeyCode::Key_Left)
-        set_viewpoint(m_viewpoint == 0 ? m_path.size() : m_viewpoint - 1);
+        set_viewpoint(m_viewpoint == 0 ? m_path_segments.size() : m_viewpoint - 1);
     else if (event.key() == KeyCode::Key_Right)
-        set_viewpoint(m_viewpoint == m_path.size() ? 0 : m_viewpoint + 1);
+        set_viewpoint(m_viewpoint == m_path_segments.size() ? 0 : m_viewpoint + 1);
+    else
+        event.ignore();
 }
 
 void TreeMapWidget::mousewheel_event(GUI::MouseEvent& event)
 {
-    int delta = event.wheel_delta_y();
-    // FIXME: The wheel_delta_y is premultiplied in the window server, we actually want a raw value here.
-    int step_size = GUI::ConnectionToWindowServer::the().get_scroll_step_size();
+    int delta = event.wheel_raw_delta_y();
     if (delta > 0) {
-        size_t step_back = delta / step_size;
+        size_t step_back = delta;
         if (step_back > m_viewpoint)
             step_back = m_viewpoint;
         set_viewpoint(m_viewpoint - step_back);
     } else {
-        size_t step_up = (-delta) / step_size;
+        size_t step_up = -delta;
         set_viewpoint(m_viewpoint + step_up);
     }
 }
@@ -336,23 +354,103 @@ void TreeMapWidget::context_menu_event(GUI::ContextMenuEvent& context_menu_event
         on_context_menu_request(context_menu_event);
 }
 
-void TreeMapWidget::set_tree(RefPtr<TreeMap> tree)
+void TreeMapWidget::recalculate_path_for_new_tree()
 {
-    m_tree = tree;
-    m_path.clear();
-    m_viewpoint = 0;
+    TreeNode const* current = &m_tree->root();
+    size_t new_path_length = 0;
+    for (auto& segment : m_path_segments) {
+        auto maybe_child = current->child_with_name(segment);
+        if (!maybe_child.has_value())
+            break;
+        new_path_length++;
+        current = &maybe_child.release_value();
+    }
+    m_path_segments.shrink(new_path_length);
+    if (new_path_length < m_viewpoint)
+        m_viewpoint = new_path_length - 1;
+}
+
+static ErrorOr<void> fill_mounts(Vector<MountInfo>& output)
+{
+    // Output info about currently mounted filesystems.
+    auto file = TRY(Core::File::open("/sys/kernel/df"sv, Core::File::OpenMode::Read));
+
+    auto content = TRY(file->read_until_eof());
+    auto json = TRY(JsonValue::from_string(content));
+
+    TRY(json.as_array().try_for_each([&output](JsonValue const& value) -> ErrorOr<void> {
+        auto& filesystem_object = value.as_object();
+        MountInfo mount_info;
+        mount_info.mount_point = filesystem_object.get_byte_string("mount_point"sv).value_or({});
+        mount_info.source = filesystem_object.get_byte_string("source"sv).value_or("none");
+        TRY(output.try_append(mount_info));
+        return {};
+    }));
+
+    return {};
+}
+
+ErrorOr<void> TreeMapWidget::analyze(GUI::Statusbar& statusbar)
+{
+    statusbar.set_text({});
+    auto progress_window = TRY(ProgressWindow::try_create("Space Analyzer"sv));
+    progress_window->show();
+
+    // Build an in-memory tree mirroring the filesystem and for each node
+    // calculate the sum of the file size for all its descendants.
+    auto tree = TRY(Tree::create(""));
+    Vector<MountInfo> mounts;
+    TRY(fill_mounts(mounts));
+    auto errors = tree->root().populate_filesize_tree(mounts, [&](size_t processed_file_count) {
+        progress_window->update_progress_label(processed_file_count);
+    });
+
+    progress_window->close();
+
+    // Display an error summary in the statusbar.
+    if (!errors.is_empty()) {
+        StringBuilder builder;
+        bool first = true;
+        builder.append("Some directories were not analyzed: "sv);
+        for (auto& key : errors.keys()) {
+            if (!first) {
+                builder.append(", "sv);
+            }
+            auto const* error = strerror(key);
+            builder.append({ error, strlen(error) });
+            builder.append(" ("sv);
+            int value = errors.get(key).value();
+            builder.append(ByteString::number(value));
+            if (value == 1) {
+                builder.append(" time"sv);
+            } else {
+                builder.append(" times"sv);
+            }
+            builder.append(')');
+            first = false;
+        }
+        statusbar.set_text(TRY(builder.to_string()));
+    } else {
+        statusbar.set_text("No errors"_string);
+    }
+
+    m_tree = move(tree);
+    recalculate_path_for_new_tree();
+
     if (on_path_change) {
         on_path_change();
     }
     update();
+
+    return {};
 }
 
 void TreeMapWidget::set_viewpoint(size_t viewpoint)
 {
     if (m_viewpoint == viewpoint)
         return;
-    if (viewpoint > m_path.size())
-        viewpoint = m_path.size();
+    if (viewpoint > m_path_segments.size())
+        viewpoint = m_path_segments.size();
     m_viewpoint = viewpoint;
     if (on_path_change) {
         on_path_change();
@@ -362,7 +460,7 @@ void TreeMapWidget::set_viewpoint(size_t viewpoint)
 
 size_t TreeMapWidget::path_size() const
 {
-    return m_path.size() + 1;
+    return m_path_segments.size() + 1;
 }
 
 size_t TreeMapWidget::viewpoint() const

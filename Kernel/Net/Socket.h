@@ -7,8 +7,6 @@
 #pragma once
 
 #include <AK/Error.h>
-#include <AK/NonnullRefPtrVector.h>
-#include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
 #include <AK/Time.h>
 #include <Kernel/FileSystem/File.h>
@@ -17,11 +15,6 @@
 #include <Kernel/UnixTypes.h>
 
 namespace Kernel {
-
-enum class ShouldBlock {
-    No = 0,
-    Yes = 1
-};
 
 class OpenFileDescription;
 
@@ -78,15 +71,15 @@ public:
 
     ErrorOr<void> shutdown(int how);
 
-    virtual ErrorOr<void> bind(Userspace<sockaddr const*>, socklen_t) = 0;
-    virtual ErrorOr<void> connect(OpenFileDescription&, Userspace<sockaddr const*>, socklen_t, ShouldBlock) = 0;
+    virtual ErrorOr<void> bind(Credentials const&, Userspace<sockaddr const*>, socklen_t) = 0;
+    virtual ErrorOr<void> connect(Credentials const&, OpenFileDescription&, Userspace<sockaddr const*>, socklen_t) = 0;
     virtual ErrorOr<void> listen(size_t) = 0;
     virtual void get_local_address(sockaddr*, socklen_t*) = 0;
     virtual void get_peer_address(sockaddr*, socklen_t*) = 0;
     virtual bool is_local() const { return false; }
     virtual bool is_ipv4() const { return false; }
     virtual ErrorOr<size_t> sendto(OpenFileDescription&, UserOrKernelBuffer const&, size_t, int flags, Userspace<sockaddr const*>, socklen_t) = 0;
-    virtual ErrorOr<size_t> recvfrom(OpenFileDescription&, UserOrKernelBuffer&, size_t, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, Time&) = 0;
+    virtual ErrorOr<size_t> recvfrom(OpenFileDescription&, UserOrKernelBuffer&, size_t, int flags, Userspace<sockaddr*>, Userspace<socklen_t*>, UnixDateTime&, bool blocking) = 0;
 
     virtual ErrorOr<void> setsockopt(int level, int option, Userspace<void const*>, socklen_t);
     virtual ErrorOr<void> getsockopt(OpenFileDescription&, int level, int option, Userspace<void*>, Userspace<socklen_t*>);
@@ -97,7 +90,7 @@ public:
     ProcessID acceptor_pid() const { return m_acceptor.pid; }
     UserID acceptor_uid() const { return m_acceptor.uid; }
     GroupID acceptor_gid() const { return m_acceptor.gid; }
-    RefPtr<NetworkAdapter> const bound_interface() const { return m_bound_interface; }
+    SpinlockProtected<RefPtr<NetworkAdapter>, LockRank::None> const& bound_interface() const { return m_bound_interface; }
 
     Mutex& mutex() { return m_mutex; }
 
@@ -107,11 +100,11 @@ public:
     virtual ErrorOr<struct stat> stat() const override;
     virtual ErrorOr<NonnullOwnPtr<KString>> pseudo_path(OpenFileDescription const&) const override = 0;
 
-    bool has_receive_timeout() const { return m_receive_timeout != Time::zero(); }
-    Time const& receive_timeout() const { return m_receive_timeout; }
+    bool has_receive_timeout() const { return m_receive_timeout != Duration::zero(); }
+    Duration const& receive_timeout() const { return m_receive_timeout; }
 
-    bool has_send_timeout() const { return m_send_timeout != Time::zero(); }
-    Time const& send_timeout() const { return m_send_timeout; }
+    bool has_send_timeout() const { return m_send_timeout != Duration::zero(); }
+    Duration const& send_timeout() const { return m_send_timeout; }
 
     bool wants_timestamp() const { return m_timestamp; }
 
@@ -130,29 +123,29 @@ protected:
 
     Role m_role { Role::None };
 
-    ErrorOr<void> so_error() const
-    {
-        VERIFY(m_mutex.is_exclusively_locked_by_current_thread());
-        return m_so_error;
-    }
+    SpinlockProtected<Optional<ErrnoCode>, LockRank::None>& so_error() { return m_so_error; }
 
     Error set_so_error(ErrnoCode error_code)
     {
-        MutexLocker locker(mutex());
-        auto error = Error::from_errno(error_code);
-        m_so_error = error;
-        return error;
+        m_so_error.with([&error_code](auto& so_error) {
+            so_error = error_code;
+        });
+        return Error::from_errno(error_code);
     }
+
     Error set_so_error(Error error)
     {
-        MutexLocker locker(mutex());
-        m_so_error = error;
+        m_so_error.with([&error](auto& so_error) {
+            so_error = static_cast<ErrnoCode>(error.code());
+        });
         return error;
     }
 
     void clear_so_error()
     {
-        m_so_error = {};
+        m_so_error.with([](auto& so_error) {
+            so_error = {};
+        });
     }
 
     void set_origin(Process const&);
@@ -163,6 +156,7 @@ protected:
     ucred m_origin { 0, 0, 0 };
     ucred m_acceptor { 0, 0, 0 };
     bool m_routing_disabled { false };
+    bool m_broadcast_allowed { false };
 
 private:
     virtual bool is_socket() const final { return true; }
@@ -178,24 +172,26 @@ private:
     bool m_shut_down_for_reading { false };
     bool m_shut_down_for_writing { false };
 
-    RefPtr<NetworkAdapter> m_bound_interface { nullptr };
+    SpinlockProtected<RefPtr<NetworkAdapter>, LockRank::None> m_bound_interface;
 
-    Time m_receive_timeout {};
-    Time m_send_timeout {};
+    Duration m_receive_timeout {};
+    Duration m_send_timeout {};
     int m_timestamp { 0 };
 
-    ErrorOr<void> m_so_error;
+    SpinlockProtected<Optional<ErrnoCode>, LockRank::None> m_so_error;
 
-    NonnullRefPtrVector<Socket> m_pending;
+    Vector<NonnullRefPtr<Socket>> m_pending;
 };
 
 // This is a special variant of TRY() that also updates the socket's SO_ERROR field on error.
-#define SOCKET_TRY(expression)                           \
-    ({                                                   \
-        auto result = (expression);                      \
-        if (result.is_error())                           \
-            return set_so_error(result.release_error()); \
-        result.release_value();                          \
+#define SOCKET_TRY(expression)                                                            \
+    ({                                                                                    \
+        auto&& result = (expression);                                                     \
+        if (result.is_error())                                                            \
+            return set_so_error(result.release_error());                                  \
+        static_assert(!::AK::Detail::IsLvalueReference<decltype(result.release_value())>, \
+            "Do not return a reference from a fallible expression");                      \
+        result.release_value();                                                           \
     })
 
 }

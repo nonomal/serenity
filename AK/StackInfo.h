@@ -19,8 +19,8 @@ public:
     size_t size() const { return m_size; }
     size_t size_free() const
     {
-        FlatPtr dummy;
-        return reinterpret_cast<FlatPtr>(&dummy) - m_base;
+        auto p = reinterpret_cast<FlatPtr>(__builtin_frame_address(0));
+        return p - m_base;
     }
 
 private:
@@ -31,4 +31,6 @@ private:
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::StackInfo;
+#endif

@@ -12,9 +12,10 @@
 #include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ConfigFile.h>
-#include <LibCore/File.h>
+#include <LibCore/MimeData.h>
 #include <LibCore/Process.h>
 #include <LibDesktop/AppFile.h>
+#include <LibFileSystem/FileSystem.h>
 #include <errno.h>
 #include <serenity.h>
 #include <spawn.h>
@@ -24,9 +25,9 @@
 namespace LaunchServer {
 
 static Launcher* s_the;
-static bool spawn(String executable, Vector<String> const& arguments);
+static bool spawn(ByteString executable, Vector<ByteString> const& arguments);
 
-String Handler::name_from_executable(StringView executable)
+ByteString Handler::name_from_executable(StringView executable)
 {
     auto separator = executable.find_last('/');
     if (separator.has_value()) {
@@ -36,19 +37,25 @@ String Handler::name_from_executable(StringView executable)
     return executable;
 }
 
-void Handler::from_executable(Type handler_type, String const& executable)
+void Handler::from_executable(Type handler_type, ByteString const& executable)
 {
     this->handler_type = handler_type;
     this->name = name_from_executable(executable);
     this->executable = executable;
 }
 
-String Handler::to_details_str() const
+ByteString Handler::to_details_str() const
 {
     StringBuilder builder;
     auto obj = MUST(JsonObjectSerializer<>::try_create(builder));
     MUST(obj.add("executable"sv, executable));
     MUST(obj.add("name"sv, name));
+
+    auto arguments = MUST(obj.add_array("arguments"sv));
+    for (auto const& argument : this->arguments)
+        MUST(arguments.add(argument));
+    MUST(arguments.finish());
+
     switch (handler_type) {
     case Type::Application:
         MUST(obj.add("type"sv, "app"));
@@ -62,8 +69,9 @@ String Handler::to_details_str() const
     default:
         break;
     }
+
     MUST(obj.finish());
-    return builder.build();
+    return builder.to_byte_string();
 }
 
 Launcher::Launcher()
@@ -78,25 +86,38 @@ Launcher& Launcher::the()
     return *s_the;
 }
 
-void Launcher::load_handlers(String const& af_dir)
+void Launcher::load_handlers(ByteString const& af_dir)
 {
     Desktop::AppFile::for_each([&](auto af) {
         auto app_name = af->name();
         auto app_executable = af->executable();
-        HashTable<String> file_types;
+        auto app_arguments = af->arguments();
+        HashTable<ByteString> mime_types;
+        for (auto& mime_type : af->launcher_mime_types())
+            mime_types.set(mime_type);
+        HashTable<ByteString> file_types;
         for (auto& file_type : af->launcher_file_types())
             file_types.set(file_type);
-        HashTable<String> protocols;
+        HashTable<ByteString> protocols;
         for (auto& protocol : af->launcher_protocols())
             protocols.set(protocol);
         if (access(app_executable.characters(), X_OK) == 0)
-            m_handlers.set(app_executable, { Handler::Type::Default, app_name, app_executable, file_types, protocols });
+            m_handlers.set(app_executable, { Handler::Type::Default, app_name, app_executable, move(app_arguments), mime_types, file_types, protocols });
     },
         af_dir);
 }
 
 void Launcher::load_config(Core::ConfigFile const& cfg)
 {
+    for (auto key : cfg.keys("MimeType")) {
+        auto handler = cfg.read_entry("MimeType", key).trim_whitespace();
+        if (handler.is_empty())
+            continue;
+        if (access(handler.characters(), X_OK) != 0)
+            continue;
+        m_mime_handlers.set(key.to_lowercase(), handler);
+    }
+
     for (auto key : cfg.keys("FileType")) {
         auto handler = cfg.read_entry("FileType", key).trim_whitespace();
         if (handler.is_empty())
@@ -116,17 +137,25 @@ void Launcher::load_config(Core::ConfigFile const& cfg)
     }
 }
 
-Vector<String> Launcher::handlers_for_url(const URL& url)
+bool Launcher::has_mime_handlers(ByteString const& mime_type)
 {
-    Vector<String> handlers;
-    if (url.protocol() == "file") {
-        for_each_handler_for_path(url.path(), [&](auto& handler) -> bool {
+    for (auto& handler : m_handlers)
+        if (handler.value.mime_types.contains(mime_type))
+            return true;
+    return false;
+}
+
+Vector<ByteString> Launcher::handlers_for_url(const URL::URL& url)
+{
+    Vector<ByteString> handlers;
+    if (url.scheme() == "file") {
+        for_each_handler_for_path(URL::percent_decode(url.serialize_path()), [&](auto& handler) -> bool {
             handlers.append(handler.executable);
             return true;
         });
     } else {
-        for_each_handler(url.protocol(), m_protocol_handlers, [&](auto const& handler) -> bool {
-            if (handler.handler_type != Handler::Type::Default || handler.protocols.contains(url.protocol())) {
+        for_each_handler(url.scheme().to_byte_string(), m_protocol_handlers, [&](auto const& handler) -> bool {
+            if (handler.handler_type != Handler::Type::Default || handler.protocols.contains(url.scheme().to_byte_string())) {
                 handlers.append(handler.executable);
                 return true;
             }
@@ -136,17 +165,17 @@ Vector<String> Launcher::handlers_for_url(const URL& url)
     return handlers;
 }
 
-Vector<String> Launcher::handlers_with_details_for_url(const URL& url)
+Vector<ByteString> Launcher::handlers_with_details_for_url(const URL::URL& url)
 {
-    Vector<String> handlers;
-    if (url.protocol() == "file") {
-        for_each_handler_for_path(url.path(), [&](auto& handler) -> bool {
+    Vector<ByteString> handlers;
+    if (url.scheme() == "file") {
+        for_each_handler_for_path(URL::percent_decode(url.serialize_path()), [&](auto& handler) -> bool {
             handlers.append(handler.to_details_str());
             return true;
         });
     } else {
-        for_each_handler(url.protocol(), m_protocol_handlers, [&](auto const& handler) -> bool {
-            if (handler.handler_type != Handler::Type::Default || handler.protocols.contains(url.protocol())) {
+        for_each_handler(url.scheme().to_byte_string(), m_protocol_handlers, [&](auto const& handler) -> bool {
+            if (handler.handler_type != Handler::Type::Default || handler.protocols.contains(url.scheme().to_byte_string())) {
                 handlers.append(handler.to_details_str());
                 return true;
             }
@@ -156,38 +185,47 @@ Vector<String> Launcher::handlers_with_details_for_url(const URL& url)
     return handlers;
 }
 
-bool Launcher::open_url(const URL& url, String const& handler_name)
+Optional<StringView> Launcher::mime_type_for_file(ByteString path)
 {
-    if (!handler_name.is_null())
-        return open_with_handler_name(url, handler_name);
+    auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
+    if (file_or_error.is_error())
+        return {};
 
-    if (url.protocol() == "file")
-        return open_file_url(url);
-
-    return open_with_user_preferences(m_protocol_handlers, url.protocol(), { url.to_string() });
+    return Core::guess_mime_type_based_on_sniffed_bytes(*file_or_error.release_value());
 }
 
-bool Launcher::open_with_handler_name(const URL& url, String const& handler_name)
+bool Launcher::open_url(const URL::URL& url, ByteString const& handler_name)
+{
+    if (!handler_name.is_empty())
+        return open_with_handler_name(url, handler_name);
+
+    if (url.scheme() == "file")
+        return open_file_url(url);
+
+    return open_with_user_preferences(m_protocol_handlers, url.scheme().to_byte_string(), { url.to_byte_string() });
+}
+
+bool Launcher::open_with_handler_name(const URL::URL& url, ByteString const& handler_name)
 {
     auto handler_optional = m_handlers.get(handler_name);
     if (!handler_optional.has_value())
         return false;
 
     auto& handler = handler_optional.value();
-    String argument;
-    if (url.protocol() == "file")
-        argument = url.path();
+    ByteString argument;
+    if (url.scheme() == "file")
+        argument = URL::percent_decode(url.serialize_path());
     else
-        argument = url.to_string();
+        argument = url.to_byte_string();
     return spawn(handler.executable, { argument });
 }
 
-bool spawn(String executable, Vector<String> const& arguments)
+bool spawn(ByteString executable, Vector<ByteString> const& arguments)
 {
     return !Core::Process::spawn(executable, arguments).is_error();
 }
 
-Handler Launcher::get_handler_for_executable(Handler::Type handler_type, String const& executable) const
+Handler Launcher::get_handler_for_executable(Handler::Type handler_type, ByteString const& executable) const
 {
     Handler handler;
     auto existing_handler = m_handlers.get(executable);
@@ -200,11 +238,22 @@ Handler Launcher::get_handler_for_executable(Handler::Type handler_type, String 
     return handler;
 }
 
-bool Launcher::open_with_user_preferences(HashMap<String, String> const& user_preferences, String const& key, Vector<String> const& arguments, String const& default_program)
+bool Launcher::open_with_user_preferences(HashMap<ByteString, ByteString> const& user_preferences, ByteString const& key, Vector<ByteString> const& arguments, ByteString const& default_program)
 {
     auto program_path = user_preferences.get(key);
     if (program_path.has_value())
         return spawn(program_path.value(), arguments);
+
+    ByteString executable = "";
+    if (for_each_handler(key, user_preferences, [&](auto const& handler) -> bool {
+            if (executable.is_empty() && (handler.mime_types.contains(key) || handler.file_types.contains(key) || handler.protocols.contains(key))) {
+                executable = handler.executable;
+                return true;
+            }
+            return false;
+        })) {
+        return spawn(executable, arguments);
+    }
 
     // There wasn't a handler for this, so try the fallback instead
     program_path = user_preferences.get("*");
@@ -218,7 +267,7 @@ bool Launcher::open_with_user_preferences(HashMap<String, String> const& user_pr
     return false;
 }
 
-void Launcher::for_each_handler(String const& key, HashMap<String, String>& user_preference, Function<bool(Handler const&)> f)
+size_t Launcher::for_each_handler(ByteString const& key, HashMap<ByteString, ByteString> const& user_preference, Function<bool(Handler const&)> f)
 {
     auto user_preferred = user_preference.get(key);
     if (user_preferred.has_value())
@@ -236,9 +285,12 @@ void Launcher::for_each_handler(String const& key, HashMap<String, String>& user
     auto user_default = user_preference.get("*");
     if (counted == 0 && user_default.has_value())
         f(get_handler_for_executable(Handler::Type::UserDefault, user_default.value()));
+    // Return the number of times f() was called,
+    // which can be used to know whether there were any handlers
+    return counted;
 }
 
-void Launcher::for_each_handler_for_path(String const& path, Function<bool(Handler const&)> f)
+void Launcher::for_each_handler_for_path(ByteString const& path, Function<bool(Handler const&)> f)
 {
     struct stat st;
     if (lstat(path.characters(), &st) < 0) {
@@ -259,13 +311,21 @@ void Launcher::for_each_handler_for_path(String const& path, Function<bool(Handl
         return;
 
     if (S_ISLNK(st.st_mode)) {
-        auto link_target_or_error = Core::File::read_link(path);
-        if (link_target_or_error.is_error())
+        auto link_target_or_error = FileSystem::read_link(path);
+        if (link_target_or_error.is_error()) {
             perror("read_link");
+            return;
+        }
 
         auto link_target = LexicalPath { link_target_or_error.release_value() };
         LexicalPath absolute_link_target = link_target.is_absolute() ? link_target : LexicalPath::join(LexicalPath::dirname(path), link_target.string());
-        auto real_path = Core::File::real_path_for(absolute_link_target.string());
+        auto real_path_or_error = FileSystem::real_path(absolute_link_target.string());
+        if (real_path_or_error.is_error()) {
+            perror("real_path");
+            return;
+        }
+        auto real_path = real_path_or_error.release_value();
+
         return for_each_handler_for_path(real_path, [&](auto const& handler) -> bool {
             return f(handler);
         });
@@ -275,6 +335,17 @@ void Launcher::for_each_handler_for_path(String const& path, Function<bool(Handl
         f(get_handler_for_executable(Handler::Type::Application, path));
 
     auto extension = LexicalPath::extension(path).to_lowercase();
+    auto mime_type = mime_type_for_file(path);
+
+    if (mime_type.has_value()) {
+        if (for_each_handler(mime_type.value(), m_mime_handlers, [&](auto const& handler) -> bool {
+                if (handler.handler_type != Handler::Type::Default || handler.mime_types.contains(mime_type.value()))
+                    return f(handler);
+                return false;
+            })) {
+            return;
+        }
+    }
 
     for_each_handler(extension, m_file_handlers, [&](auto const& handler) -> bool {
         if (handler.handler_type != Handler::Type::Default || handler.file_types.contains(extension))
@@ -283,22 +354,23 @@ void Launcher::for_each_handler_for_path(String const& path, Function<bool(Handl
     });
 }
 
-bool Launcher::open_file_url(const URL& url)
+bool Launcher::open_file_url(const URL::URL& url)
 {
     struct stat st;
-    if (stat(url.path().characters(), &st) < 0) {
+    auto file_path = URL::percent_decode(url.serialize_path());
+    if (stat(file_path.characters(), &st) < 0) {
         perror("stat");
         return false;
     }
 
     if (S_ISDIR(st.st_mode)) {
-        Vector<String> fm_arguments;
-        if (url.fragment().is_empty()) {
-            fm_arguments.append(url.path());
+        Vector<ByteString> fm_arguments;
+        if (!url.fragment().has_value() || url.fragment()->is_empty()) {
+            fm_arguments.append(file_path);
         } else {
             fm_arguments.append("-s");
             fm_arguments.append("-r");
-            fm_arguments.append(String::formatted("{}/{}", url.path(), url.fragment()));
+            fm_arguments.append(ByteString::formatted("{}/{}", file_path, *url.fragment()));
         }
 
         auto handler_optional = m_file_handlers.get("directory");
@@ -310,35 +382,39 @@ bool Launcher::open_file_url(const URL& url)
     }
 
     if ((st.st_mode & S_IFMT) == S_IFREG && st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
-        return spawn(url.path(), {});
+        return spawn(file_path, {});
 
-    auto extension_parts = url.path().to_lowercase().split('.');
-    String extension = {};
-    if (extension_parts.size() > 1)
-        extension = extension_parts.last();
+    auto extension = LexicalPath::extension(file_path).to_lowercase();
+    auto mime_type = mime_type_for_file(file_path);
+
+    auto mime_type_or_extension = extension;
+    bool should_use_mime_type = mime_type.has_value() && has_mime_handlers(mime_type.value());
+    if (should_use_mime_type)
+        mime_type_or_extension = mime_type.value();
 
     auto handler_optional = m_file_handlers.get("txt");
-    if (!handler_optional.has_value())
-        return false;
-    auto& default_handler = handler_optional.value();
+    ByteString default_handler = "";
+    if (handler_optional.has_value())
+        default_handler = handler_optional.value();
 
     // Additional parameters parsing, specific for the file protocol and txt file handlers
-    Vector<String> additional_parameters;
-    String filepath = url.path();
+    Vector<ByteString> additional_parameters;
+    ByteString filepath = URL::percent_decode(url.serialize_path());
 
-    auto parameters = url.query().split('&');
-    for (auto const& parameter : parameters) {
-        auto pair = parameter.split('=');
-        if (pair.size() == 2 && pair[0] == "line_number") {
-            auto line = pair[1].to_int();
-            if (line.has_value())
-                // TextEditor uses file:line:col to open a file at a specific line number
-                filepath = String::formatted("{}:{}", filepath, line.value());
-        }
+    if (url.query().has_value()) {
+        url.query()->bytes_as_string_view().for_each_split_view('&', SplitBehavior::Nothing, [&](auto parameter) {
+            auto pair = parameter.split_view('=');
+            if (pair.size() == 2 && pair[0] == "line_number") {
+                auto line = pair[1].template to_number<int>();
+                if (line.has_value())
+                    // TextEditor uses file:line:col to open a file at a specific line number
+                    filepath = ByteString::formatted("{}:{}", filepath, line.value());
+            }
+        });
     }
 
     additional_parameters.append(filepath);
 
-    return open_with_user_preferences(m_file_handlers, extension, additional_parameters, default_handler);
+    return open_with_user_preferences(should_use_mime_type ? m_mime_handlers : m_file_handlers, mime_type_or_extension, additional_parameters, default_handler);
 }
 }

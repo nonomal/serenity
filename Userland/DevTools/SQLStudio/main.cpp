@@ -15,23 +15,25 @@
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    char const* file_to_open = nullptr;
+    StringView file_to_open;
 
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(file_to_open, "Path to SQL script or DB", "file", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     auto app_icon = GUI::Icon::default_icon("app-sql-studio"sv);
 
-    auto window = TRY(GUI::Window::try_create());
-    window->resize(640, 480);
+    auto window = GUI::Window::construct();
+    window->restore_size_and_position("SQLStudio"sv, "Window"sv, { { 640, 480 } });
+    window->save_size_and_position_on_close("SQLStudio"sv, "Window"sv);
     window->set_icon(app_icon.bitmap_for_size(16));
     window->set_title("SQL Studio");
 
-    auto main_widget = TRY(window->try_set_main_widget<MainWidget>());
-    main_widget->initialize_menu(window);
+    auto main_widget = TRY(MainWidget::try_create());
+    window->set_main_widget(main_widget);
+    TRY(main_widget->initialize_menu(window));
 
     window->on_close_request = [&] {
         if (main_widget->request_close())
@@ -39,18 +41,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return GUI::Window::CloseRequestDecision::StayOpen;
     };
 
-    auto needs_new_script = true;
-    if (file_to_open) {
+    if (!file_to_open.is_empty()) {
         auto path = LexicalPath(file_to_open);
-        if (path.extension().equals_ignoring_case("sql"sv)) {
-            main_widget->open_script_from_file(path);
-            needs_new_script = false;
-        } else if (path.extension().equals_ignoring_case("db"sv)) {
-            main_widget->open_database_from_file(path);
-        }
-    }
-    if (needs_new_script)
+        main_widget->open_script_from_file(path);
+    } else {
         main_widget->open_new_script();
+    }
 
     window->show();
     return app->exec();

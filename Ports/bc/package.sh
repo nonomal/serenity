@@ -1,8 +1,9 @@
 #!/usr/bin/env -S bash ../.port_include.sh
 port='bc'
-version='5.2.5'
-files="https://github.com/gavinhoward/bc/releases/download/${version}/bc-${version}.tar.xz bc-${version}.tar.xz 085d1f0d544f34c6e186a4b91e8978702eaa7645e39c630184efd49f17b3dbd5"
-auth_type='sha256'
+version='7.0.3'
+files=(
+    "https://github.com/gavinhoward/bc/releases/download/${version}/bc-${version}.tar.xz#91eb74caed0ee6655b669711a4f350c25579778694df248e28363318e03c7fc4"
+)
 useconfigure='true'
 configscript='configure.sh'
 configopts=("--prefix=/usr/local" "--disable-nls")

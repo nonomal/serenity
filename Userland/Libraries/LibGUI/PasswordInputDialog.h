@@ -15,14 +15,16 @@ class PasswordInputDialog : public Dialog {
     C_OBJECT(PasswordInputDialog);
 
 public:
+    ErrorOr<NonnullRefPtr<GUI::Widget>> try_create();
+
     virtual ~PasswordInputDialog() override = default;
 
-    static ExecResult show(Window* parent_window, String& text_value, String title, String server, String username);
+    static ExecResult show(Window* parent_window, ByteString& text_value, ByteString title, ByteString server, ByteString username);
 
 private:
-    explicit PasswordInputDialog(Window* parent_window, String title, String server, String username);
+    explicit PasswordInputDialog(Window* parent_window, ByteString title, ByteString server, ByteString username);
 
-    String m_password;
+    ByteString m_password;
 };
 
 }

@@ -1,13 +1,13 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibTest/TestCase.h>
 
+#include <AK/ByteString.h>
 #include <AK/NonnullRefPtr.h>
-#include <AK/String.h>
 
 struct Object : public RefCounted<Object> {
     int x;
@@ -97,14 +97,11 @@ TEST_CASE(assign_moved_self)
 {
     RefPtr<Object> object = adopt_ref(*new Object);
     EXPECT_EQ(object->ref_count(), 1u);
-#ifdef __clang__
-#    pragma clang diagnostic push
-#    pragma clang diagnostic ignored "-Wself-move"
-#endif
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Wself-move"
     object = move(object);
-#ifdef __clang__
-#    pragma clang diagnostic pop
-#endif
+#pragma GCC diagnostic pop
     EXPECT_EQ(object->ref_count(), 1u);
 }
 
@@ -113,12 +110,12 @@ TEST_CASE(assign_copy_self)
     RefPtr<Object> object = adopt_ref(*new Object);
     EXPECT_EQ(object->ref_count(), 1u);
 
-#ifdef __clang__
+#if defined(AK_COMPILER_CLANG)
 #    pragma clang diagnostic push
 #    pragma clang diagnostic ignored "-Wself-assign-overloaded"
 #endif
     object = object;
-#ifdef __clang__
+#if defined(AK_COMPILER_CLANG)
 #    pragma clang diagnostic pop
 #endif
 
@@ -152,4 +149,16 @@ TEST_CASE(adopt_ref_if_nonnull)
     SelfAwareObject* null_object = nullptr;
     RefPtr<SelfAwareObject> failed_allocation = adopt_ref_if_nonnull(null_object);
     EXPECT_EQ(failed_allocation.is_null(), true);
+}
+
+TEST_CASE(destroy_self_owning_refcounted_object)
+{
+    struct SelfOwningRefCounted : public RefCounted<SelfOwningRefCounted> {
+        RefPtr<SelfOwningRefCounted> self;
+    };
+    RefPtr object = make_ref_counted<SelfOwningRefCounted>();
+    auto* object_ptr = object.ptr();
+    object->self = object;
+    object = nullptr;
+    object_ptr->self = nullptr;
 }

@@ -1,28 +1,176 @@
 /*
  * Copyright (c) 2022, David Tuin <davidot@serenityos.org>
+ * Copyright (c) 2023, networkException <networkexception@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Debug.h>
+#include <AK/TypeCasts.h>
 #include <LibJS/CyclicModule.h>
+#include <LibJS/Runtime/ModuleRequest.h>
+#include <LibJS/Runtime/PromiseCapability.h>
 #include <LibJS/Runtime/PromiseConstructor.h>
-#include <LibJS/Runtime/PromiseReaction.h>
+#include <LibJS/Runtime/VM.h>
 
 namespace JS {
 
-CyclicModule::CyclicModule(Realm& realm, StringView filename, bool has_top_level_await, Vector<ModuleRequest> requested_modules)
-    : Module(realm, filename)
+JS_DEFINE_ALLOCATOR(CyclicModule);
+
+CyclicModule::CyclicModule(Realm& realm, StringView filename, bool has_top_level_await, Vector<ModuleRequest> requested_modules, Script::HostDefined* host_defined)
+    : Module(realm, filename, host_defined)
     , m_requested_modules(move(requested_modules))
     , m_has_top_level_await(has_top_level_await)
 {
 }
 
-// 16.2.1.5.1 Link ( ), https://tc39.es/ecma262/#sec-moduledeclarationlinking
+CyclicModule::~CyclicModule() = default;
+
+void CyclicModule::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_cycle_root);
+    visitor.visit(m_top_level_capability);
+    visitor.visit(m_async_parent_modules);
+    for (auto const& loaded_module : m_loaded_modules)
+        visitor.visit(loaded_module.module);
+}
+
+void GraphLoadingState::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(promise_capability);
+    visitor.visit(host_defined);
+    visitor.visit(visited);
+}
+
+// 16.2.1.5.1 LoadRequestedModules ( [ hostDefined ] ), https://tc39.es/ecma262/#sec-LoadRequestedModules
+PromiseCapability& CyclicModule::load_requested_modules(GCPtr<GraphLoadingState::HostDefined> host_defined)
+{
+    // 1. If hostDefined is not present, let hostDefined be EMPTY.
+    // NOTE: The empty state is handled by hostDefined being an optional without value.
+
+    // 2. Let pc be ! NewPromiseCapability(%Promise%).
+    auto promise_capability = MUST(new_promise_capability(vm(), vm().current_realm()->intrinsics().promise_constructor()));
+
+    // 3. Let state be the GraphLoadingState Record { [[IsLoading]]: true, [[PendingModulesCount]]: 1, [[Visited]]: « », [[PromiseCapability]]: pc, [[HostDefined]]: hostDefined }.
+    auto state = heap().allocate_without_realm<GraphLoadingState>(promise_capability, true, 1, HashTable<JS::GCPtr<CyclicModule>> {}, move(host_defined));
+
+    // 4. Perform InnerModuleLoading(state, module).
+    inner_module_loading(state);
+
+    // NOTE: This is likely a spec bug, see https://matrixlogs.bakkot.com/WHATWG/2023-02-13#L1
+    // FIXME: 5. Return pc.[[Promise]].
+    return promise_capability;
+}
+
+// 16.2.1.5.1.1 InnerModuleLoading ( state, module ), https://tc39.es/ecma262/#sec-InnerModuleLoading
+void CyclicModule::inner_module_loading(JS::GraphLoadingState& state)
+{
+    // 1. Assert: state.[[IsLoading]] is true.
+    VERIFY(state.is_loading);
+
+    // 2. If module is a Cyclic Module Record, module.[[Status]] is NEW, and state.[[Visited]] does not contain module, then
+    if (m_status == ModuleStatus::New && !state.visited.contains(this)) {
+        // a. Append module to state.[[Visited]].
+        state.visited.set(this);
+
+        // b. Let requestedModulesCount be the number of elements in module.[[RequestedModules]].
+        auto requested_modules_count = m_requested_modules.size();
+
+        // c. Set state.[[PendingModulesCount]] to state.[[PendingModulesCount]] + requestedModulesCount.
+        state.pending_module_count += requested_modules_count;
+
+        // d. For each String required of module.[[RequestedModules]], do
+        for (auto const& required : m_requested_modules) {
+            bool found_record_in_loaded_modules = false;
+
+            // i. If module.[[LoadedModules]] contains a Record whose [[Specifier]] is required, then
+            for (auto const& record : m_loaded_modules) {
+                if (record.specifier == required.module_specifier) {
+                    // 1. Let record be that Record.
+
+                    // 2. Perform InnerModuleLoading(state, record.[[Module]]).
+                    static_cast<CyclicModule&>(*record.module).inner_module_loading(state);
+
+                    found_record_in_loaded_modules = true;
+                    break;
+                }
+            }
+
+            // ii. Else,
+            if (!found_record_in_loaded_modules) {
+                // 1. Perform HostLoadImportedModule(module, required, state.[[HostDefined]], state).
+                vm().host_load_imported_module(NonnullGCPtr<CyclicModule> { *this }, required, state.host_defined, NonnullGCPtr<GraphLoadingState> { state });
+
+                // 2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters the graph loading process through ContinueModuleLoading.
+            }
+
+            // iii. If state.[[IsLoading]] is false, return UNUSED.
+            if (!state.is_loading)
+                return;
+        }
+    }
+
+    // 3. Assert: state.[[PendingModulesCount]] ≥ 1.
+    VERIFY(state.pending_module_count >= 1);
+
+    // 4. Set state.[[PendingModulesCount]] to state.[[PendingModulesCount]] - 1.
+    --state.pending_module_count;
+
+    // 5. If state.[[PendingModulesCount]] = 0, then
+    if (state.pending_module_count == 0) {
+        // a. Set state.[[IsLoading]] to false.
+        state.is_loading = false;
+
+        // b. For each Cyclic Module Record loaded of state.[[Visited]], do
+        for (auto const& loaded : state.visited) {
+            // i. If loaded.[[Status]] is NEW, set loaded.[[Status]] to UNLINKED.
+            if (loaded->m_status == ModuleStatus::New)
+                loaded->m_status = ModuleStatus::Unlinked;
+        }
+
+        // c. Perform ! Call(state.[[PromiseCapability]].[[Resolve]], undefined, « undefined »).
+        MUST(call(vm(), *state.promise_capability->resolve(), js_undefined(), js_undefined()));
+    }
+
+    // 6. Return unused.
+}
+
+// 16.2.1.5.1.2 ContinueModuleLoading ( state, moduleCompletion ), https://tc39.es/ecma262/#sec-ContinueModuleLoading
+void continue_module_loading(GraphLoadingState& state, ThrowCompletionOr<NonnullGCPtr<Module>> const& module_completion)
+{
+    // 1. If state.[[IsLoading]] is false, return UNUSED.
+    if (!state.is_loading)
+        return;
+
+    // 2. If moduleCompletion is a normal completion, then
+    if (!module_completion.is_error()) {
+        auto module = module_completion.value();
+
+        // a. Perform InnerModuleLoading(state, moduleCompletion.[[Value]]).
+        verify_cast<CyclicModule>(*module).inner_module_loading(state);
+    }
+    // 3. Else,
+    else {
+        // a. Set state.[[IsLoading]] to false.
+        state.is_loading = false;
+
+        auto value = module_completion.throw_completion().value();
+
+        // b. Perform ! Call(state.[[PromiseCapability]].[[Reject]], undefined, « moduleCompletion.[[Value]] »).
+        MUST(call(state.vm(), *state.promise_capability->reject(), js_undefined(), *value));
+    }
+
+    // 4. Return UNUSED.
+}
+
+// 16.2.1.5.2 Link ( ), https://tc39.es/ecma262/#sec-moduledeclarationlinking
 ThrowCompletionOr<void> CyclicModule::link(VM& vm)
 {
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] link[{}]()", this);
-    // 1. Assert: module.[[Status]] is not linking or evaluating.
-    VERIFY(m_status != ModuleStatus::Linking && m_status != ModuleStatus::Evaluating);
+    // 1. Assert: module.[[Status]] is one of unlinked, linked, evaluating-async, or evaluated.
+    VERIFY(m_status == ModuleStatus::Unlinked || m_status == ModuleStatus::Linked || m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated);
     // 2. Let stack be a new empty List.
     Vector<Module*> stack;
 
@@ -45,11 +193,11 @@ ThrowCompletionOr<void> CyclicModule::link(VM& vm)
         // b. Assert: module.[[Status]] is unlinked.
         VERIFY(m_status == ModuleStatus::Unlinked);
 
-        // c. Return result.
+        // c. Return ? result.
         return result.release_error();
     }
 
-    // 5. Assert: module.[[Status]] is linked, evaluating-async, or evaluated.
+    // 5. Assert: module.[[Status]] is one of linked, evaluating-async, or evaluated.
     VERIFY(m_status == ModuleStatus::Linked || m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated);
     // 6. Assert: stack is empty.
     VERIFY(stack.is_empty());
@@ -66,7 +214,7 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, Vector<Module*
     //    b. Return index.
     // Note: Step 1, 1.a and 1.b are handled in Module.cpp
 
-    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_linking[{}](vm, {}, {})", this, String::join(',', stack), index);
+    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_linking[{}](vm, {}, {})", this, ByteString::join(',', stack), index);
 
     // 2. If module.[[Status]] is linking, linked, evaluating-async, or evaluated, then
     if (m_status == ModuleStatus::Linking || m_status == ModuleStatus::Linked || m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated) {
@@ -105,8 +253,8 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, Vector<Module*
     for (auto& required_string : m_requested_modules) {
         ModuleRequest required { required_string };
 
-        // a. Let requiredModule be ? HostResolveImportedModule(module, required).
-        auto required_module = TRY(vm.host_resolve_imported_module(this->make_weak_ptr(), required));
+        // a. Let requiredModule be GetImportedModule(module, required).
+        auto required_module = get_imported_module(required);
 
         // b. Set index to ? InnerModuleLinking(requiredModule, stack, index).
         index = TRY(required_module->inner_module_linking(vm, stack, index));
@@ -169,39 +317,46 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, Vector<Module*
     return index;
 }
 
-// 16.2.1.5.2 Evaluate ( ), https://tc39.es/ecma262/#sec-moduleevaluation
+// 16.2.1.5.3 Evaluate ( ), https://tc39.es/ecma262/#sec-moduleevaluation
 ThrowCompletionOr<Promise*> CyclicModule::evaluate(VM& vm)
 {
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] evaluate[{}](vm)", this);
     // 1. Assert: This call to Evaluate is not happening at the same time as another call to Evaluate within the surrounding agent.
     // FIXME: Verify this somehow
 
-    // 2. Assert: module.[[Status]] is linked, evaluating-async, or evaluated.
+    // 2. Assert: module.[[Status]] is one of linked, evaluating-async, or evaluated.
     VERIFY(m_status == ModuleStatus::Linked || m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated);
 
-    // 3. If module.[[Status]] is evaluating-async or evaluated, set module to module.[[CycleRoot]].
-    if (m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated) {
+    // NOTE: The spec does not catch the case where evaluate is called twice on a script which failed
+    //       during evaluation. This means the script is evaluated but does not have a cycle root.
+    //       In that case we first check if this module itself has a top level capability.
+    //       See also: https://github.com/tc39/ecma262/issues/2823 .
+    if (m_top_level_capability != nullptr)
+        return verify_cast<Promise>(m_top_level_capability->promise().ptr());
+
+    // 3. If module.[[Status]] is either evaluating-async or evaluated, set module to module.[[CycleRoot]].
+    if ((m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated) && m_cycle_root != this) {
         // Note: This will continue this function with module.[[CycleRoot]]
-        VERIFY(m_cycle_root && m_cycle_root->m_status == ModuleStatus::Linked && this != m_cycle_root);
-        dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] evaluate[{}](vm) deferring to cycle root at {}", this, m_cycle_root);
+        VERIFY(m_cycle_root);
+        VERIFY(m_cycle_root->m_status == ModuleStatus::Linked);
+        dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] evaluate[{}](vm) deferring to cycle root at {}", this, m_cycle_root.ptr());
         return m_cycle_root->evaluate(vm);
     }
 
     // 4. If module.[[TopLevelCapability]] is not empty, then
-    if (m_top_level_capability.has_value()) {
+    if (m_top_level_capability != nullptr) {
         // a. Return module.[[TopLevelCapability]].[[Promise]].
-        VERIFY(is<Promise>(*m_top_level_capability->promise));
-        return static_cast<Promise*>(m_top_level_capability->promise);
+        return verify_cast<Promise>(m_top_level_capability->promise().ptr());
     }
 
     // 5. Let stack be a new empty List.
     Vector<Module*> stack;
 
-    auto& global_object = realm().global_object();
+    auto& realm = *vm.current_realm();
 
     // 6. Let capability be ! NewPromiseCapability(%Promise%).
     // 7. Set module.[[TopLevelCapability]] to capability.
-    m_top_level_capability = MUST(new_promise_capability(global_object, global_object.promise_constructor()));
+    m_top_level_capability = MUST(new_promise_capability(vm, realm.intrinsics().promise_constructor()));
 
     // 8. Let result be Completion(InnerModuleEvaluation(module, stack, 0)).
     auto result = inner_module_evaluation(vm, stack, 0);
@@ -231,14 +386,15 @@ ThrowCompletionOr<Promise*> CyclicModule::evaluate(VM& vm)
         VERIFY(m_status == ModuleStatus::Evaluated);
 
         // c. Assert: module.[[EvaluationError]] is result.
-        VERIFY(m_evaluation_error.is_error() && same_value(*m_evaluation_error.throw_completion().value(), *result.throw_completion().value()));
+        VERIFY(m_evaluation_error.is_error());
+        VERIFY(same_value(*m_evaluation_error.throw_completion().value(), *result.throw_completion().value()));
 
         // d. Perform ! Call(capability.[[Reject]], undefined, « result.[[Value]] »).
-        MUST(call(global_object, m_top_level_capability->reject, js_undefined(), *result.throw_completion().value()));
+        MUST(call(vm, *m_top_level_capability->reject(), js_undefined(), *result.throw_completion().value()));
     }
     // 10. Else,
     else {
-        // a. Assert: module.[[Status]] is evaluating-async or evaluated.
+        // a. Assert: module.[[Status]] is either evaluating-async or evaluated.
         VERIFY(m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated);
         // b. Assert: module.[[EvaluationError]] is empty.
         VERIFY(!m_evaluation_error.is_error());
@@ -248,7 +404,7 @@ ThrowCompletionOr<Promise*> CyclicModule::evaluate(VM& vm)
             // i. Assert: module.[[Status]] is evaluated.
             VERIFY(m_status == ModuleStatus::Evaluated);
             // ii. Perform ! Call(capability.[[Resolve]], undefined, « undefined »).
-            MUST(call(global_object, m_top_level_capability->resolve, js_undefined(), js_undefined()));
+            MUST(call(vm, *m_top_level_capability->resolve(), js_undefined(), js_undefined()));
         }
 
         // d. Assert: stack is empty.
@@ -256,14 +412,13 @@ ThrowCompletionOr<Promise*> CyclicModule::evaluate(VM& vm)
     }
 
     // 11. Return capability.[[Promise]].
-    VERIFY(is<Promise>(*m_top_level_capability->promise));
-    return static_cast<Promise*>(m_top_level_capability->promise);
+    return verify_cast<Promise>(m_top_level_capability->promise().ptr());
 }
 
 // 16.2.1.5.2.1 InnerModuleEvaluation ( module, stack, index ), https://tc39.es/ecma262/#sec-innermoduleevaluation
 ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, Vector<Module*>& stack, u32 index)
 {
-    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_evaluation[{}](vm, {}, {})", this, String::join(", "sv, stack), index);
+    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_evaluation[{}](vm, {}, {})", this, ByteString::join(", "sv, stack), index);
     // Note: Step 1 is performed in Module.cpp
 
     // 2. If module.[[Status]] is evaluating-async or evaluated, then
@@ -304,18 +459,17 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, Vector<Modu
     // 11. For each String required of module.[[RequestedModules]], do
     for (auto& required : m_requested_modules) {
 
-        // a. Let requiredModule be ! HostResolveImportedModule(module, required).
-        auto* required_module = MUST(vm.host_resolve_imported_module(this->make_weak_ptr(), required)).ptr();
-        // b. NOTE: Link must be completed successfully prior to invoking this method, so every requested module is guaranteed to resolve successfully.
+        // a. Let requiredModule be GetImportedModule(module, required).
+        auto required_module = get_imported_module(required);
 
-        // c. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
+        // b. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
         index = TRY(required_module->inner_module_evaluation(vm, stack, index));
 
-        // d. If requiredModule is a Cyclic Module Record, then
+        // c. If requiredModule is a Cyclic Module Record, then
         if (!is<CyclicModule>(*required_module))
             continue;
 
-        auto* cyclic_module = static_cast<CyclicModule*>(required_module);
+        JS::NonnullGCPtr<CyclicModule> cyclic_module = verify_cast<CyclicModule>(*required_module);
         // i. Assert: requiredModule.[[Status]] is either evaluating, evaluating-async, or evaluated.
         VERIFY(cyclic_module->m_status == ModuleStatus::Evaluating || cyclic_module->m_status == ModuleStatus::EvaluatingAsync || cyclic_module->m_status == ModuleStatus::Evaluated);
 
@@ -330,7 +484,8 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, Vector<Modu
         // iv. Else,
         else {
             // 1. Set requiredModule to requiredModule.[[CycleRoot]].
-            cyclic_module = cyclic_module->m_cycle_root;
+            VERIFY(cyclic_module->m_cycle_root);
+            cyclic_module = *cyclic_module->m_cycle_root;
 
             // 2. Assert: requiredModule.[[Status]] is evaluating-async or evaluated.
             VERIFY(cyclic_module->m_status == ModuleStatus::EvaluatingAsync || cyclic_module->m_status == ModuleStatus::Evaluated);
@@ -423,7 +578,7 @@ ThrowCompletionOr<void> CyclicModule::initialize_environment(VM&)
     VERIFY_NOT_REACHED();
 }
 
-ThrowCompletionOr<void> CyclicModule::execute_module(VM&, Optional<PromiseCapability>)
+ThrowCompletionOr<void> CyclicModule::execute_module(VM&, GCPtr<PromiseCapability>)
 {
     // Note: In ecma262 this is never called on a cyclic module only on SourceTextModules.
     //       So this check is to make sure we don't accidentally call this.
@@ -433,19 +588,19 @@ ThrowCompletionOr<void> CyclicModule::execute_module(VM&, Optional<PromiseCapabi
 // 16.2.1.5.2.2 ExecuteAsyncModule ( module ), https://tc39.es/ecma262/#sec-execute-async-module
 void CyclicModule::execute_async_module(VM& vm)
 {
+    auto& realm = *vm.current_realm();
+
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] executing async module {}", filename());
     // 1. Assert: module.[[Status]] is evaluating or evaluating-async.
     VERIFY(m_status == ModuleStatus::Evaluating || m_status == ModuleStatus::EvaluatingAsync);
     // 2. Assert: module.[[HasTLA]] is true.
     VERIFY(m_has_top_level_await);
 
-    auto& global_object = realm().global_object();
-
     // 3. Let capability be ! NewPromiseCapability(%Promise%).
-    auto capability = MUST(new_promise_capability(global_object, global_object.promise_constructor()));
+    auto capability = MUST(new_promise_capability(vm, realm.intrinsics().promise_constructor()));
 
     // 4. Let fulfilledClosure be a new Abstract Closure with no parameters that captures module and performs the following steps when called:
-    auto fulfilled_closure = [&](VM& vm, GlobalObject&) -> ThrowCompletionOr<Value> {
+    auto fulfilled_closure = [&](VM& vm) -> ThrowCompletionOr<Value> {
         // a. Perform AsyncModuleExecutionFulfilled(module).
         async_module_execution_fulfilled(vm);
 
@@ -454,10 +609,10 @@ void CyclicModule::execute_async_module(VM& vm)
     };
 
     // 5. Let onFulfilled be CreateBuiltinFunction(fulfilledClosure, 0, "", « »).
-    auto* on_fulfilled = NativeFunction::create(global_object, move(fulfilled_closure), 0, "");
+    auto on_fulfilled = NativeFunction::create(realm, move(fulfilled_closure), 0, "");
 
     // 6. Let rejectedClosure be a new Abstract Closure with parameters (error) that captures module and performs the following steps when called:
-    auto rejected_closure = [&](VM& vm, GlobalObject&) -> ThrowCompletionOr<Value> {
+    auto rejected_closure = [&](VM& vm) -> ThrowCompletionOr<Value> {
         auto error = vm.argument(0);
 
         // a. Perform AsyncModuleExecutionRejected(module, error).
@@ -468,12 +623,10 @@ void CyclicModule::execute_async_module(VM& vm)
     };
 
     // 7. Let onRejected be CreateBuiltinFunction(rejectedClosure, 0, "", « »).
-    auto* on_rejected = NativeFunction::create(global_object, move(rejected_closure), 0, "");
-
-    VERIFY(is<Promise>(*capability.promise));
+    auto on_rejected = NativeFunction::create(realm, move(rejected_closure), 0, "");
 
     // 8. Perform PerformPromiseThen(capability.[[Promise]], onFulfilled, onRejected).
-    static_cast<Promise*>(capability.promise)->perform_then(on_fulfilled, on_rejected, {});
+    verify_cast<Promise>(capability->promise().ptr())->perform_then(on_fulfilled, on_rejected, {});
 
     // 9. Perform ! module.ExecuteModule(capability).
     MUST(execute_module(vm, capability));
@@ -485,7 +638,7 @@ void CyclicModule::execute_async_module(VM& vm)
 void CyclicModule::gather_available_ancestors(Vector<CyclicModule*>& exec_list)
 {
     // 1. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
-    for (auto* module : m_async_parent_modules) {
+    for (auto module : m_async_parent_modules) {
         // a. If execList does not contain m and m.[[CycleRoot]].[[EvaluationError]] is empty, then
         if (!exec_list.contains_slow(module) && !module->m_cycle_root->m_evaluation_error.is_error()) {
             // i. Assert: m.[[Status]] is evaluating-async.
@@ -546,13 +699,12 @@ void CyclicModule::async_module_execution_fulfilled(VM& vm)
     m_status = ModuleStatus::Evaluated;
 
     // 7. If module.[[TopLevelCapability]] is not empty, then
-    if (m_top_level_capability.has_value()) {
+    if (m_top_level_capability != nullptr) {
         // a. Assert: module.[[CycleRoot]] is module.
         VERIFY(m_cycle_root == this);
 
-        VERIFY(vm.current_realm());
         // b. Perform ! Call(module.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
-        MUST(call(vm.current_realm()->global_object(), m_top_level_capability->resolve, js_undefined(), js_undefined()));
+        MUST(call(vm, *m_top_level_capability->resolve(), js_undefined(), js_undefined()));
     }
 
     // 8. Let execList be a new empty List.
@@ -595,13 +747,12 @@ void CyclicModule::async_module_execution_fulfilled(VM& vm)
                 module->m_status = ModuleStatus::Evaluated;
 
                 // 2. If m.[[TopLevelCapability]] is not empty, then
-                if (module->m_top_level_capability.has_value()) {
+                if (module->m_top_level_capability != nullptr) {
                     // a. Assert: m.[[CycleRoot]] is m.
                     VERIFY(module->m_cycle_root == module);
 
-                    VERIFY(vm.current_realm());
                     // b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
-                    MUST(call(vm.current_realm()->global_object(), module->m_top_level_capability->resolve, js_undefined(), js_undefined()));
+                    MUST(call(vm, *module->m_top_level_capability->resolve(), js_undefined(), js_undefined()));
                 }
             }
         }
@@ -638,21 +789,127 @@ void CyclicModule::async_module_execution_rejected(VM& vm, Value error)
     m_status = ModuleStatus::Evaluated;
 
     // 7. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
-    for (auto* module : m_async_parent_modules) {
-
+    for (auto module : m_async_parent_modules) {
         // a. Perform AsyncModuleExecutionRejected(m, error).
         module->async_module_execution_rejected(vm, error);
     }
 
     // 8. If module.[[TopLevelCapability]] is not empty, then
-    if (m_top_level_capability.has_value()) {
+    if (m_top_level_capability != nullptr) {
         // a. Assert: module.[[CycleRoot]] is module.
         VERIFY(m_cycle_root == this);
 
-        VERIFY(vm.current_realm());
         // b. Perform ! Call(module.[[TopLevelCapability]].[[Reject]], undefined, « error »).
-        MUST(call(vm.current_realm()->global_object(), m_top_level_capability->reject, js_undefined(), error));
+        MUST(call(vm, *m_top_level_capability->reject(), js_undefined(), error));
     }
+
+    // 9. Return unused.
+}
+
+// 16.2.1.7 GetImportedModule ( referrer, specifier ), https://tc39.es/ecma262/#sec-GetImportedModule
+NonnullGCPtr<Module> CyclicModule::get_imported_module(ModuleRequest const& request)
+{
+    // 1. Assert: Exactly one element of referrer.[[LoadedModules]] is a Record whose [[Specifier]] is specifier,
+    //    since LoadRequestedModules has completed successfully on referrer prior to invoking this abstract operation.
+    size_t element_with_specifier_count = 0;
+    for (auto const& loaded_module : m_loaded_modules) {
+        if (loaded_module.specifier == request.module_specifier)
+            ++element_with_specifier_count;
+    }
+    VERIFY(element_with_specifier_count == 1);
+
+    for (auto const& loaded_module : m_loaded_modules) {
+        if (loaded_module.specifier == request.module_specifier) {
+            // 2. Let record be the Record in referrer.[[LoadedModules]] whose [[Specifier]] is specifier.
+            // 3. Return record.[[Module]].
+            return loaded_module.module;
+        }
+    }
+    VERIFY_NOT_REACHED();
+}
+
+// 13.3.10.1.1 ContinueDynamicImport ( promiseCapability, moduleCompletion ), https://tc39.es/ecma262/#sec-ContinueDynamicImport
+void continue_dynamic_import(NonnullGCPtr<PromiseCapability> promise_capability, ThrowCompletionOr<NonnullGCPtr<Module>> const& module_completion)
+{
+    auto& vm = promise_capability->vm();
+
+    // 1. If moduleCompletion is an abrupt completion, then
+    if (module_completion.is_throw_completion()) {
+        // a. Perform ! Call(promiseCapability.[[Reject]], undefined, « moduleCompletion.[[Value]] »).
+        MUST(call(vm, *promise_capability->reject(), js_undefined(), *module_completion.throw_completion().value()));
+
+        // b. Return unused.
+        return;
+    }
+
+    // 2. Let module be moduleCompletion.[[Value]].
+    auto& module = *module_completion.value();
+
+    // 3. Let loadPromise be module.LoadRequestedModules().
+    auto& load_promise = module.load_requested_modules({});
+
+    // 4. Let rejectedClosure be a new Abstract Closure with parameters (reason) that captures promiseCapability and performs the
+    //    following steps when called:
+    auto reject_closure = [promise_capability](VM& vm) -> ThrowCompletionOr<Value> {
+        auto reason = vm.argument(0);
+
+        // a. Perform ! Call(promiseCapability.[[Reject]], undefined, « reason »).
+        MUST(call(vm, *promise_capability->reject(), js_undefined(), reason));
+
+        // b. Return unused.
+        return js_undefined();
+    };
+
+    // 5. Let onRejected be CreateBuiltinFunction(rejectedClosure, 1, "", « »).
+    auto on_rejected = NativeFunction::create(*vm.current_realm(), move(reject_closure), 1, "");
+
+    // 6. Let linkAndEvaluateClosure be a new Abstract Closure with no parameters that captures module, promiseCapability,
+    //    and onRejected and performs the following steps when called:
+    auto link_and_evaluate_closure = [&module, promise_capability, on_rejected](VM& vm) -> ThrowCompletionOr<Value> {
+        // a. Let link be Completion(module.Link()).
+        auto link = module.link(vm);
+
+        // b. If link is an abrupt completion, then
+        if (link.is_throw_completion()) {
+            // i. Perform ! Call(promiseCapability.[[Reject]], undefined, « link.[[Value]] »).
+            MUST(call(vm, *promise_capability->reject(), js_undefined(), *link.throw_completion().value()));
+
+            // ii. Return unused.
+            return js_undefined();
+        }
+
+        // c. Let evaluatePromise be module.Evaluate().
+        auto evaluate_promise = module.evaluate(vm);
+
+        // d. Let fulfilledClosure be a new Abstract Closure with no parameters that captures module and
+        //    promiseCapability and performs the following steps when called:
+        auto fulfilled_closure = [&module, promise_capability](VM& vm) -> ThrowCompletionOr<Value> {
+            // i. Let namespace be GetModuleNamespace(module).
+            auto namespace_ = module.get_module_namespace(vm);
+
+            // ii. Perform ! Call(promiseCapability.[[Resolve]], undefined, « namespace »).
+            MUST(call(vm, *promise_capability->resolve(), js_undefined(), namespace_.value()));
+
+            // iii. Return unused.
+            return js_undefined();
+        };
+
+        // e. Let onFulfilled be CreateBuiltinFunction(fulfilledClosure, 0, "", « »).
+        auto on_fulfilled = NativeFunction::create(*vm.current_realm(), move(fulfilled_closure), 0, "");
+
+        // f. Perform PerformPromiseThen(evaluatePromise, onFulfilled, onRejected).
+        evaluate_promise.value()->perform_then(on_fulfilled, on_rejected, {});
+
+        // g. Return unused.
+        return js_undefined();
+    };
+
+    // 7. Let linkAndEvaluate be CreateBuiltinFunction(linkAndEvaluateClosure, 0, "", « »).
+    auto link_and_evaluate = NativeFunction::create(*vm.current_realm(), move(link_and_evaluate_closure), 0, "");
+
+    // 8. Perform PerformPromiseThen(loadPromise, linkAndEvaluate, onRejected).
+    // FIXME: This is likely a spec bug, see load_requested_modules.
+    verify_cast<Promise>(*load_promise.promise()).perform_then(link_and_evaluate, on_rejected, {});
 
     // 9. Return unused.
 }

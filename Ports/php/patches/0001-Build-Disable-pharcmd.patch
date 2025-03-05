@@ -10,10 +10,10 @@ not try to run phar locally.
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/configure.ac b/configure.ac
-index b54abe3..d9a8d0b 100644
+index 42d6a3b6ca968b488c871f7c6f5395530481138b..dd244cdbc28e650237249ae8b636f6034a578826 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -1567,8 +1567,8 @@ CFLAGS="\$(CFLAGS_CLEAN) $standard_libtool_flag"
+@@ -1639,8 +1639,8 @@ CFLAGS="\$(CFLAGS_CLEAN) $standard_libtool_flag"
  CXXFLAGS="$CXXFLAGS $standard_libtool_flag \$(PROF_FLAGS)"
  
  if test "$PHP_PHAR" != "no" && test "$PHP_CLI" != "no"; then

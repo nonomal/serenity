@@ -12,16 +12,21 @@ namespace Web::SVG::AttributeNames {
 ENUMERATE_SVG_ATTRIBUTES(__ENUMERATE_SVG_ATTRIBUTE)
 #undef __ENUMERATE_SVG_ATTRIBUTE
 
-[[gnu::constructor]] static void initialize()
+void initialize_strings()
 {
     static bool s_initialized = false;
-    if (s_initialized)
-        return;
+    VERIFY(!s_initialized);
 
 #define __ENUMERATE_SVG_ATTRIBUTE(name) \
-    name = #name;
+    name = #name##_fly_string;
     ENUMERATE_SVG_ATTRIBUTES(__ENUMERATE_SVG_ATTRIBUTE)
 #undef __ENUMERATE_SVG_ATTRIBUTE
+
+    // NOTE: Special cases for C++ keywords.
+    class_ = "class"_fly_string;
+
+    // NOTE: Special case for attributes with ':' in them.
+    xlink_href = "xlink:href"_fly_string;
 
     s_initialized = true;
 }

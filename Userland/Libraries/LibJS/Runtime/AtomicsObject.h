@@ -12,13 +12,15 @@ namespace JS {
 
 class AtomicsObject : public Object {
     JS_OBJECT(AtomicsObject, Object);
+    JS_DECLARE_ALLOCATOR(AtomicsObject);
 
 public:
-    explicit AtomicsObject(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~AtomicsObject() override = default;
 
 private:
+    explicit AtomicsObject(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(add);
     JS_DECLARE_NATIVE_FUNCTION(and_);
     JS_DECLARE_NATIVE_FUNCTION(compare_exchange);
@@ -28,6 +30,9 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(or_);
     JS_DECLARE_NATIVE_FUNCTION(store);
     JS_DECLARE_NATIVE_FUNCTION(sub);
+    JS_DECLARE_NATIVE_FUNCTION(wait);
+    JS_DECLARE_NATIVE_FUNCTION(wait_async);
+    JS_DECLARE_NATIVE_FUNCTION(notify);
     JS_DECLARE_NATIVE_FUNCTION(xor_);
 };
 

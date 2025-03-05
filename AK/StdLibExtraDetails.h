@@ -8,6 +8,9 @@
 
 #pragma once
 
+#include <AK/Platform.h>
+#include <AK/Types.h>
+
 namespace AK::Detail {
 
 template<class T, T v>
@@ -23,7 +26,7 @@ using FalseType = IntegralConstant<bool, false>;
 using TrueType = IntegralConstant<bool, true>;
 
 template<class T>
-using AddConst = const T;
+using AddConst = T const;
 
 template<class T>
 struct __AddConstToReferencedType {
@@ -48,7 +51,7 @@ struct __RemoveConst {
     using Type = T;
 };
 template<class T>
-struct __RemoveConst<const T> {
+struct __RemoveConst<T const> {
     using Type = T;
 };
 template<class T>
@@ -60,7 +63,7 @@ struct __RemoveVolatile {
 };
 
 template<class T>
-struct __RemoveVolatile<volatile T> {
+struct __RemoveVolatile<T volatile> {
     using Type = T;
 };
 
@@ -173,19 +176,6 @@ inline constexpr bool IsSame = false;
 template<typename T>
 inline constexpr bool IsSame<T, T> = true;
 
-template<bool condition, class TrueType, class FalseType>
-struct __Conditional {
-    using Type = TrueType;
-};
-
-template<class TrueType, class FalseType>
-struct __Conditional<false, TrueType, FalseType> {
-    using Type = FalseType;
-};
-
-template<bool condition, class TrueType, class FalseType>
-using Conditional = typename __Conditional<condition, TrueType, FalseType>::Type;
-
 template<typename T>
 inline constexpr bool IsNullPointer = IsSame<decltype(nullptr), RemoveCV<T>>;
 
@@ -272,61 +262,15 @@ template<>
 struct __MakeUnsigned<bool> {
     using Type = bool;
 };
+#if ARCH(AARCH64)
+template<>
+struct __MakeUnsigned<wchar_t> {
+    using Type = wchar_t;
+};
+#endif
 
 template<typename T>
 using MakeUnsigned = typename __MakeUnsigned<T>::Type;
-
-template<typename T>
-struct __MakeSigned {
-    using Type = void;
-};
-template<>
-struct __MakeSigned<signed char> {
-    using Type = signed char;
-};
-template<>
-struct __MakeSigned<short> {
-    using Type = short;
-};
-template<>
-struct __MakeSigned<int> {
-    using Type = int;
-};
-template<>
-struct __MakeSigned<long> {
-    using Type = long;
-};
-template<>
-struct __MakeSigned<long long> {
-    using Type = long long;
-};
-template<>
-struct __MakeSigned<unsigned char> {
-    using Type = char;
-};
-template<>
-struct __MakeSigned<unsigned short> {
-    using Type = short;
-};
-template<>
-struct __MakeSigned<unsigned int> {
-    using Type = int;
-};
-template<>
-struct __MakeSigned<unsigned long> {
-    using Type = long;
-};
-template<>
-struct __MakeSigned<unsigned long long> {
-    using Type = long long;
-};
-template<>
-struct __MakeSigned<char> {
-    using Type = char;
-};
-
-template<typename T>
-using MakeSigned = typename __MakeSigned<T>::Type;
 
 template<typename T>
 auto declval() -> T;
@@ -359,7 +303,7 @@ template<class T>
 inline constexpr bool IsConst = false;
 
 template<class T>
-inline constexpr bool IsConst<const T> = true;
+inline constexpr bool IsConst<T const> = true;
 
 template<typename T>
 inline constexpr bool IsEnum = __is_enum(T);
@@ -398,6 +342,7 @@ inline constexpr bool __IsIntegral<unsigned long long> = true;
 template<typename T>
 inline constexpr bool IsIntegral = __IsIntegral<MakeUnsigned<RemoveCV<T>>>;
 
+#ifndef KERNEL
 template<typename T>
 inline constexpr bool __IsFloatingPoint = false;
 template<>
@@ -409,6 +354,7 @@ inline constexpr bool __IsFloatingPoint<long double> = true;
 
 template<typename T>
 inline constexpr bool IsFloatingPoint = __IsFloatingPoint<RemoveCV<T>>;
+#endif
 
 template<typename ReferenceType, typename T>
 using CopyConst = Conditional<IsConst<ReferenceType>, AddConst<T>, RemoveConst<T>>;
@@ -425,8 +371,13 @@ inline constexpr bool IsSigned = IsSame<T, MakeSigned<T>>;
 template<typename T>
 inline constexpr bool IsUnsigned = IsSame<T, MakeUnsigned<T>>;
 
+#ifndef KERNEL
 template<typename T>
 inline constexpr bool IsArithmetic = IsIntegral<T> || IsFloatingPoint<T>;
+#else
+template<typename T>
+inline constexpr bool IsArithmetic = IsIntegral<T>;
+#endif
 
 template<typename T>
 inline constexpr bool IsFundamental = IsArithmetic<T> || IsVoid<T> || IsNullPointer<T>;
@@ -434,12 +385,19 @@ inline constexpr bool IsFundamental = IsArithmetic<T> || IsVoid<T> || IsNullPoin
 template<typename T, T... Ts>
 struct IntegerSequence {
     using Type = T;
-    static constexpr unsigned size() noexcept { return sizeof...(Ts); };
+    static constexpr unsigned size() noexcept { return sizeof...(Ts); }
 };
 
-template<unsigned... Indices>
-using IndexSequence = IntegerSequence<unsigned, Indices...>;
+template<size_t... Indices>
+using IndexSequence = IntegerSequence<size_t, Indices...>;
 
+#if __has_builtin(__make_integer_seq)
+template<typename T, T N>
+using MakeIntegerSequence = __make_integer_seq<IntegerSequence, T, N>;
+#elif __has_builtin(__integer_pack)
+template<typename T, T N>
+using MakeIntegerSequence = IntegerSequence<T, __integer_pack(N)...>;
+#else
 template<typename T, T N, T... Ts>
 auto make_integer_sequence_impl()
 {
@@ -451,9 +409,10 @@ auto make_integer_sequence_impl()
 
 template<typename T, T N>
 using MakeIntegerSequence = decltype(make_integer_sequence_impl<T, N>());
+#endif
 
-template<unsigned N>
-using MakeIndexSequence = MakeIntegerSequence<unsigned, N>;
+template<size_t N>
+using MakeIndexSequence = MakeIntegerSequence<size_t, N>;
 
 template<typename T>
 struct __IdentityType {
@@ -509,9 +468,6 @@ template<typename T>
 inline constexpr bool IsTriviallyCopyable = __is_trivially_copyable(T);
 
 template<typename T, typename... Args>
-inline constexpr bool IsCallableWithArguments = requires(T t) { t(declval<Args>()...); };
-
-template<typename T, typename... Args>
 inline constexpr bool IsConstructible = requires { ::new T(declval<Args>()...); };
 
 template<typename T, typename... Args>
@@ -530,7 +486,7 @@ template<typename T>
 inline constexpr bool IsDestructible = requires { declval<T>().~T(); };
 
 template<typename T>
-#if defined(__clang__)
+#if defined(AK_COMPILER_CLANG)
 inline constexpr bool IsTriviallyDestructible = __is_trivially_destructible(T);
 #else
 inline constexpr bool IsTriviallyDestructible = __has_trivial_destructor(T) && IsDestructible<T>;
@@ -567,23 +523,23 @@ template<template<typename...> typename U, typename... Us>
 inline constexpr bool IsSpecializationOf<U<Us...>, U> = true;
 
 template<typename T>
-struct __decay {
-    typedef Detail::RemoveCVReference<T> type;
+struct __Decay {
+    typedef RemoveCVReference<T> type;
 };
 template<typename T>
-struct __decay<T[]> {
+struct __Decay<T[]> {
     typedef T* type;
 };
 template<typename T, decltype(sizeof(T)) N>
-struct __decay<T[N]> {
+struct __Decay<T[N]> {
     typedef T* type;
 };
 // FIXME: Function decay
 template<typename T>
-using Decay = typename __decay<T>::type;
+using Decay = typename __Decay<T>::type;
 
 template<typename T, typename U>
-inline constexpr bool IsPointerOfType = IsPointer<Decay<U>>&& IsSame<T, RemoveCV<RemovePointer<Decay<U>>>>;
+inline constexpr bool IsPointerOfType = IsPointer<Decay<U>> && IsSame<T, RemoveCV<RemovePointer<Decay<U>>>>;
 
 template<typename T, typename U>
 inline constexpr bool IsHashCompatible = false;
@@ -599,7 +555,65 @@ inline constexpr bool IsSameIgnoringCV = IsSame<RemoveCV<T>, RemoveCV<U>>;
 template<typename T, typename... Ts>
 inline constexpr bool IsOneOfIgnoringCV = (IsSameIgnoringCV<T, Ts> || ...);
 
+template<typename...>
+struct __InvokeResult { };
+
+template<typename MethodDefBaseType, typename MethodType, typename InstanceType, typename... Args>
+struct __InvokeResult<MethodType MethodDefBaseType::*, InstanceType, Args...> {
+    using type = decltype((
+        declval<InstanceType>()
+        .*declval<MethodType MethodDefBaseType::*>())(declval<Args>()...));
+};
+
+template<typename F, typename... Args>
+struct __InvokeResult<F, Args...> {
+    using type = decltype((declval<F>())(declval<Args>()...));
+};
+
+template<typename F, typename... Args>
+using InvokeResult = typename __InvokeResult<F, Args...>::type;
+
+template<typename Callable>
+struct EquivalentFunctionTypeImpl;
+
+template<template<typename> class Function, typename T, typename... Args>
+struct EquivalentFunctionTypeImpl<Function<T(Args...)>> {
+    using Type = T(Args...);
+};
+
+template<typename T, typename... Args>
+struct EquivalentFunctionTypeImpl<T(Args...)> {
+    using Type = T(Args...);
+};
+
+template<typename T, typename... Args>
+struct EquivalentFunctionTypeImpl<T (*)(Args...)> {
+    using Type = T(Args...);
+};
+
+template<typename L>
+struct EquivalentFunctionTypeImpl {
+    using Type = typename EquivalentFunctionTypeImpl<decltype(&L::operator())>::Type;
+};
+
+template<typename T, typename C, typename... Args>
+struct EquivalentFunctionTypeImpl<T (C::*)(Args...)> {
+    using Type = T(Args...);
+};
+
+template<typename T, typename C, typename... Args>
+struct EquivalentFunctionTypeImpl<T (C::*)(Args...) const> {
+    using Type = T(Args...);
+};
+
+template<typename Callable>
+using EquivalentFunctionType = typename EquivalentFunctionTypeImpl<Callable>::Type;
+
 }
+
+#if !USING_AK_GLOBALLY
+namespace AK {
+#endif
 using AK::Detail::AddConst;
 using AK::Detail::AddConstToReferencedType;
 using AK::Detail::AddLvalueReference;
@@ -610,14 +624,15 @@ using AK::Detail::Conditional;
 using AK::Detail::CopyConst;
 using AK::Detail::declval;
 using AK::Detail::DependentFalse;
+using AK::Detail::EquivalentFunctionType;
 using AK::Detail::FalseType;
 using AK::Detail::IdentityType;
 using AK::Detail::IndexSequence;
 using AK::Detail::IntegerSequence;
+using AK::Detail::InvokeResult;
 using AK::Detail::IsArithmetic;
 using AK::Detail::IsAssignable;
 using AK::Detail::IsBaseOf;
-using AK::Detail::IsCallableWithArguments;
 using AK::Detail::IsClass;
 using AK::Detail::IsConst;
 using AK::Detail::IsConstructible;
@@ -626,7 +641,9 @@ using AK::Detail::IsCopyAssignable;
 using AK::Detail::IsCopyConstructible;
 using AK::Detail::IsDestructible;
 using AK::Detail::IsEnum;
+#ifndef KERNEL
 using AK::Detail::IsFloatingPoint;
+#endif
 using AK::Detail::IsFunction;
 using AK::Detail::IsFundamental;
 using AK::Detail::IsHashCompatible;
@@ -669,3 +686,6 @@ using AK::Detail::RemoveVolatile;
 using AK::Detail::TrueType;
 using AK::Detail::UnderlyingType;
 using AK::Detail::Void;
+#if !USING_AK_GLOBALLY
+}
+#endif

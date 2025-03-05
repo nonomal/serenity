@@ -6,19 +6,19 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Demangle.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
-#include <AK/String.h>
-#include <LibC/sys/arch/i386/regs.h>
 #include <LibCore/MappedFile.h>
 #include <LibDebug/DebugInfo.h>
 #include <LibDebug/ProcessInspector.h>
 #include <signal.h>
 #include <stdio.h>
+#include <sys/arch/regs.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -27,7 +27,8 @@ namespace Debug {
 
 class DebugSession : public ProcessInspector {
 public:
-    static OwnPtr<DebugSession> exec_and_attach(String const& command, String source_root = {}, Function<ErrorOr<void>()> setup_child = {});
+    static OwnPtr<DebugSession> exec_and_attach(ByteString const& command, ByteString source_root = {}, Function<ErrorOr<void>()> setup_child = {}, Function<void(float)> on_initialization_progress = {});
+    static OwnPtr<DebugSession> attach(pid_t pid, ByteString source_root = {}, Function<void(float)> on_initialization_progress = {});
 
     virtual ~DebugSession() override;
 
@@ -55,20 +56,20 @@ public:
     };
 
     struct InsertBreakpointAtSymbolResult {
-        String library_name;
+        ByteString library_name;
         FlatPtr address { 0 };
     };
 
-    Optional<InsertBreakpointAtSymbolResult> insert_breakpoint(String const& symbol_name);
+    Optional<InsertBreakpointAtSymbolResult> insert_breakpoint(ByteString const& symbol_name);
 
     struct InsertBreakpointAtSourcePositionResult {
-        String library_name;
-        String filename;
+        ByteString library_name;
+        ByteString filename;
         size_t line_number { 0 };
         FlatPtr address { 0 };
     };
 
-    Optional<InsertBreakpointAtSourcePositionResult> insert_breakpoint(String const& filename, size_t line_number);
+    Optional<InsertBreakpointAtSourcePositionResult> insert_breakpoint(ByteString const& filename, size_t line_number);
 
     bool insert_breakpoint(FlatPtr address);
     bool disable_breakpoint(FlatPtr address);
@@ -99,6 +100,7 @@ public:
         Syscall,
     };
     void continue_debuggee(ContinueType type = ContinueType::FreeRun);
+    void stop_debuggee();
 
     // Returns the wstatus result of waitpid()
     int continue_debuggee_and_wait(ContinueType type = ContinueType::FreeRun);
@@ -130,22 +132,24 @@ public:
     };
 
 private:
-    explicit DebugSession(pid_t, String source_root);
+    explicit DebugSession(pid_t, ByteString source_root, Function<void(float)> on_initialization_progress = {});
 
     // x86 breakpoint instruction "int3"
     static constexpr u8 BREAKPOINT_INSTRUCTION = 0xcc;
 
-    void update_loaded_libs();
+    ErrorOr<void> update_loaded_libs();
 
     int m_debuggee_pid { -1 };
-    String m_source_root;
+    ByteString m_source_root;
     bool m_is_debuggee_dead { false };
 
     HashMap<FlatPtr, BreakPoint> m_breakpoints;
     HashMap<FlatPtr, WatchPoint> m_watchpoints;
 
     // Maps from library name to LoadedLibrary object
-    HashMap<String, NonnullOwnPtr<LoadedLibrary>> m_loaded_libraries;
+    HashMap<ByteString, NonnullOwnPtr<LoadedLibrary>> m_loaded_libraries;
+
+    Function<void(float)> m_on_initialization_progress;
 };
 
 template<typename Callback>
@@ -166,7 +170,7 @@ void DebugSession::run(DesiredInitialDebugeeState initial_debugee_state, Callbac
 
         // FIXME: This check actually only checks whether the debuggee
         // stopped because it hit a breakpoint/syscall/is in single stepping mode or not
-        if (WSTOPSIG(wstatus) != SIGTRAP) {
+        if (WSTOPSIG(wstatus) != SIGTRAP && WSTOPSIG(wstatus) != SIGSTOP) {
             callback(DebugBreakReason::Exited, Optional<PtraceRegisters>());
             m_is_debuggee_dead = true;
             return true;
@@ -184,10 +188,15 @@ void DebugSession::run(DesiredInitialDebugeeState initial_debugee_state, Callbac
 
         auto regs = get_registers();
 
-#if ARCH(I386)
-        FlatPtr current_instruction = regs.eip;
-#else
+#if ARCH(X86_64)
         FlatPtr current_instruction = regs.rip;
+#elif ARCH(AARCH64)
+        FlatPtr current_instruction;
+        TODO_AARCH64();
+#elif ARCH(RISCV64)
+        FlatPtr current_instruction = regs.pc;
+#else
+#    error Unknown architecture
 #endif
 
         auto debug_status = peek_debug(DEBUG_STATUS_REGISTER);
@@ -205,12 +214,18 @@ void DebugSession::run(DesiredInitialDebugeeState initial_debugee_state, Callbac
                 auto required_ebp = watchpoint.value().ebp;
                 auto found_ebp = false;
 
-#if ARCH(I386)
-                FlatPtr current_ebp = regs.ebp;
-#else
+#if ARCH(X86_64)
                 FlatPtr current_ebp = regs.rbp;
+#elif ARCH(AARCH64)
+                FlatPtr current_ebp;
+                TODO_AARCH64();
+#elif ARCH(RISCV64)
+                FlatPtr current_ebp = regs.bp();
+#else
+#    error Unknown architecture
 #endif
 
+                // FIXME: Use AK::unwind_stack_from_frame_pointer
                 do {
                     if (current_ebp == required_ebp) {
                         found_ebp = true;
@@ -235,11 +250,11 @@ void DebugSession::run(DesiredInitialDebugeeState initial_debugee_state, Callbac
         Optional<BreakPoint> current_breakpoint;
 
         if (state == State::FreeRun || state == State::Syscall) {
-            current_breakpoint = m_breakpoints.get(current_instruction - 1);
+            current_breakpoint = m_breakpoints.get(current_instruction - 1).copy();
             if (current_breakpoint.has_value())
                 state = State::FreeRun;
         } else {
-            current_breakpoint = m_breakpoints.get(current_instruction);
+            current_breakpoint = m_breakpoints.get(current_instruction).copy();
         }
 
         if (current_breakpoint.has_value()) {
@@ -251,10 +266,15 @@ void DebugSession::run(DesiredInitialDebugeeState initial_debugee_state, Callbac
             // 2. We restore the original first byte of the instruction,
             //    because it was patched with INT3.
             auto breakpoint_addr = bit_cast<FlatPtr>(current_breakpoint.value().address);
-#if ARCH(I386)
-            regs.eip = breakpoint_addr;
-#else
+#if ARCH(X86_64)
             regs.rip = breakpoint_addr;
+#elif ARCH(AARCH64)
+            (void)breakpoint_addr;
+            TODO_AARCH64();
+#elif ARCH(RISCV64)
+            regs.pc = breakpoint_addr;
+#else
+#    error Unknown architecture
 #endif
             set_registers(regs);
             disable_breakpoint(current_breakpoint.value().address);

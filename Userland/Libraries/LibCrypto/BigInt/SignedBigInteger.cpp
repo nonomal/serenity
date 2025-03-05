@@ -1,13 +1,21 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2022, David Tuin <davidot@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "SignedBigInteger.h"
 #include <AK/StringBuilder.h>
+#include <math.h>
 
 namespace Crypto {
+
+SignedBigInteger::SignedBigInteger(double value)
+    : m_sign(value < 0.0)
+    , m_unsigned_data(fabs(value))
+{
+}
 
 SignedBigInteger SignedBigInteger::import_data(u8 const* ptr, size_t length)
 {
@@ -27,7 +35,7 @@ size_t SignedBigInteger::export_data(Bytes data, bool remove_leading_zeros) cons
     return m_unsigned_data.export_data(bytes_view, remove_leading_zeros) + 1;
 }
 
-SignedBigInteger SignedBigInteger::from_base(u16 N, StringView str)
+ErrorOr<SignedBigInteger> SignedBigInteger::from_base(u16 N, StringView str)
 {
     auto sign = false;
     if (str.length() > 1) {
@@ -39,20 +47,26 @@ SignedBigInteger SignedBigInteger::from_base(u16 N, StringView str)
         if (maybe_sign == '+')
             str = str.substring_view(1);
     }
-    auto unsigned_data = UnsignedBigInteger::from_base(N, str);
-    return { move(unsigned_data), sign };
+    auto unsigned_data = TRY(UnsignedBigInteger::from_base(N, str));
+    return SignedBigInteger { move(unsigned_data), sign };
 }
 
-String SignedBigInteger::to_base(u16 N) const
+ErrorOr<String> SignedBigInteger::to_base(u16 N) const
 {
     StringBuilder builder;
 
     if (m_sign)
-        builder.append('-');
+        TRY(builder.try_append('-'));
 
-    builder.append(m_unsigned_data.to_base(N));
+    auto unsigned_as_base = TRY(m_unsigned_data.to_base(N));
+    TRY(builder.try_append(unsigned_as_base.bytes_as_string_view()));
 
     return builder.to_string();
+}
+
+ByteString SignedBigInteger::to_base_deprecated(u16 N) const
+{
+    return MUST(to_base(N)).to_byte_string();
 }
 
 u64 SignedBigInteger::to_u64() const
@@ -63,11 +77,13 @@ u64 SignedBigInteger::to_u64() const
     return ~(unsigned_value - 1); // equivalent to `-unsigned_value`, but doesn't trigger UBSAN
 }
 
-double SignedBigInteger::to_double() const
+double SignedBigInteger::to_double(UnsignedBigInteger::RoundingMode rounding_mode) const
 {
-    double unsigned_value = m_unsigned_data.to_double();
+    double unsigned_value = m_unsigned_data.to_double(rounding_mode);
     if (!m_sign)
         return unsigned_value;
+
+    VERIFY(!is_zero());
     return -unsigned_value;
 }
 
@@ -236,7 +252,7 @@ FLATTEN SignedBigInteger SignedBigInteger::bitwise_xor(SignedBigInteger const& o
 
 bool SignedBigInteger::operator==(UnsignedBigInteger const& other) const
 {
-    if (m_sign)
+    if (m_sign && m_unsigned_data != 0)
         return false;
     return m_unsigned_data == other;
 }
@@ -265,6 +281,11 @@ FLATTEN SignedBigInteger SignedBigInteger::shift_left(size_t num_bits) const
     return SignedBigInteger { m_unsigned_data.shift_left(num_bits), m_sign };
 }
 
+FLATTEN SignedBigInteger SignedBigInteger::shift_right(size_t num_bits) const
+{
+    return SignedBigInteger { m_unsigned_data.shift_right(num_bits), m_sign };
+}
+
 FLATTEN SignedBigInteger SignedBigInteger::multiplied_by(SignedBigInteger const& other) const
 {
     bool result_sign = m_sign ^ other.m_sign;
@@ -280,6 +301,13 @@ FLATTEN SignedDivisionResult SignedBigInteger::divided_by(SignedBigInteger const
         { move(unsigned_division_result.quotient), result_sign },
         { move(unsigned_division_result.remainder), m_sign }
     };
+}
+
+FLATTEN SignedBigInteger SignedBigInteger::negated_value() const
+{
+    auto result { *this };
+    result.negate();
+    return result;
 }
 
 u32 SignedBigInteger::hash() const
@@ -332,6 +360,33 @@ bool SignedBigInteger::operator>(SignedBigInteger const& other) const
 bool SignedBigInteger::operator>=(SignedBigInteger const& other) const
 {
     return !(*this < other);
+}
+
+UnsignedBigInteger::CompareResult SignedBigInteger::compare_to_double(double value) const
+{
+    bool bigint_is_negative = m_sign;
+
+    bool value_is_negative = value < 0;
+
+    if (value_is_negative != bigint_is_negative)
+        return bigint_is_negative ? UnsignedBigInteger::CompareResult::DoubleGreaterThanBigInt : UnsignedBigInteger::CompareResult::DoubleLessThanBigInt;
+
+    // Now both bigint and value have the same sign, so let's compare our magnitudes.
+    auto magnitudes_compare_result = m_unsigned_data.compare_to_double(fabs(value));
+
+    // If our mangnitudes are euqal, then we're equal.
+    if (magnitudes_compare_result == UnsignedBigInteger::CompareResult::DoubleEqualsBigInt)
+        return UnsignedBigInteger::CompareResult::DoubleEqualsBigInt;
+
+    // If we're negative, revert the comparison result, otherwise return the same result.
+    if (value_is_negative) {
+        if (magnitudes_compare_result == UnsignedBigInteger::CompareResult::DoubleLessThanBigInt)
+            return UnsignedBigInteger::CompareResult::DoubleGreaterThanBigInt;
+        else
+            return UnsignedBigInteger::CompareResult::DoubleLessThanBigInt;
+    } else {
+        return magnitudes_compare_result;
+    }
 }
 
 }

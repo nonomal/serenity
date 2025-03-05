@@ -48,15 +48,15 @@ describe("errors", () => {
 
         expect(() => {
             new Intl.PluralRules("en", { minimumFractionDigits: "hello!" });
-        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 0 and 20");
+        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 0 and 100");
 
         expect(() => {
             new Intl.PluralRules("en", { minimumFractionDigits: -1 });
-        }).toThrowWithMessage(RangeError, "Value -1 is NaN or is not between 0 and 20");
+        }).toThrowWithMessage(RangeError, "Value -1 is NaN or is not between 0 and 100");
 
         expect(() => {
-            new Intl.PluralRules("en", { minimumFractionDigits: 21 });
-        }).toThrowWithMessage(RangeError, "Value 21 is NaN or is not between 0 and 20");
+            new Intl.PluralRules("en", { minimumFractionDigits: 101 });
+        }).toThrowWithMessage(RangeError, "Value 101 is NaN or is not between 0 and 100");
     });
 
     test("maximumFractionDigits option is invalid ", () => {
@@ -66,15 +66,15 @@ describe("errors", () => {
 
         expect(() => {
             new Intl.PluralRules("en", { maximumFractionDigits: "hello!" });
-        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 0 and 20");
+        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 0 and 100");
 
         expect(() => {
             new Intl.PluralRules("en", { maximumFractionDigits: -1 });
-        }).toThrowWithMessage(RangeError, "Value -1 is NaN or is not between 0 and 20");
+        }).toThrowWithMessage(RangeError, "Value -1 is NaN or is not between 0 and 100");
 
         expect(() => {
-            new Intl.PluralRules("en", { maximumFractionDigits: 21 });
-        }).toThrowWithMessage(RangeError, "Value 21 is NaN or is not between 0 and 20");
+            new Intl.PluralRules("en", { maximumFractionDigits: 101 });
+        }).toThrowWithMessage(RangeError, "Value 101 is NaN or is not between 0 and 100");
 
         expect(() => {
             new Intl.PluralRules("en", { minimumFractionDigits: 10, maximumFractionDigits: 5 });
@@ -125,6 +125,57 @@ describe("errors", () => {
             "hello! is not a valid value for option roundingPriority"
         );
     });
+
+    test("roundingMode option is invalid", () => {
+        expect(() => {
+            new Intl.PluralRules("en", { roundingMode: "hello!" });
+        }).toThrowWithMessage(RangeError, "hello! is not a valid value for option roundingMode");
+    });
+
+    test("roundingIncrement option is invalid", () => {
+        expect(() => {
+            new Intl.PluralRules("en", { roundingIncrement: "hello!" });
+        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 1 and 5000");
+
+        expect(() => {
+            new Intl.PluralRules("en", { roundingIncrement: 0 });
+        }).toThrowWithMessage(RangeError, "Value 0 is NaN or is not between 1 and 5000");
+
+        expect(() => {
+            new Intl.PluralRules("en", { roundingIncrement: 5001 });
+        }).toThrowWithMessage(RangeError, "Value 5001 is NaN or is not between 1 and 5000");
+
+        expect(() => {
+            new Intl.PluralRules("en", { roundingIncrement: 3 });
+        }).toThrowWithMessage(RangeError, "3 is not a valid rounding increment");
+
+        expect(() => {
+            new Intl.PluralRules("en", { roundingIncrement: 5, minimumSignificantDigits: 1 });
+        }).toThrowWithMessage(
+            TypeError,
+            "5 is not a valid rounding increment for rounding type significantDigits"
+        );
+
+        expect(() => {
+            new Intl.PluralRules("en", {
+                roundingIncrement: 5,
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 3,
+            });
+        }).toThrowWithMessage(
+            RangeError,
+            "5 is not a valid rounding increment for inequal min/max fraction digits"
+        );
+    });
+
+    test("trailingZeroDisplay option is invalid", () => {
+        expect(() => {
+            new Intl.PluralRules("en", { trailingZeroDisplay: "hello!" });
+        }).toThrowWithMessage(
+            RangeError,
+            "hello! is not a valid value for option trailingZeroDisplay"
+        );
+    });
 });
 
 describe("normal behavior", () => {
@@ -157,7 +208,7 @@ describe("normal behavior", () => {
     });
 
     test("all valid minimumFractionDigits options", () => {
-        for (let i = 0; i <= 20; ++i) {
+        for (let i = 0; i <= 100; ++i) {
             expect(() => {
                 new Intl.PluralRules("en", { minimumFractionDigits: i });
             }).not.toThrow();
@@ -165,7 +216,7 @@ describe("normal behavior", () => {
     });
 
     test("all valid maximumFractionDigits options", () => {
-        for (let i = 0; i <= 20; ++i) {
+        for (let i = 0; i <= 100; ++i) {
             expect(() => {
                 new Intl.PluralRules("en", { maximumFractionDigits: i });
             }).not.toThrow();
@@ -192,6 +243,42 @@ describe("normal behavior", () => {
         ["auto", "morePrecision", "lessPrecision"].forEach(roundingPriority => {
             expect(() => {
                 new Intl.PluralRules("en", { roundingPriority: roundingPriority });
+            }).not.toThrow();
+        });
+    });
+
+    test("all valid roundingMode options", () => {
+        [
+            "ceil",
+            "floor",
+            "expand",
+            "trunc",
+            "halfCeil",
+            "halfFloor",
+            "halfExpand",
+            "halfTrunc",
+            "halfEven",
+        ].forEach(roundingMode => {
+            expect(() => {
+                new Intl.PluralRules("en", { roundingMode: roundingMode });
+            }).not.toThrow();
+        });
+    });
+
+    test("all valid roundingIncrement options", () => {
+        [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000].forEach(
+            roundingIncrement => {
+                expect(() => {
+                    new Intl.PluralRules("en", { roundingIncrement: roundingIncrement });
+                }).not.toThrow();
+            }
+        );
+    });
+
+    test("all valid trailingZeroDisplay options", () => {
+        ["auto", "stripIfInteger"].forEach(trailingZeroDisplay => {
+            expect(() => {
+                new Intl.PluralRules("en", { trailingZeroDisplay: trailingZeroDisplay });
             }).not.toThrow();
         });
     });

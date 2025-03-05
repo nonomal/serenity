@@ -1,34 +1,30 @@
 function (generate_css_implementation)
-
-    if (CMAKE_CURRENT_BINARY_DIR MATCHES ".*/LibWeb")
-        # Serenity build
-        SET(LIBWEB_INPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}")
-        SET(LIBWEB_OUTPUT_FOLDER "")
-        SET(LIBWEB_META_PREFIX "")
-    else()
-        # Lagom Build
-        SET(LIBWEB_INPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/../../Userland/Libraries/LibWeb")
-        SET(LIBWEB_OUTPUT_FOLDER "LibWeb/")
-        SET(LIBWEB_META_PREFIX "Lagom")
-    endif()
+    set(LIBWEB_INPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}")
 
     invoke_generator(
         "Enums.cpp"
         Lagom::GenerateCSSEnums
         "${LIBWEB_INPUT_FOLDER}/CSS/Enums.json"
-        "${LIBWEB_META_PREFIX}"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/Enums.h"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/Enums.cpp"
+        "CSS/Enums.h"
+        "CSS/Enums.cpp"
         arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/Enums.json"
+    )
+
+    invoke_generator(
+        "MathFunctions.cpp"
+        Lagom::GenerateCSSMathFunctions
+        "${LIBWEB_INPUT_FOLDER}/CSS/MathFunctions.json"
+        "CSS/MathFunctions.h"
+        "CSS/MathFunctions.cpp"
+        arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/MathFunctions.json"
     )
 
     invoke_generator(
         "MediaFeatureID.cpp"
         Lagom::GenerateCSSMediaFeatureID
         "${LIBWEB_INPUT_FOLDER}/CSS/MediaFeatures.json"
-        "${LIBWEB_META_PREFIX}"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/MediaFeatureID.h"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/MediaFeatureID.cpp"
+        "CSS/MediaFeatureID.h"
+        "CSS/MediaFeatureID.cpp"
         arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/MediaFeatures.json"
     )
 
@@ -36,141 +32,209 @@ function (generate_css_implementation)
         "PropertyID.cpp"
         Lagom::GenerateCSSPropertyID
         "${LIBWEB_INPUT_FOLDER}/CSS/Properties.json"
-        "${LIBWEB_META_PREFIX}"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/PropertyID.h"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/PropertyID.cpp"
+        "CSS/PropertyID.h"
+        "CSS/PropertyID.cpp"
         arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/Properties.json"
+    )
+
+    invoke_generator(
+        "PseudoClass.cpp"
+        Lagom::GenerateCSSPseudoClass
+        "${LIBWEB_INPUT_FOLDER}/CSS/PseudoClasses.json"
+        "CSS/PseudoClass.h"
+        "CSS/PseudoClass.cpp"
+        arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/PseudoClasses.json"
     )
 
     invoke_generator(
         "TransformFunctions.cpp"
         Lagom::GenerateCSSTransformFunctions
         "${LIBWEB_INPUT_FOLDER}/CSS/TransformFunctions.json"
-        "${LIBWEB_META_PREFIX}"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/TransformFunctions.h"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/TransformFunctions.cpp"
+        "CSS/TransformFunctions.h"
+        "CSS/TransformFunctions.cpp"
         arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/TransformFunctions.json"
     )
 
     invoke_generator(
-        "ValueID.cpp"
-        Lagom::GenerateCSSValueID
-        "${LIBWEB_INPUT_FOLDER}/CSS/Identifiers.json"
-        "${LIBWEB_META_PREFIX}"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/ValueID.h"
-        "${LIBWEB_OUTPUT_FOLDER}CSS/ValueID.cpp"
-        arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/Identifiers.json"
+        "Keyword.cpp"
+        Lagom::GenerateCSSKeyword
+        "${LIBWEB_INPUT_FOLDER}/CSS/Keywords.json"
+        "CSS/Keyword.h"
+        "CSS/Keyword.cpp"
+        arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/Keywords.json"
     )
 
-    add_custom_command(
-        OUTPUT ${LIBWEB_OUTPUT_FOLDER}CSS/DefaultStyleSheetSource.cpp
-        COMMAND "${CMAKE_COMMAND}" -E make_directory ${LIBWEB_OUTPUT_FOLDER}CSS
-        COMMAND "${LIBWEB_INPUT_FOLDER}/Scripts/GenerateStyleSheetSource.sh" default_stylesheet_source "${LIBWEB_INPUT_FOLDER}/CSS/Default.css" > ${LIBWEB_OUTPUT_FOLDER}CSS/DefaultStyleSheetSource.cpp.tmp
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${LIBWEB_OUTPUT_FOLDER}CSS/DefaultStyleSheetSource.cpp.tmp ${LIBWEB_OUTPUT_FOLDER}CSS/DefaultStyleSheetSource.cpp
-        COMMAND "${CMAKE_COMMAND}" -E remove ${LIBWEB_OUTPUT_FOLDER}CSS/DefaultStyleSheetSource.cpp.tmp
-        VERBATIM
-        DEPENDS "${LIBWEB_INPUT_FOLDER}/Scripts/GenerateStyleSheetSource.sh"
-        MAIN_DEPENDENCY ${LIBWEB_INPUT_FOLDER}/CSS/Default.css
+    invoke_idl_generator(
+        "GeneratedCSSStyleProperties.cpp"
+        "GeneratedCSSStyleProperties.idl"
+        Lagom::GenerateCSSStyleProperties
+        "${LIBWEB_INPUT_FOLDER}/CSS/Properties.json"
+        "CSS/GeneratedCSSStyleProperties.h"
+        "CSS/GeneratedCSSStyleProperties.cpp"
+        "CSS/GeneratedCSSStyleProperties.idl"
+        arguments -j "${LIBWEB_INPUT_FOLDER}/CSS/Properties.json"
     )
-    add_custom_target(generate_${LIBWEB_META_PREFIX}DefaultStyleSheetSource.cpp DEPENDS ${LIBWEB_OUTPUT_FOLDER}CSS/DefaultStyleSheetSource.cpp)
-    add_dependencies(all_generated generate_${LIBWEB_META_PREFIX}DefaultStyleSheetSource.cpp)
 
-    add_custom_command(
-        OUTPUT ${LIBWEB_OUTPUT_FOLDER}CSS/QuirksModeStyleSheetSource.cpp
-        COMMAND "${CMAKE_COMMAND}" -E make_directory ${LIBWEB_OUTPUT_FOLDER}CSS
-        COMMAND "${LIBWEB_INPUT_FOLDER}/Scripts/GenerateStyleSheetSource.sh" quirks_mode_stylesheet_source "${LIBWEB_INPUT_FOLDER}/CSS/QuirksMode.css" > ${LIBWEB_OUTPUT_FOLDER}CSS/QuirksModeStyleSheetSource.cpp.tmp
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${LIBWEB_OUTPUT_FOLDER}CSS/QuirksModeStyleSheetSource.cpp.tmp ${LIBWEB_OUTPUT_FOLDER}CSS/QuirksModeStyleSheetSource.cpp
-        COMMAND "${CMAKE_COMMAND}" -E remove ${LIBWEB_OUTPUT_FOLDER}CSS/QuirksModeStyleSheetSource.cpp.tmp
-        VERBATIM
-        DEPENDS "${LIBWEB_INPUT_FOLDER}/Scripts/GenerateStyleSheetSource.sh"
-        MAIN_DEPENDENCY ${LIBWEB_INPUT_FOLDER}/CSS/Default.css
+    embed_as_string(
+        "DefaultStyleSheetSource.cpp"
+        "${LIBWEB_INPUT_FOLDER}/CSS/Default.css"
+        "CSS/DefaultStyleSheetSource.cpp"
+        "default_stylesheet_source"
+        NAMESPACE "Web::CSS"
     )
-    add_custom_target(generate_${LIBWEB_META_PREFIX}QuirksModeStyleSheetSource.cpp DEPENDS ${LIBWEB_OUTPUT_FOLDER}CSS/QuirksModeStyleSheetSource.cpp)
-    add_dependencies(all_generated generate_${LIBWEB_META_PREFIX}QuirksModeStyleSheetSource.cpp)
 
+    embed_as_string(
+        "QuirksModeStyleSheetSource.cpp"
+        "${LIBWEB_INPUT_FOLDER}/CSS/QuirksMode.css"
+        "CSS/QuirksModeStyleSheetSource.cpp"
+        "quirks_mode_stylesheet_source"
+        NAMESPACE "Web::CSS"
+    )
+
+    embed_as_string(
+        "MathMLStyleSheetSource.cpp"
+        "${LIBWEB_INPUT_FOLDER}/MathML/Default.css"
+        "MathML/MathMLStyleSheetSource.cpp"
+        "mathml_stylesheet_source"
+        NAMESPACE "Web::CSS"
+    )
+
+    embed_as_string(
+        "SVGStyleSheetSource.cpp"
+        "${LIBWEB_INPUT_FOLDER}/SVG/Default.css"
+        "SVG/SVGStyleSheetSource.cpp"
+        "svg_stylesheet_source"
+        NAMESPACE "Web::CSS"
+    )
+
+    set(CSS_GENERATED_TO_INSTALL
+        "CSS/Enums.h"
+        "CSS/GeneratedCSSStyleProperties.h"
+        "CSS/Keyword.h"
+        "CSS/MathFunctions.h"
+        "CSS/MediaFeatureID.h"
+        "CSS/PropertyID.h"
+        "CSS/PseudoClass.h"
+        "CSS/TransformFunctions.h"
+    )
+    list(TRANSFORM CSS_GENERATED_TO_INSTALL PREPEND "${CMAKE_CURRENT_BINARY_DIR}/")
+    install(FILES ${CSS_GENERATED_TO_INSTALL} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/LibWeb/CSS")
+
+    set(CSS_GENERATED_IDL
+        "GeneratedCSSStyleProperties.idl"
+    )
+    list(APPEND LIBWEB_ALL_GENERATED_IDL ${CSS_GENERATED_IDL})
+    set(LIBWEB_ALL_GENERATED_IDL ${LIBWEB_ALL_GENERATED_IDL} PARENT_SCOPE)
 endfunction()
 
-function (generate_js_wrappers target)
-
-    if (CMAKE_CURRENT_BINARY_DIR MATCHES ".*/LibWeb")
-        # Serenity build
-        SET(LIBWEB_INPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}")
-        SET(LIBWEB_OUTPUT_FOLDER "")
-        SET(LIBWEB_META_PREFIX "")
-    else()
-        # Lagom Build
-        SET(LIBWEB_INPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/../../Userland/Libraries/LibWeb")
-        SET(LIBWEB_OUTPUT_FOLDER "LibWeb/")
-        SET(LIBWEB_META_PREFIX "Lagom")
-    endif()
-
-    function(libweb_js_wrapper class)
-        cmake_parse_arguments(PARSE_ARGV 1 LIBWEB_WRAPPER "ITERABLE" "" "")
+function (generate_js_bindings target)
+    set(LIBWEB_INPUT_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}")
+    set(generated_idl_targets ${LIBWEB_ALL_GENERATED_IDL})
+    list(TRANSFORM generated_idl_targets PREPEND "generate_")
+    function(libweb_js_bindings class)
+        cmake_parse_arguments(PARSE_ARGV 1 LIBWEB_BINDINGS "NAMESPACE;ITERABLE;GLOBAL" "" "")
         get_filename_component(basename "${class}" NAME)
-        set(BINDINGS_SOURCES
-            "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Wrapper.h"
-            "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Wrapper.cpp"
-            "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Constructor.h"
-            "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Constructor.cpp"
-            "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Prototype.h"
-            "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Prototype.cpp"
-        )
-        set(BINDINGS_TYPES
-            header
-            implementation
-            constructor-header
-            constructor-implementation
-            prototype-header
-            prototype-implementation
-        )
-        # FIXME: Instead of requiring a manual declaration of iterable wrappers, we should ask WrapperGenerator if it's iterable
-        if(LIBWEB_WRAPPER_ITERABLE)
-            list(APPEND BINDINGS_SOURCES
-                "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}IteratorWrapper.h"
-                "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}IteratorWrapper.cpp"
-                "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}IteratorPrototype.h"
-                "${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}IteratorPrototype.cpp"
+
+        if (LIBWEB_BINDINGS_NAMESPACE)
+            set(BINDINGS_SOURCES
+                "Bindings/${basename}Namespace.h"
+                "Bindings/${basename}Namespace.cpp"
             )
-            list(APPEND BINDINGS_TYPES
-                iterator-header
-                iterator-implementation
-                iterator-prototype-header
-                iterator-prototype-implementation
+        else()
+            set(BINDINGS_SOURCES
+                "Bindings/${basename}Constructor.h"
+                "Bindings/${basename}Constructor.cpp"
+                "Bindings/${basename}Prototype.h"
+                "Bindings/${basename}Prototype.cpp"
             )
         endif()
-        target_sources(${target} PRIVATE ${BINDINGS_SOURCES})
-        # FIXME: cmake_minimum_required(3.17) for ZIP_LISTS
-        list(LENGTH BINDINGS_SOURCES num_bindings)
-        math(EXPR bindings_end "${num_bindings} - 1")
-        foreach(iter RANGE "${bindings_end}")
-            list(GET BINDINGS_SOURCES ${iter} bindings_src)
-            list(GET BINDINGS_TYPES ${iter} bindings_type)
-            get_property(include_paths DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
-            list(TRANSFORM include_paths PREPEND -i)
-            add_custom_command(
-                OUTPUT "${bindings_src}"
-                COMMAND "$<TARGET_FILE:Lagom::WrapperGenerator>" "--${bindings_type}" ${include_paths} "${LIBWEB_INPUT_FOLDER}/${class}.idl" "${LIBWEB_INPUT_FOLDER}" > "${bindings_src}.tmp"
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${bindings_src}.tmp" "${bindings_src}"
-                COMMAND "${CMAKE_COMMAND}" -E remove "${bindings_src}.tmp"
-                VERBATIM
-                DEPENDS Lagom::WrapperGenerator
-                MAIN_DEPENDENCY ${LIBWEB_INPUT_FOLDER}/${class}.idl
+
+        if(LIBWEB_BINDINGS_ITERABLE)
+            list(APPEND BINDINGS_SOURCES
+                "Bindings/${basename}IteratorPrototype.h"
+                "Bindings/${basename}IteratorPrototype.cpp"
             )
-        endforeach()
-        add_custom_target(generate_${basename}Wrapper.h DEPENDS ${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Wrapper.h)
-        add_dependencies(all_generated generate_${basename}Wrapper.h)
-        add_custom_target(generate_${basename}Wrapper.cpp DEPENDS ${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Wrapper.cpp)
-        add_dependencies(all_generated generate_${basename}Wrapper.cpp)
-        add_custom_target(generate_${basename}Constructor.h DEPENDS ${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Constructor.h)
-        add_dependencies(all_generated generate_${basename}Constructor.h)
-        add_custom_target(generate_${basename}Constructor.cpp DEPENDS ${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Constructor.cpp)
-        add_dependencies(all_generated generate_${basename}Constructor.cpp)
-        add_custom_target(generate_${basename}Prototype.h DEPENDS ${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Prototype.h)
-        add_dependencies(all_generated generate_${basename}Prototype.h)
-        add_custom_target(generate_${basename}Prototype.cpp DEPENDS ${LIBWEB_OUTPUT_FOLDER}Bindings/${basename}Prototype.cpp)
-        add_dependencies(all_generated generate_${basename}Prototype.cpp)
+        endif()
+
+        if(LIBWEB_BINDINGS_GLOBAL)
+            list(APPEND BINDINGS_SOURCES
+                "Bindings/${basename}GlobalMixin.h"
+                "Bindings/${basename}GlobalMixin.cpp"
+            )
+        endif()
+
+        list(TRANSFORM BINDINGS_SOURCES PREPEND "${CMAKE_CURRENT_BINARY_DIR}/")
+        target_sources(${target} PRIVATE ${BINDINGS_SOURCES})
+
+        get_property(include_paths DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+        list(TRANSFORM include_paths PREPEND -i)
+
+        # Ninja expects the target name in depfiles to be relative to CMAKE_BINARY_DIR, but ${bindings_src} is
+        # relative to CMAKE_CURRENT_BINARY_DIR. CMake >= 3.20 can do the rewriting transparently (CMP0116).
+        set(depfile_prefix_arg "")
+        if(CMAKE_GENERATOR MATCHES "^Ninja" AND NOT POLICY CMP0116)
+            file(RELATIVE_PATH depfile_target ${CMAKE_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+            set(depfile_prefix_arg "--depfile-prefix ${depfile_target}" )
+        endif()
+
+        add_custom_command(
+            OUTPUT ${BINDINGS_SOURCES}
+            COMMAND "$<TARGET_FILE:Lagom::BindingsGenerator>" -o "Bindings" --depfile "Bindings/${basename}.d"
+                    ${depfile_prefix_arg} "${LIBWEB_INPUT_FOLDER}/${class}.idl" "${LIBWEB_INPUT_FOLDER}" "${CMAKE_CURRENT_BINARY_DIR}"
+            VERBATIM
+            COMMENT "Generating Bindings for ${class}"
+            DEPENDS Lagom::BindingsGenerator
+            MAIN_DEPENDENCY ${class}.idl
+            DEPFILE ${CMAKE_CURRENT_BINARY_DIR}/Bindings/${basename}.d
+        )
+
+        add_custom_target(generate_${basename} DEPENDS ${BINDINGS_SOURCES})
+        add_dependencies(all_generated generate_${basename})
+        add_dependencies(${target} generate_${basename})
+        add_dependencies(generate_${basename} ${generated_idl_targets})
+
+        # install generated sources
+        list(FILTER BINDINGS_SOURCES INCLUDE REGEX "\.h$")
+        install(FILES ${BINDINGS_SOURCES} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/LibWeb/Bindings")
+
+        list(APPEND LIBWEB_ALL_IDL_FILES "${LIBWEB_INPUT_FOLDER}/${class}.idl")
+        set(LIBWEB_ALL_IDL_FILES ${LIBWEB_ALL_IDL_FILES} PARENT_SCOPE)
     endfunction()
 
-    include("${LIBWEB_INPUT_FOLDER}/idl_files.cmake")
+    function(generate_exposed_interface_files)
+        set(exposed_interface_sources
+            IntrinsicDefinitions.cpp
+            DedicatedWorkerExposedInterfaces.cpp DedicatedWorkerExposedInterfaces.h
+            SharedWorkerExposedInterfaces.cpp SharedWorkerExposedInterfaces.h
+            WindowExposedInterfaces.cpp WindowExposedInterfaces.h)
+        list(TRANSFORM exposed_interface_sources PREPEND "Bindings/")
+        add_custom_command(
+            OUTPUT  ${exposed_interface_sources}
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "tmp"
+            COMMAND $<TARGET_FILE:Lagom::GenerateWindowOrWorkerInterfaces> -o "${CMAKE_CURRENT_BINARY_DIR}/tmp" -b "${LIBWEB_INPUT_FOLDER}" -b "${CMAKE_CURRENT_BINARY_DIR}" ${LIBWEB_ALL_IDL_FILES}
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/IntrinsicDefinitions.cpp "Bindings/IntrinsicDefinitions.cpp"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/DedicatedWorkerExposedInterfaces.h "Bindings/DedicatedWorkerExposedInterfaces.h"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/DedicatedWorkerExposedInterfaces.cpp "Bindings/DedicatedWorkerExposedInterfaces.cpp"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/SharedWorkerExposedInterfaces.h "Bindings/SharedWorkerExposedInterfaces.h"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/SharedWorkerExposedInterfaces.cpp "Bindings/SharedWorkerExposedInterfaces.cpp"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/WindowExposedInterfaces.h "Bindings/WindowExposedInterfaces.h"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/WindowExposedInterfaces.cpp "Bindings/WindowExposedInterfaces.cpp"
+            COMMAND "${CMAKE_COMMAND}" -E remove_directory "${CMAKE_CURRENT_BINARY_DIR}/tmp"
+            VERBATIM
+            DEPENDS Lagom::GenerateWindowOrWorkerInterfaces ${LIBWEB_ALL_IDL_FILES}
+        )
+        target_sources(${target} PRIVATE ${exposed_interface_sources})
+        add_custom_target(generate_exposed_interfaces DEPENDS ${exposed_interface_sources})
+        add_dependencies(all_generated generate_exposed_interfaces)
+        add_dependencies(${target} generate_exposed_interfaces)
+        add_dependencies(generate_exposed_interfaces ${generated_idl_targets})
+
+        list(FILTER exposed_interface_sources INCLUDE REGEX "\.h$")
+        list(TRANSFORM exposed_interface_sources PREPEND "${CMAKE_CURRENT_BINARY_DIR}/")
+        install(FILES ${exposed_interface_sources} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/LibWeb/Bindings")
+    endfunction()
+
+    include("idl_files.cmake")
+    generate_exposed_interface_files()
 
 endfunction()

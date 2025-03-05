@@ -1,13 +1,12 @@
 include(${CMAKE_CURRENT_LIST_DIR}/utils.cmake)
 
-set(UCD_VERSION 14.0.0)
-set(CLDR_VERSION 41.0.0)
+set(UCD_VERSION "15.1.0")
+set(UCD_SHA256 "cb1c663d053926500cd501229736045752713a066bd75802098598b7a7056177")
+set(EMOJI_SHA256 "d876ee249aa28eaa76cfa6dfaa702847a8d13b062aa488d465d0395ee8137ed9")
+set(IDNA_SHA256 "402cbd285f1f952fcd0834b63541d54f69d3d8f1b8f8599bf71a1a14935f82c4")
 
-set(UCD_PATH "${CMAKE_BINARY_DIR}/UCD" CACHE PATH "Download location for UCD files")
-set(CLDR_PATH "${CMAKE_BINARY_DIR}/CLDR" CACHE PATH "Download location for CLDR files")
-
+set(UCD_PATH "${SERENITY_CACHE_DIR}/UCD" CACHE PATH "Download location for UCD files")
 set(UCD_VERSION_FILE "${UCD_PATH}/version.txt")
-set(CLDR_VERSION_FILE "${CLDR_PATH}/version.txt")
 
 set(UCD_ZIP_URL "https://www.unicode.org/Public/${UCD_VERSION}/ucd/UCD.zip")
 set(UCD_ZIP_PATH "${UCD_PATH}/UCD.zip")
@@ -17,6 +16,9 @@ set(UNICODE_DATA_PATH "${UCD_PATH}/${UNICODE_DATA_SOURCE}")
 
 set(SPECIAL_CASING_SOURCE "SpecialCasing.txt")
 set(SPECIAL_CASING_PATH "${UCD_PATH}/${SPECIAL_CASING_SOURCE}")
+
+set(CASE_FOLDING_SOURCE "CaseFolding.txt")
+set(CASE_FOLDING_PATH "${UCD_PATH}/${CASE_FOLDING_SOURCE}")
 
 set(DERIVED_GENERAL_CATEGORY_SOURCE "extracted/DerivedGeneralCategory.txt")
 set(DERIVED_GENERAL_CATEGORY_PATH "${UCD_PATH}/${DERIVED_GENERAL_CATEGORY_SOURCE}")
@@ -63,181 +65,101 @@ set(WORD_BREAK_PROP_PATH "${UCD_PATH}/${WORD_BREAK_PROP_SOURCE}")
 set(SENTENCE_BREAK_PROP_SOURCE "auxiliary/SentenceBreakProperty.txt")
 set(SENTENCE_BREAK_PROP_PATH "${UCD_PATH}/${SENTENCE_BREAK_PROP_SOURCE}")
 
-set(CLDR_ZIP_URL "https://github.com/unicode-org/cldr-json/releases/download/${CLDR_VERSION}/cldr-${CLDR_VERSION}-json-modern.zip")
-set(CLDR_ZIP_PATH "${CLDR_PATH}/cldr.zip")
+string(REGEX REPLACE "([0-9]+\\.[0-9]+)\\.[0-9]+" "\\1" EMOJI_VERSION "${UCD_VERSION}")
+set(EMOJI_TEST_URL "https://www.unicode.org/Public/emoji/${EMOJI_VERSION}/emoji-test.txt")
+set(EMOJI_TEST_PATH "${UCD_PATH}/emoji-test.txt")
+set(EMOJI_VERSION_FILE "${UCD_PATH}/emoji-version.txt")
+set(EMOJI_RES_PATH "${SerenityOS_SOURCE_DIR}/Base/res/emoji")
+set(EMOJI_SERENITY_PATH "${SerenityOS_SOURCE_DIR}/Base/home/anon/Documents/emoji-serenity.txt")
+set(EMOJI_FILE_LIST_PATH "${SerenityOS_SOURCE_DIR}/Meta/emoji-file-list.txt")
+set(EMOJI_INSTALL_PATH "${CMAKE_BINARY_DIR}/Root/home/anon/Documents/emoji.txt")
 
-set(CLDR_BCP47_SOURCE cldr-bcp47)
-set(CLDR_BCP47_PATH "${CLDR_PATH}/${CLDR_BCP47_SOURCE}")
-
-set(CLDR_CORE_SOURCE cldr-core)
-set(CLDR_CORE_PATH "${CLDR_PATH}/${CLDR_CORE_SOURCE}")
-
-set(CLDR_DATES_SOURCE cldr-dates-modern)
-set(CLDR_DATES_PATH "${CLDR_PATH}/${CLDR_DATES_SOURCE}")
-
-set(CLDR_LOCALES_SOURCE cldr-localenames-modern)
-set(CLDR_LOCALES_PATH "${CLDR_PATH}/${CLDR_LOCALES_SOURCE}")
-
-set(CLDR_MISC_SOURCE cldr-misc-modern)
-set(CLDR_MISC_PATH "${CLDR_PATH}/${CLDR_MISC_SOURCE}")
-
-set(CLDR_NUMBERS_SOURCE cldr-numbers-modern)
-set(CLDR_NUMBERS_PATH "${CLDR_PATH}/${CLDR_NUMBERS_SOURCE}")
-
-set(CLDR_UNITS_SOURCE cldr-units-modern)
-set(CLDR_UNITS_PATH "${CLDR_PATH}/${CLDR_UNITS_SOURCE}")
-
-function(extract_path dest_dir zip_path source_path dest_path)
-    if (EXISTS "${zip_path}" AND NOT EXISTS "${dest_path}")
-        message(STATUS "Extracting ${source_path} from ${zip_path}")
-        execute_process(COMMAND "${UNZIP_TOOL}" -q "${zip_path}" "${source_path}" -d "${dest_dir}" RESULT_VARIABLE unzip_result)
-        if (NOT unzip_result EQUAL 0)
-            message(FATAL_ERROR "Failed to unzip ${source_path} from ${zip_path} with status ${unzip_result}")
-        endif()
-    endif()
-endfunction()
+set(IDNA_MAPPING_TABLE_URL "https://www.unicode.org/Public/idna/${UCD_VERSION}/IdnaMappingTable.txt")
+set(IDNA_MAPPING_TABLE_PATH "${UCD_PATH}/IdnaMappingTable.txt")
+set(IDNA_VERSION_FILE "${UCD_PATH}/idna-version.txt")
 
 if (ENABLE_UNICODE_DATABASE_DOWNLOAD)
-    remove_path_if_version_changed("${UCD_VERSION}" "${UCD_VERSION_FILE}" "${UCD_PATH}")
-    remove_path_if_version_changed("${CLDR_VERSION}" "${CLDR_VERSION_FILE}" "${CLDR_PATH}")
+    if (ENABLE_NETWORK_DOWNLOADS)
+        download_file("${UCD_ZIP_URL}" "${UCD_ZIP_PATH}" SHA256 "${UCD_SHA256}" VERSION "${UCD_VERSION}" VERSION_FILE "${UCD_VERSION_FILE}" CACHE_PATH "${UCD_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${UNICODE_DATA_SOURCE}" "${UNICODE_DATA_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${SPECIAL_CASING_SOURCE}" "${SPECIAL_CASING_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${CASE_FOLDING_SOURCE}" "${CASE_FOLDING_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${DERIVED_GENERAL_CATEGORY_SOURCE}" "${DERIVED_GENERAL_CATEGORY_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${PROP_LIST_SOURCE}" "${PROP_LIST_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${DERIVED_CORE_PROP_SOURCE}" "${DERIVED_CORE_PROP_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${DERIVED_BINARY_PROP_SOURCE}" "${DERIVED_BINARY_PROP_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${PROP_ALIAS_SOURCE}" "${PROP_ALIAS_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${PROP_VALUE_ALIAS_SOURCE}" "${PROP_VALUE_ALIAS_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${NAME_ALIAS_SOURCE}" "${NAME_ALIAS_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${SCRIPTS_SOURCE}" "${SCRIPTS_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${SCRIPT_EXTENSIONS_SOURCE}" "${SCRIPT_EXTENSIONS_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${BLOCKS_SOURCE}" "${BLOCKS_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${EMOJI_DATA_SOURCE}" "${EMOJI_DATA_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${NORM_PROPS_SOURCE}" "${NORM_PROPS_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${GRAPHEME_BREAK_PROP_SOURCE}" "${GRAPHEME_BREAK_PROP_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${WORD_BREAK_PROP_SOURCE}" "${WORD_BREAK_PROP_PATH}")
+        extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${SENTENCE_BREAK_PROP_SOURCE}" "${SENTENCE_BREAK_PROP_PATH}")
 
-    download_file("${UCD_ZIP_URL}" "${UCD_ZIP_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${UNICODE_DATA_SOURCE}" "${UNICODE_DATA_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${SPECIAL_CASING_SOURCE}" "${SPECIAL_CASING_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${DERIVED_GENERAL_CATEGORY_SOURCE}" "${DERIVED_GENERAL_CATEGORY_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${PROP_LIST_SOURCE}" "${PROP_LIST_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${DERIVED_CORE_PROP_SOURCE}" "${DERIVED_CORE_PROP_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${DERIVED_BINARY_PROP_SOURCE}" "${DERIVED_BINARY_PROP_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${PROP_ALIAS_SOURCE}" "${PROP_ALIAS_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${PROP_VALUE_ALIAS_SOURCE}" "${PROP_VALUE_ALIAS_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${NAME_ALIAS_SOURCE}" "${NAME_ALIAS_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${SCRIPTS_SOURCE}" "${SCRIPTS_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${SCRIPT_EXTENSIONS_SOURCE}" "${SCRIPT_EXTENSIONS_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${BLOCKS_SOURCE}" "${BLOCKS_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${EMOJI_DATA_SOURCE}" "${EMOJI_DATA_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${NORM_PROPS_SOURCE}" "${NORM_PROPS_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${GRAPHEME_BREAK_PROP_SOURCE}" "${GRAPHEME_BREAK_PROP_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${WORD_BREAK_PROP_SOURCE}" "${WORD_BREAK_PROP_PATH}")
-    extract_path("${UCD_PATH}" "${UCD_ZIP_PATH}" "${SENTENCE_BREAK_PROP_SOURCE}" "${SENTENCE_BREAK_PROP_PATH}")
+        download_file("${EMOJI_TEST_URL}" "${EMOJI_TEST_PATH}" SHA256 "${EMOJI_SHA256}" VERSION "${UCD_VERSION}" VERSION_FILE "${EMOJI_VERSION_FILE}")
 
-    download_file("${CLDR_ZIP_URL}" "${CLDR_ZIP_PATH}")
-    extract_path("${CLDR_PATH}" "${CLDR_ZIP_PATH}" "${CLDR_BCP47_SOURCE}/**" "${CLDR_BCP47_PATH}")
-    extract_path("${CLDR_PATH}" "${CLDR_ZIP_PATH}" "${CLDR_CORE_SOURCE}/**" "${CLDR_CORE_PATH}")
-    extract_path("${CLDR_PATH}" "${CLDR_ZIP_PATH}" "${CLDR_DATES_SOURCE}/**" "${CLDR_DATES_PATH}")
-    extract_path("${CLDR_PATH}" "${CLDR_ZIP_PATH}" "${CLDR_LOCALES_SOURCE}/**" "${CLDR_LOCALES_PATH}")
-    extract_path("${CLDR_PATH}" "${CLDR_ZIP_PATH}" "${CLDR_MISC_SOURCE}/**" "${CLDR_MISC_PATH}")
-    extract_path("${CLDR_PATH}" "${CLDR_ZIP_PATH}" "${CLDR_NUMBERS_SOURCE}/**" "${CLDR_NUMBERS_PATH}")
-    extract_path("${CLDR_PATH}" "${CLDR_ZIP_PATH}" "${CLDR_UNITS_SOURCE}/**" "${CLDR_UNITS_PATH}")
+        download_file("${IDNA_MAPPING_TABLE_URL}" "${IDNA_MAPPING_TABLE_PATH}" SHA256 "${IDNA_SHA256}" VERSION "${UCD_VERSION}" VERSION_FILE "${IDNA_VERSION_FILE}")
+    else()
+        message(STATUS "Skipping download of ${UCD_ZIP_URL}, expecting the archive to have been extracted to ${UCD_ZIP_PATH}")
+        message(STATUS "Skipping download of ${EMOJI_TEST_URL}, expecting the file to be at ${EMOJI_TEST_PATH}")
+        message(STATUS "Skipping download of ${IDNA_MAPPING_TABLE_URL}, expecting the file to be at  ${IDNA_MAPPING_TABLE_PATH}")
+    endif()
 
-    set(UNICODE_DATA_HEADER LibUnicode/UnicodeData.h)
-    set(UNICODE_DATA_IMPLEMENTATION LibUnicode/UnicodeData.cpp)
 
-    set(UNICODE_DATE_TIME_FORMAT_HEADER LibUnicode/UnicodeDateTimeFormat.h)
-    set(UNICODE_DATE_TIME_FORMAT_IMPLEMENTATION LibUnicode/UnicodeDateTimeFormat.cpp)
+    set(UNICODE_DATA_HEADER UnicodeData.h)
+    set(UNICODE_DATA_IMPLEMENTATION UnicodeData.cpp)
 
-    set(UNICODE_LOCALE_HEADER LibUnicode/UnicodeLocale.h)
-    set(UNICODE_LOCALE_IMPLEMENTATION LibUnicode/UnicodeLocale.cpp)
+    set(EMOJI_DATA_HEADER EmojiData.h)
+    set(EMOJI_DATA_IMPLEMENTATION EmojiData.cpp)
 
-    set(UNICODE_NUMBER_FORMAT_HEADER LibUnicode/UnicodeNumberFormat.h)
-    set(UNICODE_NUMBER_FORMAT_IMPLEMENTATION LibUnicode/UnicodeNumberFormat.cpp)
+    set(IDNA_DATA_HEADER IDNAData.h)
+    set(IDNA_DATA_IMPLEMENTATION IDNAData.cpp)
 
-    set(UNICODE_PLURAL_RULES_HEADER LibUnicode/UnicodePluralRules.h)
-    set(UNICODE_PLURAL_RULES_IMPLEMENTATION LibUnicode/UnicodePluralRules.cpp)
-
-    set(UNICODE_RELATIVE_TIME_FORMAT_HEADER LibUnicode/UnicodeRelativeTimeFormat.h)
-    set(UNICODE_RELATIVE_TIME_FORMAT_IMPLEMENTATION LibUnicode/UnicodeRelativeTimeFormat.cpp)
-
-    set(UNICODE_META_TARGET_PREFIX LibUnicode_)
-
-    if (CMAKE_CURRENT_BINARY_DIR MATCHES ".*/LibUnicode") # Serenity build.
-        set(UNICODE_DATA_HEADER UnicodeData.h)
-        set(UNICODE_DATA_IMPLEMENTATION UnicodeData.cpp)
-
-        set(UNICODE_DATE_TIME_FORMAT_HEADER UnicodeDateTimeFormat.h)
-        set(UNICODE_DATE_TIME_FORMAT_IMPLEMENTATION UnicodeDateTimeFormat.cpp)
-
-        set(UNICODE_LOCALE_HEADER UnicodeLocale.h)
-        set(UNICODE_LOCALE_IMPLEMENTATION UnicodeLocale.cpp)
-
-        set(UNICODE_NUMBER_FORMAT_HEADER UnicodeNumberFormat.h)
-        set(UNICODE_NUMBER_FORMAT_IMPLEMENTATION UnicodeNumberFormat.cpp)
-
-        set(UNICODE_PLURAL_RULES_HEADER UnicodePluralRules.h)
-        set(UNICODE_PLURAL_RULES_IMPLEMENTATION UnicodePluralRules.cpp)
-
-        set(UNICODE_RELATIVE_TIME_FORMAT_HEADER UnicodeRelativeTimeFormat.h)
-        set(UNICODE_RELATIVE_TIME_FORMAT_IMPLEMENTATION UnicodeRelativeTimeFormat.cpp)
-
-        set(UNICODE_META_TARGET_PREFIX "")
+    if (SERENITYOS)
+        set(EMOJI_INSTALL_ARG -i "${EMOJI_INSTALL_PATH}")
     endif()
 
     invoke_generator(
         "UnicodeData"
         Lagom::GenerateUnicodeData
         "${UCD_VERSION_FILE}"
-        "${UNICODE_META_TARGET_PREFIX}"
         "${UNICODE_DATA_HEADER}"
         "${UNICODE_DATA_IMPLEMENTATION}"
-        arguments -u "${UNICODE_DATA_PATH}" -s "${SPECIAL_CASING_PATH}" -g "${DERIVED_GENERAL_CATEGORY_PATH}" -p "${PROP_LIST_PATH}" -d "${DERIVED_CORE_PROP_PATH}" -b "${DERIVED_BINARY_PROP_PATH}" -a "${PROP_ALIAS_PATH}" -v "${PROP_VALUE_ALIAS_PATH}" -r "${SCRIPTS_PATH}" -x "${SCRIPT_EXTENSIONS_PATH}" -k "${BLOCKS_PATH}" -e "${EMOJI_DATA_PATH}" -m "${NAME_ALIAS_PATH}" -n "${NORM_PROPS_PATH}" -f "${GRAPHEME_BREAK_PROP_PATH}" -w "${WORD_BREAK_PROP_PATH}" -i "${SENTENCE_BREAK_PROP_PATH}"
+        arguments -u "${UNICODE_DATA_PATH}" -s "${SPECIAL_CASING_PATH}" -o "${CASE_FOLDING_PATH}" -g "${DERIVED_GENERAL_CATEGORY_PATH}" -p "${PROP_LIST_PATH}" -d "${DERIVED_CORE_PROP_PATH}" -b "${DERIVED_BINARY_PROP_PATH}" -a "${PROP_ALIAS_PATH}" -v "${PROP_VALUE_ALIAS_PATH}" -r "${SCRIPTS_PATH}" -x "${SCRIPT_EXTENSIONS_PATH}" -k "${BLOCKS_PATH}" -e "${EMOJI_DATA_PATH}" -m "${NAME_ALIAS_PATH}" -n "${NORM_PROPS_PATH}" -f "${GRAPHEME_BREAK_PROP_PATH}" -w "${WORD_BREAK_PROP_PATH}" -i "${SENTENCE_BREAK_PROP_PATH}"
     )
     invoke_generator(
-        "UnicodeDateTimeFormat"
-        Lagom::GenerateUnicodeDateTimeFormat
-        "${CLDR_VERSION_FILE}"
-        "${UNICODE_META_TARGET_PREFIX}"
-        "${UNICODE_DATE_TIME_FORMAT_HEADER}"
-        "${UNICODE_DATE_TIME_FORMAT_IMPLEMENTATION}"
-        arguments -r "${CLDR_CORE_PATH}" -d "${CLDR_DATES_PATH}"
+        "EmojiData"
+        Lagom::GenerateEmojiData
+        "${UCD_VERSION_FILE}"
+        "${EMOJI_DATA_HEADER}"
+        "${EMOJI_DATA_IMPLEMENTATION}"
+        arguments "${EMOJI_INSTALL_ARG}" -e "${EMOJI_TEST_PATH}" -s "${EMOJI_SERENITY_PATH}" -f "${EMOJI_FILE_LIST_PATH}" -r "${EMOJI_RES_PATH}"
+
+        # This will make this command only run when the modified time of the directory changes,
+        # which only happens if files within it are added or deleted, but not when a file is modified.
+        # This is fine for this use-case, because the contents of a file changing should not affect
+        # the generated emoji.txt file.
+        dependencies "${EMOJI_RES_PATH}" "${EMOJI_SERENITY_PATH}" "${EMOJI_FILE_LIST_PATH}"
     )
     invoke_generator(
-        "UnicodeLocale"
-        Lagom::GenerateUnicodeLocale
-        "${CLDR_VERSION_FILE}"
-        "${UNICODE_META_TARGET_PREFIX}"
-        "${UNICODE_LOCALE_HEADER}"
-        "${UNICODE_LOCALE_IMPLEMENTATION}"
-        arguments -b "${CLDR_BCP47_PATH}" -r "${CLDR_CORE_PATH}" -l "${CLDR_LOCALES_PATH}" -m "${CLDR_MISC_PATH}" -n "${CLDR_NUMBERS_PATH}" -d "${CLDR_DATES_PATH}"
-    )
-    invoke_generator(
-        "UnicodeNumberFormat"
-        Lagom::GenerateUnicodeNumberFormat
-        "${CLDR_VERSION_FILE}"
-        "${UNICODE_META_TARGET_PREFIX}"
-        "${UNICODE_NUMBER_FORMAT_HEADER}"
-        "${UNICODE_NUMBER_FORMAT_IMPLEMENTATION}"
-        arguments -r "${CLDR_CORE_PATH}" -n "${CLDR_NUMBERS_PATH}" -u "${CLDR_UNITS_PATH}"
-    )
-    invoke_generator(
-        "UnicodePluralRules"
-        Lagom::GenerateUnicodePluralRules
-        "${CLDR_VERSION_FILE}"
-        "${UNICODE_META_TARGET_PREFIX}"
-        "${UNICODE_PLURAL_RULES_HEADER}"
-        "${UNICODE_PLURAL_RULES_IMPLEMENTATION}"
-        arguments -r "${CLDR_CORE_PATH}" -l "${CLDR_LOCALES_PATH}"
-    )
-    invoke_generator(
-        "UnicodeRelativeTimeFormat"
-        Lagom::GenerateUnicodeRelativeTimeFormat
-        "${CLDR_VERSION_FILE}"
-        "${UNICODE_META_TARGET_PREFIX}"
-        "${UNICODE_RELATIVE_TIME_FORMAT_HEADER}"
-        "${UNICODE_RELATIVE_TIME_FORMAT_IMPLEMENTATION}"
-        arguments -d "${CLDR_DATES_PATH}"
+        "IDNAData"
+        Lagom::GenerateIDNAData
+        "${UCD_VERSION_FILE}"
+        "${IDNA_DATA_HEADER}"
+        "${IDNA_DATA_IMPLEMENTATION}"
+        arguments -m "${IDNA_MAPPING_TABLE_PATH}"
     )
 
     set(UNICODE_DATA_SOURCES
         ${UNICODE_DATA_HEADER}
         ${UNICODE_DATA_IMPLEMENTATION}
-        ${UNICODE_DATE_TIME_FORMAT_HEADER}
-        ${UNICODE_DATE_TIME_FORMAT_IMPLEMENTATION}
-        ${UNICODE_LOCALE_HEADER}
-        ${UNICODE_LOCALE_IMPLEMENTATION}
-        ${UNICODE_NUMBER_FORMAT_HEADER}
-        ${UNICODE_NUMBER_FORMAT_IMPLEMENTATION}
-        ${UNICODE_PLURAL_RULES_HEADER}
-        ${UNICODE_PLURAL_RULES_IMPLEMENTATION}
-        ${UNICODE_RELATIVE_TIME_FORMAT_HEADER}
-        ${UNICODE_RELATIVE_TIME_FORMAT_IMPLEMENTATION}
+        ${EMOJI_DATA_HEADER}
+        ${EMOJI_DATA_IMPLEMENTATION}
+        ${IDNA_DATA_HEADER}
+        ${IDNA_DATA_IMPLEMENTATION}
     )
 endif()

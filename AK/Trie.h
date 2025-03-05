@@ -26,7 +26,7 @@ struct SubstituteIfVoid<void, Default> {
     using Type = Default;
 };
 
-template<typename DeclaredBaseType, typename DefaultBaseType, typename ValueType, typename MetadataT, typename ValueTraits>
+template<typename DeclaredBaseType, typename DefaultBaseType, typename ValueType, typename MetadataT, typename ValueTraits, template<typename, typename, typename> typename MapType>
 class Trie {
     using BaseType = typename SubstituteIfVoid<DeclaredBaseType, DefaultBaseType>::Type;
 
@@ -69,10 +69,28 @@ public:
         return const_cast<Trie*>(this)->traverse_until_last_accessible_node(it, end);
     }
 
-    Optional<MetadataType> metadata() const requires(!IsNullPointer<MetadataType>) { return m_metadata; }
-    void set_metadata(MetadataType metadata) requires(!IsNullPointer<MetadataType>) { m_metadata = move(metadata); }
-    MetadataType const& metadata_value() const requires(!IsNullPointer<MetadataType>) { return m_metadata.value(); }
-    MetadataType& metadata_value() requires(!IsNullPointer<MetadataType>) { return m_metadata.value(); }
+    bool has_metadata() const { return m_metadata.has_value(); }
+
+    Optional<MetadataType> metadata() const
+    requires(!IsNullPointer<MetadataType>)
+    {
+        return m_metadata;
+    }
+    void set_metadata(MetadataType metadata)
+    requires(!IsNullPointer<MetadataType>)
+    {
+        m_metadata = move(metadata);
+    }
+    MetadataType const& metadata_value() const
+    requires(!IsNullPointer<MetadataType>)
+    {
+        return m_metadata.value();
+    }
+    MetadataType& metadata_value()
+    requires(!IsNullPointer<MetadataType>)
+    {
+        return m_metadata.value();
+    }
 
     ValueType const& value() const { return m_value; }
     ValueType& value() { return m_value; }
@@ -99,7 +117,8 @@ public:
 
     template<typename It, typename ProvideMetadataFunction>
     ErrorOr<BaseType*> insert(
-        It& it, It const& end, MetadataType metadata, ProvideMetadataFunction provide_missing_metadata) requires(!IsNullPointer<MetadataType>)
+        It& it, It const& end, MetadataType metadata, ProvideMetadataFunction provide_missing_metadata)
+    requires(!IsNullPointer<MetadataType>)
     {
         Trie* last_root_node = &traverse_until_last_accessible_node(it, end);
         auto invoke_provide_missing_metadata = [&]<typename... Ts>(Ts&&... args) -> ErrorOr<Optional<MetadataType>> {
@@ -119,7 +138,8 @@ public:
     }
 
     template<typename It>
-    ErrorOr<BaseType*> insert(It& it, It const& end) requires(IsNullPointer<MetadataType>)
+    ErrorOr<BaseType*> insert(It& it, It const& end)
+    requires(IsNullPointer<MetadataType>)
     {
         Trie* last_root_node = &traverse_until_last_accessible_node(it, end);
         for (; it != end; ++it) {
@@ -133,41 +153,43 @@ public:
 
     template<typename It, typename ProvideMetadataFunction>
     ErrorOr<BaseType*> insert(
-        It const& begin, It const& end, MetadataType metadata, ProvideMetadataFunction provide_missing_metadata) requires(!IsNullPointer<MetadataType>)
+        It const& begin, It const& end, MetadataType metadata, ProvideMetadataFunction provide_missing_metadata)
+    requires(!IsNullPointer<MetadataType>)
     {
         auto it = begin;
         return insert(it, end, move(metadata), move(provide_missing_metadata));
     }
 
     template<typename It>
-    ErrorOr<BaseType*> insert(It const& begin, It const& end) requires(IsNullPointer<MetadataType>)
+    ErrorOr<BaseType*> insert(It const& begin, It const& end)
+    requires(IsNullPointer<MetadataType>)
     {
         auto it = begin;
         return insert(it, end);
     }
 
-    HashMap<ValueType, NonnullOwnPtr<Trie>, ValueTraits>& children() { return m_children; }
-    HashMap<ValueType, NonnullOwnPtr<Trie>, ValueTraits> const& children() const { return m_children; }
+    MapType<ValueType, NonnullOwnPtr<Trie>, ValueTraits>& children() { return m_children; }
+    MapType<ValueType, NonnullOwnPtr<Trie>, ValueTraits> const& children() const { return m_children; }
 
     template<typename Fn>
     ErrorOr<void> for_each_node_in_tree_order(Fn callback) const
     {
         struct State {
             bool did_generate_root { false };
-            typename HashMap<ValueType, NonnullOwnPtr<Trie>, ValueTraits>::ConstIteratorType it;
-            typename HashMap<ValueType, NonnullOwnPtr<Trie>, ValueTraits>::ConstIteratorType end;
+            typename MapType<ValueType, NonnullOwnPtr<Trie>, ValueTraits>::ConstIteratorType it;
+            typename MapType<ValueType, NonnullOwnPtr<Trie>, ValueTraits>::ConstIteratorType end;
         };
         Vector<State> state;
         TRY(state.try_empend(false, m_children.begin(), m_children.end()));
 
         auto invoke = [&](auto& current_node) -> ErrorOr<IterationDecision> {
-            if constexpr (VoidFunction<Fn, const BaseType&>) {
-                callback(static_cast<const BaseType&>(current_node));
+            if constexpr (VoidFunction<Fn, BaseType const&>) {
+                callback(static_cast<BaseType const&>(current_node));
                 return IterationDecision::Continue;
-            } else if constexpr (IsSpecializationOf<decltype(callback(declval<const BaseType&>())), ErrorOr>) {
-                return callback(static_cast<const BaseType&>(current_node));
-            } else if constexpr (IteratorFunction<Fn, const BaseType&>) {
-                return callback(static_cast<const BaseType&>(current_node));
+            } else if constexpr (IsSpecializationOf<decltype(callback(declval<BaseType const&>())), ErrorOr>) {
+                return callback(static_cast<BaseType const&>(current_node));
+            } else if constexpr (IteratorFunction<Fn, BaseType const&>) {
+                return callback(static_cast<BaseType const&>(current_node));
             } else {
                 static_assert(DependentFalse<Fn>, "Invalid iterator function type signature");
             }
@@ -185,7 +207,8 @@ public:
     [[nodiscard]] bool is_empty() const { return m_children.is_empty(); }
     void clear() { m_children.clear(); }
 
-    ErrorOr<BaseType> deep_copy() requires(requires(ValueType value) { { value->try_clone() } -> SpecializationOf<ErrorOr>; })
+    ErrorOr<BaseType> deep_copy()
+    requires(requires(ValueType value) { { value->try_clone() } -> SpecializationOf<ErrorOr>; })
     {
         Trie root(TRY(m_value->try_clone()), TRY(copy_metadata(m_metadata)));
         for (auto& it : m_children)
@@ -244,23 +267,27 @@ private:
 
     ValueType m_value;
     Optional<MetadataType> m_metadata;
-    HashMap<ValueType, NonnullOwnPtr<Trie>, ValueTraits> m_children;
+    MapType<ValueType, NonnullOwnPtr<Trie>, ValueTraits> m_children;
 };
 
-template<typename BaseType, typename DefaultBaseType, typename ValueType, typename ValueTraits>
-class Trie<BaseType, DefaultBaseType, ValueType, void, ValueTraits> : public Trie<BaseType, DefaultBaseType, ValueType, decltype(nullptr), ValueTraits> {
-    using Trie<BaseType, DefaultBaseType, ValueType, decltype(nullptr), ValueTraits>::Trie;
+template<typename BaseType, typename DefaultBaseType, typename ValueType, typename ValueTraits, template<typename, typename, typename> typename MapType>
+class Trie<BaseType, DefaultBaseType, ValueType, void, ValueTraits, MapType> : public Trie<BaseType, DefaultBaseType, ValueType, decltype(nullptr), ValueTraits, MapType> {
+    using Trie<BaseType, DefaultBaseType, ValueType, decltype(nullptr), ValueTraits, MapType>::Trie;
 };
+
+template<typename K, typename V, typename T>
+using HashMapForTrie = HashMap<K, V, T>;
 
 }
 
-template<typename ValueType, typename MetadataT = void, typename ValueTraits = Traits<ValueType>, typename BaseT = void>
-class Trie : public Detail::Trie<BaseT, Trie<ValueType, MetadataT, ValueTraits>, ValueType, MetadataT, ValueTraits> {
+template<typename ValueType, typename MetadataT = void, typename ValueTraits = Traits<ValueType>, typename BaseT = void, template<typename, typename, typename> typename MapType = Detail::HashMapForTrie>
+class Trie : public Detail::Trie<BaseT, Trie<ValueType, MetadataT, ValueTraits, void, MapType>, ValueType, MetadataT, ValueTraits, MapType> {
 public:
-    using DetailTrie = Detail::Trie<BaseT, Trie<ValueType, MetadataT, ValueTraits>, ValueType, MetadataT, ValueTraits>;
+    using DetailTrie = Detail::Trie<BaseT, Trie<ValueType, MetadataT, ValueTraits, void, MapType>, ValueType, MetadataT, ValueTraits, MapType>;
     using MetadataType = typename DetailTrie::MetadataType;
 
-    Trie(ValueType value, MetadataType metadata) requires(!IsVoid<MetadataType> && !IsNullPointer<MetadataType>)
+    Trie(ValueType value, MetadataType metadata)
+    requires(!IsVoid<MetadataType> && !IsNullPointer<MetadataType>)
         : DetailTrie(move(value), move(metadata))
     {
     }
@@ -273,4 +300,6 @@ public:
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::Trie;
+#endif

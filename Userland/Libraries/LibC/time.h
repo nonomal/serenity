@@ -6,7 +6,12 @@
 
 #pragma once
 
+// Includes essentially mandated by POSIX:
+// https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/time.h.html
+#include <signal.h>
+
 #include <Kernel/API/POSIX/time.h>
+#include <sys/cdefs.h>
 
 __BEGIN_DECLS
 
@@ -26,9 +31,6 @@ extern long timezone; /* The difference in seconds between UTC and local time */
 extern long altzone;
 extern char* tzname[2];
 extern int daylight;
-
-typedef uint32_t clock_t;
-typedef int64_t time_t;
 
 struct tm* localtime(time_t const*);
 struct tm* gmtime(time_t const*);

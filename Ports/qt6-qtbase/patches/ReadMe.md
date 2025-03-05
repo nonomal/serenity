@@ -31,3 +31,18 @@ Disable version tagging
 This is necessary because as of now, Serenity doesn't support DT_VERSYM
 and other related ELF objects
 
+## `0006-Serenity-Disable-local-domain-name-lookup-via-resolv.patch`
+
+Serenity: Disable local domain name lookup via resolv
+
+Serenity doesn't support /etc/resolv.conf or the structures in
+<resolv.h> to do Unix-like domain name resolution.
+
+## `0007-Disable-QDnsLookup-entirely.patch`
+
+Disable QDnsLookup entirely
+
+It seems that we used to include the host's system headers, which we no
+longer do. Now this feature breaks the package, which is why we have to
+disable it in order to build Qt6.
+

@@ -7,6 +7,9 @@
 
 #pragma once
 
+#include <AK/NonnullOwnPtr.h>
+#include <AK/OwnPtr.h>
+#include <AK/Stream.h>
 #include <LibCompress/Deflate.h>
 #include <LibCrypto/Checksum/CRC32.h>
 
@@ -37,60 +40,61 @@ struct Flags {
     static constexpr u8 MAX = FTEXT | FHCRC | FEXTRA | FNAME | FCOMMENT;
 };
 
-class GzipDecompressor final : public InputStream {
+class GzipDecompressor final : public Stream {
 public:
-    GzipDecompressor(InputStream&);
+    GzipDecompressor(MaybeOwned<Stream>);
     ~GzipDecompressor();
 
-    size_t read(Bytes) override;
-    bool read_or_error(Bytes) override;
-    bool discard_or_error(size_t) override;
+    virtual ErrorOr<Bytes> read_some(Bytes) override;
+    virtual ErrorOr<size_t> write_some(ReadonlyBytes) override;
+    virtual bool is_eof() const override;
+    virtual bool is_open() const override { return true; }
+    virtual void close() override {};
 
-    bool unreliable_eof() const override;
-    bool handle_any_error() override;
+    static ErrorOr<ByteBuffer> decompress_all(ReadonlyBytes);
 
-    static Optional<ByteBuffer> decompress_all(ReadonlyBytes);
-    static Optional<String> describe_header(ReadonlyBytes);
+    static ErrorOr<Optional<String>> describe_header(ReadonlyBytes);
     static bool is_likely_compressed(ReadonlyBytes bytes);
 
 private:
     class Member {
     public:
-        Member(BlockHeader header, InputStream& stream)
-            : m_header(header)
-            , m_stream(stream)
-        {
-        }
+        static ErrorOr<NonnullOwnPtr<Member>> construct(BlockHeader header, LittleEndianInputBitStream&);
 
         BlockHeader m_header;
-        DeflateDecompressor m_stream;
+        NonnullOwnPtr<DeflateDecompressor> m_stream;
         Crypto::Checksum::CRC32 m_checksum;
         size_t m_nread { 0 };
+
+    private:
+        Member(BlockHeader, NonnullOwnPtr<DeflateDecompressor>);
     };
 
-    Member const& current_member() const { return m_current_member.value(); }
-    Member& current_member() { return m_current_member.value(); }
+    Member const& current_member() const { return *m_current_member; }
+    Member& current_member() { return *m_current_member; }
 
-    InputStream& m_input_stream;
+    NonnullOwnPtr<LittleEndianInputBitStream> m_input_stream;
     u8 m_partial_header[sizeof(BlockHeader)];
     size_t m_partial_header_offset { 0 };
-    Optional<Member> m_current_member;
+    OwnPtr<Member> m_current_member {};
 
     bool m_eof { false };
 };
 
-class GzipCompressor final : public OutputStream {
+class GzipCompressor final : public Stream {
 public:
-    GzipCompressor(OutputStream&);
-    ~GzipCompressor() = default;
+    GzipCompressor(MaybeOwned<Stream>);
 
-    size_t write(ReadonlyBytes) override;
-    bool write_or_error(ReadonlyBytes) override;
+    virtual ErrorOr<Bytes> read_some(Bytes) override;
+    virtual ErrorOr<size_t> write_some(ReadonlyBytes) override;
+    virtual bool is_eof() const override;
+    virtual bool is_open() const override;
+    virtual void close() override;
 
-    static Optional<ByteBuffer> compress_all(ReadonlyBytes bytes);
+    static ErrorOr<ByteBuffer> compress_all(ReadonlyBytes bytes);
 
 private:
-    OutputStream& m_output_stream;
+    MaybeOwned<Stream> m_output_stream;
 };
 
 }

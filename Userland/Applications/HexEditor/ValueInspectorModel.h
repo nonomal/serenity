@@ -8,7 +8,6 @@
 
 #include <AK/Hex.h>
 #include <AK/NonnullRefPtr.h>
-#include <AK/String.h>
 #include <AK/Utf16View.h>
 #include <AK/Utf8View.h>
 #include <AK/Vector.h>
@@ -30,6 +29,9 @@ public:
         ASCII,
         UTF8,
         UTF16,
+        ASCIIString,
+        UTF8String,
+        UTF16String,
         __Count
     };
 
@@ -42,12 +44,13 @@ public:
         : m_is_little_endian(is_little_endian)
     {
         for (int i = 0; i < ValueType::__Count; i++)
-            set_parsed_value(static_cast<ValueType>(i), "");
+            set_parsed_value(static_cast<ValueType>(i), ""_string);
     }
 
-    void set_parsed_value(ValueType type, String value)
+    void set_parsed_value(ValueType type, ErrorOr<String> value)
     {
-        m_values[type] = value;
+        if (!value.is_error())
+            m_values[type] = value.release_value();
     }
 
     virtual int row_count(GUI::ModelIndex const& = GUI::ModelIndex()) const override
@@ -60,13 +63,13 @@ public:
         return 2;
     }
 
-    String column_name(int column) const override
+    ErrorOr<String> column_name(int column) const override
     {
         switch (column) {
         case Column::Type:
-            return "Type";
+            return "Type"_string;
         case Column::Value:
-            return m_is_little_endian ? "Value (Little Endian)" : "Value (Big Endian)";
+            return "Value"_string;
         }
         VERIFY_NOT_REACHED();
     }
@@ -75,33 +78,39 @@ public:
     {
         switch (type) {
         case SignedByte:
-            return "Signed Byte";
+            return "Signed Byte"_string;
         case UnsignedByte:
-            return "Unsigned Byte";
+            return "Unsigned Byte"_string;
         case SignedShort:
-            return "Signed Short";
+            return "Signed Short"_string;
         case UnsignedShort:
-            return "Unsigned Short";
+            return "Unsigned Short"_string;
         case SignedInt:
-            return "Signed Int";
+            return "Signed Int"_string;
         case UnsignedInt:
-            return "Unsigned Int";
+            return "Unsigned Int"_string;
         case SignedLong:
-            return "Signed Long";
+            return "Signed Long"_string;
         case UnsignedLong:
-            return "Unsigned Long";
+            return "Unsigned Long"_string;
         case Float:
-            return "Float";
+            return "Float"_string;
         case Double:
-            return "Double";
+            return "Double"_string;
         case ASCII:
-            return "ASCII";
+            return "ASCII"_string;
         case UTF8:
-            return "UTF-8";
+            return "UTF-8"_string;
         case UTF16:
-            return "UTF-16";
+            return "UTF-16"_string;
+        case ASCIIString:
+            return "ASCII String"_string;
+        case UTF8String:
+            return "UTF-8 String"_string;
+        case UTF16String:
+            return "UTF-16 String"_string;
         default:
-            return "";
+            return ""_string;
         }
     }
 
@@ -112,7 +121,7 @@ public:
         if (role == GUI::ModelRole::Display) {
             switch (index.column()) {
             case Column::Type:
-                return inspector_value_type_to_string(static_cast<ValueType>(index.row()));
+                return inspector_value_type_to_string(static_cast<ValueType>(index.row())).to_byte_string();
             case Column::Value:
                 return m_values.at(index.row());
             }
@@ -142,8 +151,8 @@ public:
                 return 0;
             }
             case UTF16: {
-                auto utf16_view = Utf16View(utf8_to_utf16(m_values.at(index.row())));
-                if (utf16_view.validate())
+                auto utf16_data = utf8_to_utf16(m_values.at(index.row())).release_value_but_fixme_should_propagate_errors();
+                if (Utf16View utf16_view { utf16_data }; utf16_view.validate())
                     return static_cast<i32>(utf16_view.length_in_code_units() * 2);
                 return 0;
             }

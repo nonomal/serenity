@@ -13,13 +13,15 @@ namespace JS::Intl {
 
 class PluralRulesPrototype final : public PrototypeObject<PluralRulesPrototype, PluralRules> {
     JS_PROTOTYPE_OBJECT(PluralRulesPrototype, PluralRules, Intl.PluralRules);
+    JS_DECLARE_ALLOCATOR(PluralRulesPrototype);
 
 public:
-    explicit PluralRulesPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~PluralRulesPrototype() override = default;
 
 private:
+    explicit PluralRulesPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(select);
     JS_DECLARE_NATIVE_FUNCTION(select_range);
     JS_DECLARE_NATIVE_FUNCTION(resolved_options);

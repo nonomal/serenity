@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2024, Sam Atkins <sam@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,29 +8,87 @@
 #pragma once
 
 #include <AK/FlyString.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/RefCounted.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
+#include <LibWeb/CSS/Keyword.h>
+#include <LibWeb/CSS/PseudoClass.h>
 
 namespace Web::CSS {
 
-using SelectorList = NonnullRefPtrVector<class Selector>;
+using SelectorList = Vector<NonnullRefPtr<class Selector>>;
 
 // This is a <complex-selector> in the spec. https://www.w3.org/TR/selectors-4/#complex
 class Selector : public RefCounted<Selector> {
 public:
-    enum class PseudoElement {
-        Before,
-        After,
-        FirstLine,
-        FirstLetter,
-        Marker,
+    class PseudoElement {
+    public:
+        enum class Type : u8 {
+            Before,
+            After,
+            FirstLine,
+            FirstLetter,
+            Marker,
+            MeterBar,
+            MeterEvenLessGoodValue,
+            MeterOptimumValue,
+            MeterSuboptimumValue,
+            ProgressValue,
+            ProgressBar,
+            Placeholder,
+            Selection,
+            SliderRunnableTrack,
+            SliderThumb,
+            Backdrop,
+
+            // Keep this last.
+            KnownPseudoElementCount,
+
+            // https://www.w3.org/TR/selectors-4/#compat
+            // NOTE: This is not last as the 'unknown -webkit- pseudo-elements' are not stored as part of any Element.
+            UnknownWebKit,
+        };
+
+        explicit PseudoElement(Type type)
+            : m_type(type)
+        {
+            VERIFY(is_known_pseudo_element_type(type));
+        }
+
+        PseudoElement(Type type, String name)
+            : m_type(type)
+            , m_name(move(name))
+        {
+        }
+
+        bool operator==(PseudoElement const&) const = default;
+
+        static Optional<PseudoElement> from_string(FlyString const&);
+
+        [[nodiscard]] static bool is_known_pseudo_element_type(Type type)
+        {
+            return to_underlying(type) < to_underlying(CSS::Selector::PseudoElement::Type::KnownPseudoElementCount);
+        }
+
+        static StringView name(Selector::PseudoElement::Type pseudo_element);
+
+        StringView name() const
+        {
+            if (!m_name.is_empty())
+                return m_name;
+
+            return name(m_type);
+        }
+
+        Type type() const { return m_type; }
+
+    private:
+        Type m_type;
+        String m_name;
     };
-    static auto constexpr PseudoElementCount = to_underlying(PseudoElement::Marker) + 1;
 
     struct SimpleSelector {
-        enum class Type {
+        enum class Type : u8 {
             Universal,
             TagName,
             Id,
@@ -38,6 +96,7 @@ public:
             Attribute,
             PseudoClass,
             PseudoElement,
+            Nesting,
         };
 
         struct ANPlusBPattern {
@@ -49,7 +108,7 @@ public:
             {
                 // 1. If A is zero, return the serialization of B.
                 if (step_size == 0) {
-                    return String::formatted("{}", offset);
+                    return String::number(offset);
                 }
 
                 // 2. Otherwise, let result initially be an empty string.
@@ -75,39 +134,12 @@ public:
                     result.appendff("{}", offset);
 
                 // 5. Return result.
-                return result.to_string();
+                return MUST(result.to_string());
             }
         };
 
-        struct PseudoClass {
-            enum class Type {
-                Link,
-                Visited,
-                Hover,
-                Focus,
-                FocusWithin,
-                FirstChild,
-                LastChild,
-                OnlyChild,
-                NthChild,
-                NthLastChild,
-                Empty,
-                Root,
-                FirstOfType,
-                LastOfType,
-                OnlyOfType,
-                NthOfType,
-                NthLastOfType,
-                Disabled,
-                Enabled,
-                Checked,
-                Is,
-                Not,
-                Where,
-                Active,
-                Lang,
-            };
-            Type type;
+        struct PseudoClassSelector {
+            PseudoClass type;
 
             // FIXME: We don't need this field on every single SimpleSelector, but it's also annoying to malloc it somewhere.
             // Only used when "pseudo_class" is "NthChild" or "NthLastChild".
@@ -117,6 +149,34 @@ public:
 
             // Used for :lang(en-gb,dk)
             Vector<FlyString> languages {};
+
+            // Used by :dir()
+            Optional<Keyword> keyword {};
+        };
+
+        struct Name {
+            Name(FlyString n)
+                : name(move(n))
+                , lowercase_name(name.to_string().to_lowercase().release_value_but_fixme_should_propagate_errors())
+            {
+            }
+
+            FlyString name;
+            FlyString lowercase_name;
+        };
+
+        // Equivalent to `<wq-name>`
+        // https://www.w3.org/TR/selectors-4/#typedef-wq-name
+        struct QualifiedName {
+            enum class NamespaceType {
+                Default, // `E`
+                None,    // `|E`
+                Any,     // `*|E`
+                Named,   // `ns|E`
+            };
+            NamespaceType namespace_type { NamespaceType::Default };
+            FlyString namespace_ {};
+            Name name;
         };
 
         struct Attribute {
@@ -135,24 +195,31 @@ public:
                 CaseInsensitiveMatch,
             };
             MatchType match_type;
-            FlyString name {};
+            QualifiedName qualified_name;
             String value {};
             CaseType case_type;
         };
 
         Type type;
-        Variant<Empty, Attribute, PseudoClass, PseudoElement, FlyString> value {};
+        Variant<Empty, Attribute, PseudoClassSelector, PseudoElement, Name, QualifiedName> value {};
 
         Attribute const& attribute() const { return value.get<Attribute>(); }
         Attribute& attribute() { return value.get<Attribute>(); }
-        PseudoClass const& pseudo_class() const { return value.get<PseudoClass>(); }
-        PseudoClass& pseudo_class() { return value.get<PseudoClass>(); }
+        PseudoClassSelector const& pseudo_class() const { return value.get<PseudoClassSelector>(); }
+        PseudoClassSelector& pseudo_class() { return value.get<PseudoClassSelector>(); }
         PseudoElement const& pseudo_element() const { return value.get<PseudoElement>(); }
         PseudoElement& pseudo_element() { return value.get<PseudoElement>(); }
-        FlyString const& name() const { return value.get<FlyString>(); }
-        FlyString& name() { return value.get<FlyString>(); }
+
+        FlyString const& name() const { return value.get<Name>().name; }
+        FlyString& name() { return value.get<Name>().name; }
+        FlyString const& lowercase_name() const { return value.get<Name>().lowercase_name; }
+        FlyString& lowercase_name() { return value.get<Name>().lowercase_name; }
+        QualifiedName const& qualified_name() const { return value.get<QualifiedName>(); }
+        QualifiedName& qualified_name() { return value.get<QualifiedName>(); }
 
         String serialize() const;
+
+        SimpleSelector absolutized(SimpleSelector const& selector_for_nesting) const;
     };
 
     enum class Combinator {
@@ -169,6 +236,8 @@ public:
         // but it is more understandable to put them together.
         Combinator combinator { Combinator::None };
         Vector<SimpleSelector> simple_selectors;
+
+        CompoundSelector absolutized(SimpleSelector const& selector_for_nesting) const;
     };
 
     static NonnullRefPtr<Selector> create(Vector<CompoundSelector>&& compound_selectors)
@@ -179,9 +248,14 @@ public:
     ~Selector() = default;
 
     Vector<CompoundSelector> const& compound_selectors() const { return m_compound_selectors; }
-    Optional<PseudoElement> pseudo_element() const { return m_pseudo_element; }
+    Optional<PseudoElement> const& pseudo_element() const { return m_pseudo_element; }
+    NonnullRefPtr<Selector> relative_to(SimpleSelector const&) const;
+    bool contains_the_nesting_selector() const { return m_contains_the_nesting_selector; }
+    NonnullRefPtr<Selector> absolutized(SimpleSelector const& selector_for_nesting) const;
     u32 specificity() const;
     String serialize() const;
+
+    auto const& ancestor_hashes() const { return m_ancestor_hashes; }
 
 private:
     explicit Selector(Vector<CompoundSelector>&&);
@@ -189,85 +263,14 @@ private:
     Vector<CompoundSelector> m_compound_selectors;
     mutable Optional<u32> m_specificity;
     Optional<Selector::PseudoElement> m_pseudo_element;
+    bool m_contains_the_nesting_selector { false };
+
+    void collect_ancestor_hashes();
+
+    Array<u32, 8> m_ancestor_hashes;
 };
 
-constexpr StringView pseudo_element_name(Selector::PseudoElement pseudo_element)
-{
-    switch (pseudo_element) {
-    case Selector::PseudoElement::Before:
-        return "before"sv;
-    case Selector::PseudoElement::After:
-        return "after"sv;
-    case Selector::PseudoElement::FirstLine:
-        return "first-line"sv;
-    case Selector::PseudoElement::FirstLetter:
-        return "first-letter"sv;
-    case Selector::PseudoElement::Marker:
-        return "marker"sv;
-    }
-    VERIFY_NOT_REACHED();
-}
-
-Optional<Selector::PseudoElement> pseudo_element_from_string(StringView);
-
-constexpr StringView pseudo_class_name(Selector::SimpleSelector::PseudoClass::Type pseudo_class)
-{
-    switch (pseudo_class) {
-    case Selector::SimpleSelector::PseudoClass::Type::Link:
-        return "link"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Visited:
-        return "visited"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Hover:
-        return "hover"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Focus:
-        return "focus"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::FocusWithin:
-        return "focus-within"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::FirstChild:
-        return "first-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::LastChild:
-        return "last-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::OnlyChild:
-        return "only-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Empty:
-        return "empty"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Root:
-        return "root"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::FirstOfType:
-        return "first-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::LastOfType:
-        return "last-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::OnlyOfType:
-        return "only-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthOfType:
-        return "nth-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthLastOfType:
-        return "nth-last-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Disabled:
-        return "disabled"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Enabled:
-        return "enabled"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Checked:
-        return "checked"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Active:
-        return "active"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthChild:
-        return "nth-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthLastChild:
-        return "nth-last-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Is:
-        return "is"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Not:
-        return "not"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Where:
-        return "where"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Lang:
-        return "lang"sv;
-    }
-    VERIFY_NOT_REACHED();
-}
-
-String serialize_a_group_of_selectors(NonnullRefPtrVector<Selector> const& selectors);
+String serialize_a_group_of_selectors(SelectorList const& selectors);
 
 }
 

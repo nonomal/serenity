@@ -61,7 +61,7 @@ static GPU::Vertex clip_intersection_point(GPU::Vertex const& p1, GPU::Vertex co
     out.eye_coordinates = mix(p1.eye_coordinates, p2.eye_coordinates, a);
     out.clip_coordinates = mix(p1.clip_coordinates, p2.clip_coordinates, a);
     out.color = mix(p1.color, p2.color, a);
-    for (size_t i = 0; i < GPU::NUM_SAMPLERS; ++i)
+    for (size_t i = 0; i < GPU::NUM_TEXTURE_UNITS; ++i)
         out.tex_coords[i] = mix(p1.tex_coords[i], p2.tex_coords[i], a);
     out.normal = mix(p1.normal, p2.normal, a);
     return out;
@@ -76,6 +76,10 @@ FLATTEN static void clip_plane(Vector<GPU::Vertex>& input_list, Vector<GPU::Vert
     if (input_list_size == 0)
         return;
 
+    // Ensure we can perform unchecked appends in the loop below
+    if (input_list_size * 2 > output_list.capacity())
+        output_list.ensure_capacity(input_list_size * 2);
+
     auto const* prev_vec = &input_list.data()[0];
     auto is_prev_point_within_plane = point_within_plane<plane>(*prev_vec, clip_plane);
 
@@ -84,10 +88,10 @@ FLATTEN static void clip_plane(Vector<GPU::Vertex>& input_list, Vector<GPU::Vert
         auto const is_curr_point_within_plane = point_within_plane<plane>(curr_vec, clip_plane);
 
         if (is_curr_point_within_plane != is_prev_point_within_plane)
-            output_list.append(clip_intersection_point<plane>(*prev_vec, curr_vec, clip_plane));
+            output_list.unchecked_append(clip_intersection_point<plane>(*prev_vec, curr_vec, clip_plane));
 
         if (is_curr_point_within_plane)
-            output_list.append(curr_vec);
+            output_list.unchecked_append(curr_vec);
 
         prev_vec = &curr_vec;
         is_prev_point_within_plane = is_curr_point_within_plane;

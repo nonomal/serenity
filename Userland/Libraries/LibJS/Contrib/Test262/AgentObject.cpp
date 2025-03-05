@@ -12,18 +12,20 @@
 
 namespace JS::Test262 {
 
-AgentObject::AgentObject(JS::GlobalObject& global_object)
-    : Object(Object::ConstructWithoutPrototypeTag::Tag, global_object)
+JS_DEFINE_ALLOCATOR(AgentObject);
+
+AgentObject::AgentObject(Realm& realm)
+    : Object(Object::ConstructWithoutPrototypeTag::Tag, realm)
 {
 }
 
-void AgentObject::initialize(JS::GlobalObject& global_object)
+void AgentObject::initialize(JS::Realm& realm)
 {
-    Base::initialize(global_object);
+    Base::initialize(realm);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
-    define_native_function("monotonicNow", monotonic_now, 0, attr);
-    define_native_function("sleep", sleep, 1, attr);
+    define_native_function(realm, "monotonicNow", monotonic_now, 0, attr);
+    define_native_function(realm, "sleep", sleep, 1, attr);
     // TODO: broadcast
     // TODO: getReport
     // TODO: start
@@ -31,14 +33,14 @@ void AgentObject::initialize(JS::GlobalObject& global_object)
 
 JS_DEFINE_NATIVE_FUNCTION(AgentObject::monotonic_now)
 {
-    auto time = Time::now_monotonic();
-    auto milliseconds = time.to_milliseconds();
+    auto time = MonotonicTime::now();
+    auto milliseconds = time.milliseconds();
     return Value(static_cast<double>(milliseconds));
 }
 
 JS_DEFINE_NATIVE_FUNCTION(AgentObject::sleep)
 {
-    auto milliseconds = TRY(vm.argument(0).to_i32(global_object));
+    auto milliseconds = TRY(vm.argument(0).to_i32(vm));
     ::usleep(milliseconds * 1000);
     return js_undefined();
 }

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/DeprecatedFlyString.h>
 #include <AK/FlyString.h>
 #include <AK/Function.h>
 #include <AK/RefCounted.h>
@@ -18,15 +19,16 @@ namespace Gfx {
 
 class Typeface : public RefCounted<Typeface> {
 public:
-    Typeface(String const& family, String const& variant)
-        : m_family(family)
-        , m_variant(variant)
+    Typeface(FlyString family, FlyString variant)
+        : m_family(move(family))
+        , m_variant(move(variant))
     {
     }
 
     FlyString const& family() const { return m_family; }
     FlyString const& variant() const { return m_variant; }
     unsigned weight() const;
+    unsigned width() const;
     u8 slope() const;
 
     bool is_fixed_width() const;

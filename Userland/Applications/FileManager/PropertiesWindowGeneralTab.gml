@@ -59,6 +59,7 @@
             name: "location"
             text: "/home/anon/file"
             text_alignment: "CenterLeft"
+            text_wrapping: "DontWrap"
         }
     }
 
@@ -79,25 +80,26 @@
             name: "link_location"
             text: "/home/anon/file"
             text_alignment: "CenterLeft"
+            text_wrapping: "DontWrap"
         }
     }
 
     @GUI::Widget {
-        fixed_height: 14
+        fixed_height: 28
         layout: @GUI::HorizontalBoxLayout {
             spacing: 12
         }
 
         @GUI::Label {
             text: "Size:"
-            text_alignment: "CenterLeft"
+            text_alignment: "TopLeft"
             fixed_width: 80
         }
 
         @GUI::Label {
             name: "size"
             text: "5.9 KiB (6097 bytes)"
-            text_alignment: "CenterLeft"
+            text_alignment: "TopLeft"
         }
     }
 

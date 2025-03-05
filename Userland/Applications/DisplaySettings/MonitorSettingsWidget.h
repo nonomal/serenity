@@ -7,6 +7,7 @@
 #pragma once
 
 #include "MonitorWidget.h"
+#include <AK/String.h>
 #include <LibCore/Timer.h>
 #include <LibEDID/EDID.h>
 #include <LibGUI/ColorInput.h>
@@ -17,10 +18,16 @@
 
 namespace DisplaySettings {
 
+enum class DidScreenIndexChange {
+    No,
+    Yes
+};
+
 class MonitorSettingsWidget final : public GUI::SettingsWindow::Tab {
     C_OBJECT(MonitorSettingsWidget);
 
 public:
+    static ErrorOr<NonnullRefPtr<MonitorSettingsWidget>> try_create();
     ~MonitorSettingsWidget() override
     {
         if (m_showing_screen_numbers)
@@ -35,12 +42,13 @@ protected:
     void hide_event(GUI::HideEvent& event) override;
 
 private:
-    MonitorSettingsWidget();
+    MonitorSettingsWidget() = default;
 
-    void create_frame();
-    void create_resolution_list();
-    void load_current_settings();
-    void selected_screen_index_or_resolution_changed();
+    ErrorOr<void> create_frame();
+    ErrorOr<void> create_resolution_list();
+    ErrorOr<void> load_current_settings();
+    ErrorOr<void> generate_resolution_strings();
+    ErrorOr<void> selected_screen_index_or_resolution_changed(DidScreenIndexChange screen_index_changed);
 
     size_t m_selected_screen_index { 0 };
 

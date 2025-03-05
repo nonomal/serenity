@@ -14,9 +14,11 @@
 #include "Filters/GaussBlur3.h"
 #include "Filters/GaussBlur5.h"
 #include "Filters/Grayscale.h"
+#include "Filters/HueAndSaturation.h"
 #include "Filters/Invert.h"
 #include "Filters/LaplaceCardinal.h"
 #include "Filters/LaplaceDiagonal.h"
+#include "Filters/Median.h"
 #include "Filters/Sepia.h"
 #include "Filters/Sharpen.h"
 #include <LibGUI/FileIconProvider.h>
@@ -26,12 +28,12 @@ namespace PixelPaint {
 ErrorOr<NonnullRefPtr<GUI::TreeViewModel>> create_filter_tree_model(ImageEditor* editor)
 {
     auto directory_icon = GUI::FileIconProvider::directory_icon();
-    auto filter_icon = GUI::Icon(TRY(Gfx::Bitmap::try_load_from_file("/res/icons/pixelpaint/filter.png"sv)));
+    auto filter_icon = GUI::Icon(TRY(Gfx::Bitmap::load_from_file("/res/icons/pixelpaint/filter.png"sv)));
 
     auto filter_tree_model = GUI::TreeViewModel::create();
 
     auto add_filter_node = [&]<typename FilterType>(GUI::TreeViewModel::Node& node) {
-        auto filter = adopt_own(*new FilterType(editor));
+        auto filter = make_ref_counted<FilterType>(editor);
         (void)node.add_node<FilterNode>(filter->filter_name(), filter_icon, move(filter));
     };
 
@@ -51,8 +53,10 @@ ErrorOr<NonnullRefPtr<GUI::TreeViewModel>> create_filter_tree_model(ImageEditor*
     add_filter_node.template operator()<Filters::BoxBlur3>(blur_category);
     add_filter_node.template operator()<Filters::BoxBlur5>(blur_category);
     add_filter_node.template operator()<Filters::Sharpen>(blur_category);
+    add_filter_node.template operator()<Filters::Median>(blur_category);
 
     auto color_category = filter_tree_model->add_node("Color", directory_icon);
+    add_filter_node.template operator()<Filters::HueAndSaturation>(color_category);
     add_filter_node.template operator()<Filters::Grayscale>(color_category);
     add_filter_node.template operator()<Filters::Invert>(color_category);
     add_filter_node.template operator()<Filters::Sepia>(color_category);

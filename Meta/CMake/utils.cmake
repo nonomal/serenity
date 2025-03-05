@@ -2,6 +2,18 @@
 include(${CMAKE_CURRENT_LIST_DIR}/serenity_components.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/code_generators.cmake)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+include(GNUInstallDirs)
+
+function(serenity_set_implicit_links target_name)
+    # Make sure that CMake is aware of the implicit LibC dependency, and ensure
+    # that we are choosing the correct and updated LibC.
+    # The latter is a problem with Clang especially, since we might have the
+    # slightly outdated stub in the sysroot, but have not yet installed the freshly
+    # built LibC.
+    target_link_libraries(${target_name} PRIVATE LibC)
+endfunction()
+
 function(serenity_install_headers target_name)
     file(GLOB_RECURSE headers RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.h")
     foreach(header ${headers})
@@ -11,11 +23,8 @@ function(serenity_install_headers target_name)
 endfunction()
 
 function(serenity_install_sources)
-    # TODO: Use cmake_path() when we upgrade the minimum CMake version to 3.20
-    #       https://cmake.org/cmake/help/v3.23/command/cmake_path.html#relative-path
-    string(LENGTH ${SerenityOS_SOURCE_DIR} root_source_dir_length)
-    string(SUBSTRING ${CMAKE_CURRENT_SOURCE_DIR} ${root_source_dir_length} -1 current_source_dir_relative)
-    file(GLOB_RECURSE sources RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.h" "*.cpp")
+    cmake_path(RELATIVE_PATH CMAKE_CURRENT_SOURCE_DIR BASE_DIRECTORY ${SerenityOS_SOURCE_DIR} OUTPUT_VARIABLE current_source_dir_relative)
+    file(GLOB_RECURSE sources RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.h" "*.cpp" "*.gml")
     foreach(source ${sources})
         get_filename_component(subdirectory ${source} DIRECTORY)
         install(FILES ${source} DESTINATION usr/src/serenity/${current_source_dir_relative}/${subdirectory} OPTIONAL)
@@ -35,92 +44,117 @@ endfunction()
 
 if (NOT COMMAND serenity_lib)
     function(serenity_lib target_name fs_name)
-        serenity_install_headers(${target_name})
-        serenity_install_sources()
-        add_library(${target_name} SHARED ${SOURCES} ${GENERATED_SOURCES})
-        set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
-        set_target_properties(${target_name} PROPERTIES VERSION "serenity")
-        install(TARGETS ${target_name} DESTINATION ${CMAKE_INSTALL_LIBDIR} OPTIONAL)
-        set_target_properties(${target_name} PROPERTIES OUTPUT_NAME ${fs_name})
-        serenity_generated_sources(${target_name})
-    endfunction()
-endif()
+        cmake_parse_arguments(PARSE_ARGV 2 SERENITY_LIB "" "TYPE" "")
 
-if (NOT COMMAND serenity_lib_static)
-    function(serenity_lib_static target_name fs_name)
+        if ("${SERENITY_LIB_TYPE}" STREQUAL "")
+            set(SERENITY_LIB_TYPE SHARED)
+        endif()
+
         serenity_install_headers(${target_name})
         serenity_install_sources()
-        add_library(${target_name} STATIC ${SOURCES} ${GENERATED_SOURCES})
+        add_library(${target_name} ${SERENITY_LIB_TYPE} ${SOURCES} ${GENERATED_SOURCES})
         set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
         set_target_properties(${target_name} PROPERTIES VERSION "serenity")
+        target_link_libraries(${target_name} PUBLIC GenericClangPlugin)
         install(TARGETS ${target_name} DESTINATION ${CMAKE_INSTALL_LIBDIR} OPTIONAL)
         set_target_properties(${target_name} PROPERTIES OUTPUT_NAME ${fs_name})
         serenity_generated_sources(${target_name})
+        serenity_set_implicit_links(${target_name})
     endfunction()
 endif()
 
 function(serenity_libc target_name fs_name)
     serenity_install_headers("")
     serenity_install_sources()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -nostdlib -fpic")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -nostdlib -fpic -ftls-model=initial-exec")
     add_library(${target_name} SHARED ${SOURCES})
     install(TARGETS ${target_name} DESTINATION ${CMAKE_INSTALL_LIBDIR})
     set_target_properties(${target_name} PROPERTIES OUTPUT_NAME ${fs_name})
     # Avoid creating a dependency cycle between system libraries and the C++ standard library. This is necessary
     # to ensure that initialization functions will be called in the right order (libc++ must come after LibPthread).
-    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        target_link_options(${target_name} PRIVATE -static-libstdc++)
-    elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
-        target_link_libraries(${target_name} clang_rt.builtins)
-        # FIXME: Implement -static-libstdc++ in the next toolchain update.
-        target_link_options(${target_name} PRIVATE -nostdlib++ -Wl,-Bstatic -lc++ -Wl,-Bdynamic)
-        if (NOT ENABLE_MOLD_LINKER)
-            target_link_options(${target_name} PRIVATE -Wl,--no-dependent-libraries)
-        endif()
-        if (ENABLE_USERSPACE_COVERAGE_COLLECTION)
-            target_link_libraries(${target_name} clang_rt.profile)
-        endif()
+    target_link_options(${target_name} PRIVATE -static-libstdc++)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang$" AND ENABLE_USERSPACE_COVERAGE_COLLECTION)
+       target_link_libraries(${target_name} PRIVATE clang_rt.profile)
     endif()
     target_link_directories(LibC PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
     serenity_generated_sources(${target_name})
 endfunction()
 
-if (NOT COMMAND serenity_bin)
-    function(serenity_bin target_name)
-        serenity_install_sources()
-        add_executable(${target_name} ${SOURCES})
-        set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
-        install(TARGETS ${target_name} RUNTIME DESTINATION bin OPTIONAL)
-        serenity_generated_sources(${target_name})
+if (NOT COMMAND serenity_add_executable)
+    function(serenity_add_executable name)
+        # if any of the sources are .jakt files, switch to using serenity_jakt_executable()
+        # and pass the non-jakt sources as extra cpp sources.
+        set(jakt_source)
+        set(cpp_sources)
+        foreach(source ${ARGN})
+            if (${source} MATCHES "\\.jakt$")
+                if (jakt_source)
+                    message(FATAL_ERROR "Multiple main jakt files in executable ${name}")
+                else()
+                    set(jakt_source ${source})
+                endif()
+            else()
+                list(APPEND cpp_sources ${source})
+            endif()
+        endforeach()
+
+        if (jakt_source)
+            if (ENABLE_JAKT)
+                serenity_jakt_executable(${name} MAIN_SOURCE ${jakt_source} CPP_SOURCES ${cpp_sources})
+            else()
+                message(STATUS "Skipping ${name} because jakt is disabled")
+                # Make an empty c++ file:
+                file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${name}.cpp" "// This file was generated by CMake to skip a jakt executable\n")
+                add_executable(${name} "${CMAKE_CURRENT_BINARY_DIR}/${name}.cpp")
+                set_target_properties(${name} PROPERTIES SERENITY_SKIP_BUILD TRUE)
+            endif()
+        else()
+            add_executable(${name} ${cpp_sources})
+        endif()
     endfunction()
 endif()
 
-function(serenity_test test_src sub_dir)
-    cmake_parse_arguments(PARSE_ARGV 2 SERENITY_TEST "MAIN_ALREADY_DEFINED" "CUSTOM_MAIN" "LIBS")
-    set(TEST_SOURCES ${test_src})
-    if ("${SERENITY_TEST_CUSTOM_MAIN}" STREQUAL "")
-        set(SERENITY_TEST_CUSTOM_MAIN "$<TARGET_OBJECTS:LibTestMain>")
-    endif()
-    if (NOT ${SERENITY_TEST_MAIN_ALREADY_DEFINED})
-        list(PREPEND TEST_SOURCES "${SERENITY_TEST_CUSTOM_MAIN}")
-    endif()
-    get_filename_component(test_name ${test_src} NAME_WE)
-    add_executable(${test_name} ${TEST_SOURCES})
-    add_dependencies(ComponentTests ${test_name})
-    set_target_properties(${test_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
-    target_link_libraries(${test_name} LibTest LibCore)
-    foreach(lib ${SERENITY_TEST_LIBS})
-        target_link_libraries(${test_name} ${lib})
-    endforeach()
-    install(TARGETS ${test_name} RUNTIME DESTINATION usr/Tests/${sub_dir} OPTIONAL)
-endfunction()
+if (NOT COMMAND serenity_bin)
+    function(serenity_bin target_name)
+        serenity_install_sources()
+        serenity_add_executable(${target_name} ${SOURCES})
+        target_link_libraries(${target_name} PUBLIC GenericClangPlugin)
+        set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        install(TARGETS ${target_name} RUNTIME DESTINATION bin OPTIONAL)
+        serenity_generated_sources(${target_name})
+        serenity_set_implicit_links(${target_name})
+    endfunction()
+endif()
+
+if (NOT COMMAND serenity_test)
+    function(serenity_test test_src sub_dir)
+        cmake_parse_arguments(PARSE_ARGV 2 SERENITY_TEST "MAIN_ALREADY_DEFINED" "CUSTOM_MAIN" "LIBS")
+        set(TEST_SOURCES ${test_src})
+        if ("${SERENITY_TEST_CUSTOM_MAIN}" STREQUAL "")
+            set(SERENITY_TEST_CUSTOM_MAIN "$<TARGET_OBJECTS:LibTestMain>")
+        endif()
+        if (NOT ${SERENITY_TEST_MAIN_ALREADY_DEFINED})
+            list(PREPEND TEST_SOURCES "${SERENITY_TEST_CUSTOM_MAIN}")
+        endif()
+        get_filename_component(test_name ${test_src} NAME_WE)
+        add_executable(${test_name} ${TEST_SOURCES})
+        add_dependencies(ComponentTests ${test_name})
+        set_target_properties(${test_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        serenity_set_implicit_links(${test_name})
+        target_link_libraries(${test_name} PRIVATE LibTest LibCore LibFileSystem)
+        foreach(lib ${SERENITY_TEST_LIBS})
+            target_link_libraries(${test_name} PRIVATE ${lib})
+        endforeach()
+        install(TARGETS ${test_name} RUNTIME DESTINATION usr/Tests/${sub_dir} OPTIONAL)
+    endfunction()
+endif()
 
 function(serenity_testjs_test test_src sub_dir)
     cmake_parse_arguments(PARSE_ARGV 2 SERENITY_TEST "" "CUSTOM_MAIN" "LIBS")
     if ("${SERENITY_TEST_CUSTOM_MAIN}" STREQUAL "")
         set(SERENITY_TEST_CUSTOM_MAIN "$<TARGET_OBJECTS:JavaScriptTestRunnerMain>")
     endif()
-    list(APPEND SERENITY_TEST_LIBS LibJS LibCore)
+    list(APPEND SERENITY_TEST_LIBS LibJS LibCore LibFileSystem)
     serenity_test(${test_src} ${sub_dir}
         CUSTOM_MAIN "${SERENITY_TEST_CUSTOM_MAIN}"
         LIBS ${SERENITY_TEST_LIBS})
@@ -129,9 +163,10 @@ endfunction()
 function(serenity_app target_name)
     cmake_parse_arguments(PARSE_ARGV 1 SERENITY_APP "" "ICON" "")
 
-    serenity_bin("${target_name}")
     set(small_icon "${SerenityOS_SOURCE_DIR}/Base/res/icons/16x16/${SERENITY_APP_ICON}.png")
     set(medium_icon "${SerenityOS_SOURCE_DIR}/Base/res/icons/32x32/${SERENITY_APP_ICON}.png")
+
+    serenity_bin("${target_name}")
 
     if (EXISTS "${small_icon}")
         embed_resource("${target_name}" serenity_icon_s "${small_icon}")
@@ -163,34 +198,23 @@ function(embed_resource target section file)
         DEPENDS "${input_file}" "${SerenityOS_SOURCE_DIR}/Meta/generate-embedded-resource-assembly.sh"
         COMMENT "Generating ${asm_file}"
     )
-    target_sources("${target}" PRIVATE "${asm_file}")
+
+    add_library(
+        ${target}-resources-${section}
+        OBJECT
+        "${asm_file}"
+    )
+
+    target_link_libraries(
+        ${target} PRIVATE
+        -Wl,--whole-archive
+        ${target}-resources-${section}
+        -Wl,--no-whole-archive
+    )
 endfunction()
 
-function(link_with_unicode_data target)
-    if (ENABLE_UNICODE_DATABASE_DOWNLOAD)
-        target_link_libraries("${target}" LibUnicodeData)
-    endif()
-endfunction()
-
-function(remove_path_if_version_changed version version_file cache_path)
-    set(version_differs YES)
-
-    if (EXISTS "${version_file}")
-        file(STRINGS "${version_file}" active_version)
-        if (version STREQUAL active_version)
-            set(version_differs NO)
-        endif()
-    endif()
-
-    if (version_differs)
-        message(STATUS "Removing outdated ${cache_path} for version ${version}")
-        file(REMOVE_RECURSE "${cache_path}")
-        file(WRITE "${version_file}" "${version}")
-    endif()
-endfunction()
-
-function(invoke_generator name generator version_file prefix header implementation)
-    cmake_parse_arguments(invoke_generator "" "" "arguments" ${ARGN})
+function(invoke_generator name generator primary_source header implementation)
+    cmake_parse_arguments(invoke_generator "" "" "arguments;dependencies" ${ARGN})
 
     add_custom_command(
         OUTPUT "${header}" "${implementation}"
@@ -199,25 +223,102 @@ function(invoke_generator name generator version_file prefix header implementati
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${implementation}.tmp" "${implementation}"
         COMMAND "${CMAKE_COMMAND}" -E remove "${header}.tmp" "${implementation}.tmp"
         VERBATIM
-        DEPENDS ${generator} "${version_file}"
+        DEPENDS ${generator} ${invoke_generator_dependencies} "${primary_source}"
     )
 
-    add_custom_target("generate_${prefix}${name}" DEPENDS "${header}" "${implementation}")
-    add_dependencies(all_generated "generate_${prefix}${name}")
+    add_custom_target("generate_${name}" DEPENDS "${header}" "${implementation}")
+    add_dependencies(all_generated "generate_${name}")
+    list(APPEND CURRENT_LIB_GENERATED "${name}")
+    set(CURRENT_LIB_GENERATED ${CURRENT_LIB_GENERATED} PARENT_SCOPE)
+endfunction()
+
+function(invoke_idl_generator cpp_name idl_name generator primary_source header implementation idl)
+    cmake_parse_arguments(invoke_idl_generator "" "" "arguments;dependencies" ${ARGN})
+
+    add_custom_command(
+        OUTPUT "${header}" "${implementation}" "${idl}"
+        COMMAND $<TARGET_FILE:${generator}> -h "${header}.tmp" -c "${implementation}.tmp" -i "${idl}.tmp" ${invoke_idl_generator_arguments}
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${header}.tmp" "${header}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${implementation}.tmp" "${implementation}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${idl}.tmp" "${idl}"
+        COMMAND "${CMAKE_COMMAND}" -E remove "${header}.tmp" "${implementation}.tmp" "${idl}.tmp"
+        VERBATIM
+        DEPENDS ${generator} ${invoke_idl_generator_dependencies} "${primary_source}"
+    )
+
+    add_custom_target("generate_${cpp_name}" DEPENDS "${header}" "${implementation}" "${idl}")
+    add_custom_target("generate_${idl_name}" DEPENDS "generate_${cpp_name}")
+    add_dependencies(all_generated "generate_${cpp_name}")
+    add_dependencies(all_generated "generate_${idl_name}")
+    list(APPEND CURRENT_LIB_GENERATED "${name}")
+    set(CURRENT_LIB_GENERATED ${CURRENT_LIB_GENERATED} PARENT_SCOPE)
+endfunction()
+
+function(download_file_multisource urls path)
+    cmake_parse_arguments(DOWNLOAD "" "SHA256;VERSION;VERSION_FILE;CACHE_PATH" "" ${ARGN})
+
+    if (NOT ENABLE_NETWORK_DOWNLOADS AND NOT EXISTS "${path}")
+        message(FATAL_ERROR "${path} does not exist, and unable to download it")
+    endif()
+
+    if (EXISTS "${path}" AND "${DOWNLOAD_VERSION}" STREQUAL "")
+        return() # Assume the current version is up-to-date.
+    endif()
+
+    foreach(url ${urls})
+        set(DOWNLOAD_COMMAND "${Python3_EXECUTABLE}" "${SerenityOS_SOURCE_DIR}/Meta/download_file.py" "-o" "${path}" "${url}")
+
+        if (NOT "${DOWNLOAD_SHA256}" STREQUAL "")
+            list(APPEND DOWNLOAD_COMMAND "-s" "${DOWNLOAD_SHA256}")
+        endif()
+        if (NOT "${DOWNLOAD_VERSION}" STREQUAL "")
+            list(APPEND DOWNLOAD_COMMAND "-v" "${DOWNLOAD_VERSION}")
+            list(APPEND DOWNLOAD_COMMAND "-f" "${DOWNLOAD_VERSION_FILE}")
+        endif()
+        if (NOT "${DOWNLOAD_CACHE_PATH}" STREQUAL "")
+            list(APPEND DOWNLOAD_COMMAND "-c" "${DOWNLOAD_CACHE_PATH}")
+        endif()
+
+        execute_process(COMMAND ${DOWNLOAD_COMMAND} RESULT_VARIABLE status_code)
+
+        if(status_code EQUAL 0)
+            return()
+        endif()
+
+        message(WARNING "Failed to download ${path} from ${url}")
+    endforeach()
+
+    message(FATAL_ERROR "Failed to download ${path} from any source")
 endfunction()
 
 function(download_file url path)
-    if (NOT EXISTS "${path}")
-        get_filename_component(file "${path}" NAME)
-        message(STATUS "Downloading file ${file} from ${url}")
+    cmake_parse_arguments(DOWNLOAD "" "SHA256;VERSION;VERSION_FILE;CACHE_PATH" "" ${ARGN})
 
-        file(DOWNLOAD "${url}" "${path}" INACTIVITY_TIMEOUT 10 STATUS download_result)
-        list(GET download_result 0 status_code)
-        list(GET download_result 1 error_message)
+    # If the timestamp doesn't match exactly, the Web Archive should redirect to the closest archived file automatically.
+    download_file_multisource("${url};https://web.archive.org/web/99991231235959id_/${url}" "${path}" SHA256 "${DOWNLOAD_SHA256}" VERSION "${DOWNLOAD_VERSION}" VERSION_FILE "${DOWNLOAD_VERSION_FILE}" CACHE_PATH "${DOWNLOAD_CACHE_PATH}")
+endfunction()
 
-        if (NOT status_code EQUAL 0)
-            file(REMOVE "${path}")
-            message(FATAL_ERROR "Failed to download ${url}: ${error_message}")
-        endif()
+function(extract_path dest_dir zip_path source_path dest_path)
+    if (EXISTS "${zip_path}" AND NOT EXISTS "${dest_path}")
+        file(ARCHIVE_EXTRACT INPUT "${zip_path}" DESTINATION "${dest_dir}" PATTERNS "${source_path}")
     endif()
+endfunction()
+
+function(add_lagom_library_install_rules target_name)
+    cmake_parse_arguments(PARSE_ARGV 1 LAGOM_INSTALL_RULES "" "ALIAS_NAME" "")
+    if (NOT LAGOM_INSTALL_RULES_ALIAS_NAME)
+        set(LAGOM_INSTALL_RULES_ALIAS_NAME ${target_name})
+    endif()
+     # Don't make alias when we're going to import a previous build for Tools
+    # FIXME: Is there a better way to write this?
+    if (NOT ENABLE_FUZZERS AND NOT CMAKE_CROSSCOMPILING)
+        # alias for parity with exports
+        add_library(Lagom::${LAGOM_INSTALL_RULES_ALIAS_NAME} ALIAS ${target_name})
+    endif()
+    install(TARGETS ${target_name} EXPORT LagomTargets
+        RUNTIME COMPONENT Lagom_Runtime
+        LIBRARY COMPONENT Lagom_Runtime NAMELINK_COMPONENT Lagom_Development
+        ARCHIVE COMPONENT Lagom_Development
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
 endfunction()

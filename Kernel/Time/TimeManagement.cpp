@@ -1,30 +1,46 @@
 /*
  * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2022, Timon Kruiper <timonkruiper@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/NeverDestroyed.h>
 #include <AK/Singleton.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Time.h>
-#include <Kernel/Arch/InterruptDisabler.h>
-#include <Kernel/CommandLine.h>
+#if ARCH(X86_64)
+#    include <Kernel/Arch/x86_64/Interrupts/APIC.h>
+#    include <Kernel/Arch/x86_64/RTC.h>
+#    include <Kernel/Arch/x86_64/Time/APICTimer.h>
+#    include <Kernel/Arch/x86_64/Time/HPET.h>
+#    include <Kernel/Arch/x86_64/Time/HPETComparator.h>
+#    include <Kernel/Arch/x86_64/Time/PIT.h>
+#    include <Kernel/Arch/x86_64/Time/RTC.h>
+#elif ARCH(AARCH64)
+#    include <Kernel/Arch/aarch64/RPi/Timer.h>
+#    include <Kernel/Arch/aarch64/Time/ARMv8Timer.h>
+#elif ARCH(RISCV64)
+#    include <Kernel/Arch/riscv64/Timer.h>
+#else
+#    error Unknown architecture
+#endif
+
+#include <Kernel/Arch/CurrentTime.h>
+#include <Kernel/Boot/CommandLine.h>
 #include <Kernel/Firmware/ACPI/Parser.h>
-#include <Kernel/Interrupts/APIC.h>
-#include <Kernel/PerformanceManager.h>
-#include <Kernel/Scheduler.h>
+#include <Kernel/Interrupts/InterruptDisabler.h>
+#include <Kernel/Library/Panic.h>
 #include <Kernel/Sections.h>
-#include <Kernel/Time/APICTimer.h>
-#include <Kernel/Time/HPET.h>
-#include <Kernel/Time/HPETComparator.h>
+#include <Kernel/Tasks/PerformanceManager.h>
+#include <Kernel/Tasks/Scheduler.h>
 #include <Kernel/Time/HardwareTimer.h>
-#include <Kernel/Time/PIT.h>
-#include <Kernel/Time/RTC.h>
 #include <Kernel/Time/TimeManagement.h>
-#include <Kernel/TimerQueue.h>
+#include <Kernel/Time/TimerQueue.h>
 
 namespace Kernel {
 
+static NeverDestroyed<Vector<DeviceTree::DeviceRecipe<NonnullLockRefPtr<HardwareTimerBase>>>> s_recipes;
 static Singleton<TimeManagement> s_the;
 
 bool TimeManagement::is_initialized()
@@ -35,6 +51,31 @@ bool TimeManagement::is_initialized()
 TimeManagement& TimeManagement::the()
 {
     return *s_the;
+}
+
+void TimeManagement::add_recipe(DeviceTree::DeviceRecipe<NonnullLockRefPtr<HardwareTimerBase>> recipe)
+{
+    // This function has to be called before TimeManagement is initialized,
+    // as we do not support dynamic registration of timers.
+    VERIFY(!is_initialized());
+
+    s_recipes->append(move(recipe));
+}
+
+// The s_scheduler_specific_current_time function provides a current time for scheduling purposes,
+// which may not necessarily relate to wall time
+static u64 (*s_scheduler_current_time)();
+
+static u64 current_time_monotonic()
+{
+    // We always need a precise timestamp here, we cannot rely on a coarse timestamp
+    return (u64)TimeManagement::the().monotonic_time(TimePrecision::Precise).nanoseconds();
+}
+
+u64 TimeManagement::scheduler_current_time()
+{
+    VERIFY(s_scheduler_current_time);
+    return s_scheduler_current_time();
 }
 
 ErrorOr<void> TimeManagement::validate_clock_id(clockid_t clock_id)
@@ -51,19 +92,19 @@ ErrorOr<void> TimeManagement::validate_clock_id(clockid_t clock_id)
     };
 }
 
-Time TimeManagement::current_time(clockid_t clock_id) const
+Duration TimeManagement::current_time(clockid_t clock_id) const
 {
     switch (clock_id) {
     case CLOCK_MONOTONIC:
-        return monotonic_time(TimePrecision::Precise);
+        return monotonic_time(TimePrecision::Precise).time_since_start({});
     case CLOCK_MONOTONIC_COARSE:
-        return monotonic_time(TimePrecision::Coarse);
+        return monotonic_time(TimePrecision::Coarse).time_since_start({});
     case CLOCK_MONOTONIC_RAW:
-        return monotonic_time_raw();
+        return monotonic_time_raw().time_since_start({});
     case CLOCK_REALTIME:
-        return epoch_time(TimePrecision::Precise);
+        return epoch_time(TimePrecision::Precise).offset_to_epoch();
     case CLOCK_REALTIME_COARSE:
-        return epoch_time(TimePrecision::Coarse);
+        return epoch_time(TimePrecision::Coarse).offset_to_epoch();
     default:
         // Syscall entrypoint is missing a is_valid_clock_id(..) check?
         VERIFY_NOT_REACHED();
@@ -75,21 +116,22 @@ bool TimeManagement::is_system_timer(HardwareTimerBase const& timer) const
     return &timer == m_system_timer.ptr();
 }
 
-void TimeManagement::set_epoch_time(Time ts)
+void TimeManagement::set_epoch_time(UnixDateTime ts)
 {
+    // FIXME: The interrupt disabler intends to enforce atomic update of epoch time and remaining adjustment,
+    //        but that sort of assumption is known to break on SMP.
     InterruptDisabler disabler;
-    // FIXME: Should use AK::Time internally
-    m_epoch_time = ts.to_timespec();
-    m_remaining_epoch_time_adjustment = { 0, 0 };
+    m_epoch_time = ts;
+    m_remaining_epoch_time_adjustment = {};
 }
 
-Time TimeManagement::monotonic_time(TimePrecision precision) const
+MonotonicTime TimeManagement::monotonic_time(TimePrecision precision) const
 {
     // This is the time when last updated by an interrupt.
     u64 seconds;
     u32 ticks;
 
-    bool do_query = precision == TimePrecision::Precise && m_can_query_precise_time;
+    bool do_query = precision == TimePrecision::Precise && m_can_query_precise_time.was_set();
 
     u32 update_iteration;
     do {
@@ -98,12 +140,26 @@ Time TimeManagement::monotonic_time(TimePrecision precision) const
         ticks = m_ticks_this_second;
 
         if (do_query) {
+#if ARCH(X86_64)
             // We may have to do this over again if the timer interrupt fires
             // while we're trying to query the information. In that case, our
             // seconds and ticks became invalid, producing an incorrect time.
             // Be sure to not modify m_seconds_since_boot and m_ticks_this_second
             // because this may only be modified by the interrupt handler
             HPET::the().update_time(seconds, ticks, true);
+#elif ARCH(AARCH64)
+            // FIXME: Get rid of these horrible casts
+            if (m_system_timer->timer_type() == HardwareTimerType::RPiTimer)
+                const_cast<RPi::Timer*>(static_cast<RPi::Timer const*>(m_system_timer.ptr()))->update_time(seconds, ticks, true);
+            else if (m_system_timer->timer_type() == HardwareTimerType::ARMv8Timer)
+                const_cast<ARMv8Timer*>(static_cast<ARMv8Timer const*>(m_system_timer.ptr()))->update_time(seconds, ticks, true);
+            else
+                VERIFY_NOT_REACHED();
+#elif ARCH(RISCV64)
+            TODO_RISCV64();
+#else
+#    error Unknown architecture
+#endif
         }
     } while (update_iteration != m_update2.load(AK::MemoryOrder::memory_order_acquire));
 
@@ -111,24 +167,24 @@ Time TimeManagement::monotonic_time(TimePrecision precision) const
     VERIFY(ticks < m_time_ticks_per_second);
     u64 ns = ((u64)ticks * 1000000000ull) / m_time_ticks_per_second;
     VERIFY(ns < 1000000000ull);
-    return Time::from_timespec({ (i64)seconds, (i32)ns });
+    return MonotonicTime::from_hardware_time({}, seconds, ns);
 }
 
-Time TimeManagement::epoch_time(TimePrecision) const
+UnixDateTime TimeManagement::epoch_time(TimePrecision) const
 {
     // TODO: Take into account precision
-    timespec ts;
+    UnixDateTime time;
     u32 update_iteration;
     do {
         update_iteration = m_update1.load(AK::MemoryOrder::memory_order_acquire);
-        ts = m_epoch_time;
+        time = m_epoch_time;
     } while (update_iteration != m_update2.load(AK::MemoryOrder::memory_order_acquire));
-    return Time::from_timespec(ts);
+    return time;
 }
 
 u64 TimeManagement::uptime_ms() const
 {
-    auto mtime = monotonic_time().to_timespec();
+    auto mtime = monotonic_time().time_since_start({}).to_timespec();
     // This overflows after 292 million years of uptime.
     // Since this is only used for performance timestamps and sys$times, that's probably enough.
     u64 ms = mtime.tv_sec * 1000ull;
@@ -136,8 +192,13 @@ u64 TimeManagement::uptime_ms() const
     return ms;
 }
 
-UNMAP_AFTER_INIT void TimeManagement::initialize(u32 cpu)
+UNMAP_AFTER_INIT void TimeManagement::initialize([[maybe_unused]] u32 cpu)
 {
+    // Note: We must disable interrupts, because the timers interrupt might fire before
+    //       the TimeManagement class is completely initialized.
+    InterruptDisabler disabler;
+
+#if ARCH(X86_64)
     if (cpu == 0) {
         VERIFY(!s_the.is_initialized());
         s_the.ensure_instance();
@@ -148,17 +209,35 @@ UNMAP_AFTER_INIT void TimeManagement::initialize(u32 cpu)
             // would trigger a deadlock trying to get the s_the instance while
             // creating it.
             if (auto* apic_timer = APIC::the().initialize_timers(*s_the->m_system_timer)) {
-                dmesgln("Time: Using APIC timer as system timer");
+                dmesgln("Duration: Using APIC timer as system timer");
                 s_the->set_system_timer(*apic_timer);
             }
         }
     } else {
         VERIFY(s_the.is_initialized());
         if (auto* apic_timer = APIC::the().get_timer()) {
-            dmesgln("Time: Enable APIC timer on CPU #{}", cpu);
+            dmesgln("Duration: Enable APIC timer on CPU #{}", cpu);
             apic_timer->enable_local_timer();
         }
     }
+#elif ARCH(AARCH64)
+    if (cpu == 0) {
+        VERIFY(!s_the.is_initialized());
+        s_the.ensure_instance();
+    }
+#elif ARCH(RISCV64)
+    if (cpu == 0) {
+        VERIFY(!s_the.is_initialized());
+        s_the.ensure_instance();
+    }
+#else
+#    error Unknown architecture
+#endif
+    auto* possible_arch_specific_current_time_function = optional_current_time();
+    if (possible_arch_specific_current_time_function)
+        s_scheduler_current_time = possible_arch_specific_current_time_function;
+    else
+        s_scheduler_current_time = current_time_monotonic;
 }
 
 void TimeManagement::set_system_timer(HardwareTimerBase& timer)
@@ -175,37 +254,58 @@ time_t TimeManagement::ticks_per_second() const
     return m_time_keeper_timer->ticks_per_second();
 }
 
-time_t TimeManagement::boot_time()
+UnixDateTime TimeManagement::boot_time()
 {
+#if ARCH(X86_64)
     return RTC::boot_time();
+#elif ARCH(AARCH64) || ARCH(RISCV64)
+    // FIXME: Return correct boot time
+    return UnixDateTime::epoch();
+#else
+#    error Unknown architecture
+#endif
+}
+
+Duration TimeManagement::clock_resolution() const
+{
+    long nanoseconds_per_tick = 1'000'000'000 / m_time_keeper_timer->ticks_per_second();
+    return Duration::from_nanoseconds(nanoseconds_per_tick);
 }
 
 UNMAP_AFTER_INIT TimeManagement::TimeManagement()
-    : m_time_page_region(MM.allocate_kernel_region(PAGE_SIZE, "Time page"sv, Memory::Region::Access::ReadWrite, AllocationStrategy::AllocateNow).release_value_but_fixme_should_propagate_errors())
+    : m_time_page_region(MM.allocate_kernel_region(PAGE_SIZE, "Duration page"sv, Memory::Region::Access::ReadWrite, AllocationStrategy::AllocateNow).release_value_but_fixme_should_propagate_errors())
 {
+#if ARCH(X86_64)
     bool probe_non_legacy_hardware_timers = !(kernel_command_line().is_legacy_time_enabled());
     if (ACPI::is_enabled()) {
         if (!ACPI::Parser::the()->x86_specific_flags().cmos_rtc_not_present) {
             RTC::initialize();
-            m_epoch_time.tv_sec += boot_time();
+            m_epoch_time += boot_time().offset_to_epoch();
         } else {
             dmesgln("ACPI: RTC CMOS Not present");
         }
     } else {
         // We just assume that we can access RTC CMOS, if ACPI isn't usable.
         RTC::initialize();
-        m_epoch_time.tv_sec += boot_time();
+        m_epoch_time += boot_time().offset_to_epoch();
     }
     if (probe_non_legacy_hardware_timers) {
-        if (!probe_and_set_non_legacy_hardware_timers())
-            if (!probe_and_set_legacy_hardware_timers())
+        if (!probe_and_set_x86_non_legacy_hardware_timers())
+            if (!probe_and_set_x86_legacy_hardware_timers())
                 VERIFY_NOT_REACHED();
-    } else if (!probe_and_set_legacy_hardware_timers()) {
+    } else if (!probe_and_set_x86_legacy_hardware_timers()) {
         VERIFY_NOT_REACHED();
     }
+#elif ARCH(AARCH64)
+    probe_and_set_aarch64_hardware_timers();
+#elif ARCH(RISCV64)
+    probe_and_set_riscv64_hardware_timers();
+#else
+#    error Unknown architecture
+#endif
 }
 
-Time TimeManagement::now()
+UnixDateTime TimeManagement::now()
 {
     return s_the.ptr()->epoch_time();
 }
@@ -213,13 +313,13 @@ Time TimeManagement::now()
 UNMAP_AFTER_INIT Vector<HardwareTimerBase*> TimeManagement::scan_and_initialize_periodic_timers()
 {
     bool should_enable = is_hpet_periodic_mode_allowed();
-    dbgln("Time: Scanning for periodic timers");
+    dbgln("Duration: Scanning for periodic timers");
     Vector<HardwareTimerBase*> timers;
     for (auto& hardware_timer : m_hardware_timers) {
-        if (hardware_timer.is_periodic_capable()) {
-            timers.append(&hardware_timer);
+        if (hardware_timer->is_periodic_capable()) {
+            timers.append(hardware_timer);
             if (should_enable)
-                hardware_timer.set_periodic();
+                hardware_timer->set_periodic();
         }
     }
     return timers;
@@ -227,11 +327,11 @@ UNMAP_AFTER_INIT Vector<HardwareTimerBase*> TimeManagement::scan_and_initialize_
 
 UNMAP_AFTER_INIT Vector<HardwareTimerBase*> TimeManagement::scan_for_non_periodic_timers()
 {
-    dbgln("Time: Scanning for non-periodic timers");
+    dbgln("Duration: Scanning for non-periodic timers");
     Vector<HardwareTimerBase*> timers;
     for (auto& hardware_timer : m_hardware_timers) {
-        if (!hardware_timer.is_periodic_capable())
-            timers.append(&hardware_timer);
+        if (!hardware_timer->is_periodic_capable())
+            timers.append(hardware_timer);
     }
     return timers;
 }
@@ -248,7 +348,8 @@ bool TimeManagement::is_hpet_periodic_mode_allowed()
     }
 }
 
-UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_non_legacy_hardware_timers()
+#if ARCH(X86_64)
+UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_x86_non_legacy_hardware_timers()
 {
     if (!ACPI::is_enabled())
         return false;
@@ -282,7 +383,7 @@ UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_non_legacy_hardware_timers()
         taken_non_periodic_timers_count += 1;
     }
 
-    m_system_timer->set_callback([this](RegisterState const& regs) {
+    m_system_timer->set_callback([this]() {
         // Update the time. We don't really care too much about the
         // frequency of the interrupt because we'll query the main
         // counter to get an accurate time.
@@ -291,13 +392,13 @@ UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_non_legacy_hardware_timers()
             increment_time_since_boot_hpet();
         }
 
-        system_timer_tick(regs);
+        system_timer_tick();
     });
 
     // Use the HPET main counter frequency for time purposes. This is likely
     // a much higher frequency than the interrupt itself and allows us to
     // keep a more accurate time
-    m_can_query_precise_time = true;
+    m_can_query_precise_time.set();
     m_time_ticks_per_second = HPET::the().frequency();
 
     m_system_timer->try_to_set_frequency(m_system_timer->calculate_nearest_possible_frequency(OPTIMAL_TICKS_PER_SECOND_RATE));
@@ -322,7 +423,7 @@ UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_non_legacy_hardware_timers()
     return true;
 }
 
-UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_legacy_hardware_timers()
+UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_x86_legacy_hardware_timers()
 {
     if (ACPI::is_enabled()) {
         if (ACPI::Parser::the()->x86_specific_flags().cmos_rtc_not_present) {
@@ -343,7 +444,7 @@ UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_legacy_hardware_timers()
     return true;
 }
 
-void TimeManagement::update_time(RegisterState const&)
+void TimeManagement::update_time()
 {
     TimeManagement::the().increment_time_since_boot();
 }
@@ -366,12 +467,96 @@ void TimeManagement::increment_time_since_boot_hpet()
     m_seconds_since_boot = seconds_since_boot;
     m_ticks_this_second = ticks_this_second;
     // TODO: Apply m_remaining_epoch_time_adjustment
-    timespec_add(m_epoch_time, { (time_t)(delta_ns / 1000000000), (long)(delta_ns % 1000000000) }, m_epoch_time);
+    timespec time_adjustment = { (time_t)(delta_ns / 1000000000), (long)(delta_ns % 1000000000) };
+    m_epoch_time += Duration::from_timespec(time_adjustment);
 
     m_update1.store(update_iteration + 1, AK::MemoryOrder::memory_order_release);
 
     update_time_page();
 }
+#elif ARCH(AARCH64)
+UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_aarch64_hardware_timers()
+{
+    for (auto& recipe : *s_recipes) {
+        auto device_or_error = recipe.create_device();
+        if (device_or_error.is_error()) {
+            dmesgln("TimeManagement: Failed to create timer for device \"{}\" with driver {}: {}", recipe.node_name, recipe.driver_name, device_or_error.release_error());
+            continue;
+        }
+
+        m_hardware_timers.append(device_or_error.release_value());
+    }
+
+    if (m_hardware_timers.is_empty())
+        PANIC("TimeManagement: No supported timer found in devicetree");
+
+    // TODO: Use some kind of heuristic to decide which timer to use.
+    m_system_timer = m_hardware_timers.last();
+    dbgln("TimeManagement: System timer: {}", m_system_timer->model());
+
+    m_time_ticks_per_second = m_system_timer->ticks_per_second();
+
+    m_system_timer->set_callback([this]() {
+        auto seconds_since_boot = m_seconds_since_boot;
+        auto ticks_this_second = m_ticks_this_second;
+
+        u64 delta_ns;
+        if (m_system_timer->timer_type() == HardwareTimerType::RPiTimer)
+            delta_ns = static_cast<RPi::Timer*>(m_system_timer.ptr())->update_time(seconds_since_boot, ticks_this_second, false);
+        else if (m_system_timer->timer_type() == HardwareTimerType::ARMv8Timer)
+            delta_ns = static_cast<ARMv8Timer*>(m_system_timer.ptr())->update_time(seconds_since_boot, ticks_this_second, false);
+        else
+            VERIFY_NOT_REACHED();
+
+        u32 update_iteration = m_update2.fetch_add(1, AK::MemoryOrder::memory_order_acquire);
+        m_seconds_since_boot = seconds_since_boot;
+        m_ticks_this_second = ticks_this_second;
+
+        m_epoch_time += Duration::from_nanoseconds(delta_ns);
+
+        m_update1.store(update_iteration + 1, AK::MemoryOrder::memory_order_release);
+
+        update_time_page();
+
+        system_timer_tick();
+    });
+
+    m_time_keeper_timer = m_system_timer;
+
+    return true;
+}
+#elif ARCH(RISCV64)
+UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_riscv64_hardware_timers()
+{
+    m_hardware_timers.append(RISCV64::Timer::initialize());
+    m_system_timer = m_hardware_timers[0];
+    m_time_ticks_per_second = m_system_timer->ticks_per_second();
+
+    m_system_timer->set_callback([this]() {
+        auto seconds_since_boot = m_seconds_since_boot;
+        auto ticks_this_second = m_ticks_this_second;
+        auto delta_ns = static_cast<RISCV64::Timer*>(m_system_timer.ptr())->update_time(seconds_since_boot, ticks_this_second, false);
+
+        u32 update_iteration = m_update2.fetch_add(1, AK::MemoryOrder::memory_order_acquire);
+        m_seconds_since_boot = seconds_since_boot;
+        m_ticks_this_second = ticks_this_second;
+
+        m_epoch_time += Duration::from_nanoseconds(delta_ns);
+
+        m_update1.store(update_iteration + 1, AK::MemoryOrder::memory_order_release);
+
+        update_time_page();
+
+        system_timer_tick();
+    });
+
+    m_time_keeper_timer = m_system_timer;
+
+    return true;
+}
+#else
+#    error Unknown architecture
+#endif
 
 void TimeManagement::increment_time_since_boot()
 {
@@ -380,20 +565,16 @@ void TimeManagement::increment_time_since_boot()
     // Compute time adjustment for adjtime. Let the clock run up to 1% fast or slow.
     // That way, adjtime can adjust up to 36 seconds per hour, without time getting very jumpy.
     // Once we have a smarter NTP service that also adjusts the frequency instead of just slewing time, maybe we can lower this.
-    long NanosPerTick = 1'000'000'000 / m_time_keeper_timer->frequency();
-    time_t MaxSlewNanos = NanosPerTick / 100;
+    long nanos_per_tick = 1'000'000'000 / m_time_keeper_timer->ticks_per_second();
+    time_t max_slew_nanos = nanos_per_tick / 100;
 
     u32 update_iteration = m_update2.fetch_add(1, AK::MemoryOrder::memory_order_acquire);
 
-    // Clamp twice, to make sure intermediate fits into a long.
-    long slew_nanos = clamp(clamp(m_remaining_epoch_time_adjustment.tv_sec, (time_t)-1, (time_t)1) * 1'000'000'000 + m_remaining_epoch_time_adjustment.tv_nsec, -MaxSlewNanos, MaxSlewNanos);
-    timespec slew_nanos_ts;
-    timespec_sub({ 0, slew_nanos }, { 0, 0 }, slew_nanos_ts); // Normalize tv_nsec to be positive.
-    timespec_sub(m_remaining_epoch_time_adjustment, slew_nanos_ts, m_remaining_epoch_time_adjustment);
+    auto slew_nanos = Duration::from_nanoseconds(
+        clamp(m_remaining_epoch_time_adjustment.to_nanoseconds(), -max_slew_nanos, max_slew_nanos));
+    m_remaining_epoch_time_adjustment -= slew_nanos;
 
-    timespec epoch_tick = { .tv_sec = 0, .tv_nsec = NanosPerTick };
-    epoch_tick.tv_nsec += slew_nanos; // No need for timespec_add(), guaranteed to be in range.
-    timespec_add(m_epoch_time, epoch_tick, m_epoch_time);
+    m_epoch_time += Duration::from_nanoseconds(nanos_per_tick + slew_nanos.to_nanoseconds());
 
     if (++m_ticks_this_second >= m_time_keeper_timer->ticks_per_second()) {
         // FIXME: Synchronize with other clock somehow to prevent drifting apart.
@@ -406,13 +587,13 @@ void TimeManagement::increment_time_since_boot()
     update_time_page();
 }
 
-void TimeManagement::system_timer_tick(RegisterState const& regs)
+void TimeManagement::system_timer_tick()
 {
     if (Processor::current_in_irq() <= 1) {
         // Don't expire timers while handling IRQs
         TimerQueue::the().fire();
     }
-    Scheduler::timer_tick(regs);
+    Scheduler::timer_tick();
 }
 
 bool TimeManagement::enable_profile_timer()
@@ -437,8 +618,8 @@ void TimeManagement::update_time_page()
 {
     auto& page = time_page();
     u32 update_iteration = AK::atomic_fetch_add(&page.update2, 1u, AK::MemoryOrder::memory_order_acquire);
-    page.clocks[CLOCK_REALTIME_COARSE] = m_epoch_time;
-    page.clocks[CLOCK_MONOTONIC_COARSE] = monotonic_time(TimePrecision::Coarse).to_timespec();
+    page.clocks[CLOCK_REALTIME_COARSE] = m_epoch_time.to_timespec();
+    page.clocks[CLOCK_MONOTONIC_COARSE] = monotonic_time(TimePrecision::Coarse).time_since_start({}).to_timespec();
     AK::atomic_store(&page.update1, update_iteration + 1u, AK::MemoryOrder::memory_order_release);
 }
 

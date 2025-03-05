@@ -6,13 +6,21 @@
 
 #pragma once
 
+#include <AK/Error.h>
+
 namespace IPC {
 
 class Decoder;
-class Dictionary;
 class Encoder;
 class Message;
+class MessageBuffer;
 class File;
 class Stub;
+
+template<typename T>
+ErrorOr<void> encode(Encoder&, T const&);
+
+template<typename T>
+ErrorOr<T> decode(Decoder&);
 
 }

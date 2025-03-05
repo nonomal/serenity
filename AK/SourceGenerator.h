@@ -1,11 +1,13 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/GenericLexer.h>
 #include <AK/HashMap.h>
 #include <AK/String.h>
@@ -25,19 +27,32 @@ public:
         , m_closing(closing)
     {
     }
-    explicit SourceGenerator(StringBuilder& builder, MappingType const& mapping, char opening = '@', char closing = '@')
+    explicit SourceGenerator(StringBuilder& builder, MappingType&& mapping, char opening = '@', char closing = '@')
         : m_builder(builder)
-        , m_mapping(mapping)
+        , m_mapping(move(mapping))
         , m_opening(opening)
         , m_closing(closing)
     {
     }
 
     SourceGenerator(SourceGenerator&&) = default;
+    // Move-assign is undefinable due to 'StringBuilder& m_builder;'
+    SourceGenerator& operator=(SourceGenerator&&) = delete;
 
-    SourceGenerator fork() { return SourceGenerator { m_builder, m_mapping, m_opening, m_closing }; }
+    [[nodiscard]] SourceGenerator fork()
+    {
+        return SourceGenerator { m_builder, MUST(m_mapping.clone()), m_opening, m_closing };
+    }
 
-    void set(StringView key, String value) { m_mapping.set(key, move(value)); }
+    void set(StringView key, String value)
+    {
+        if (key.contains(m_opening) || key.contains(m_closing)) {
+            warnln("SourceGenerator keys cannot contain the opening/closing delimiters `{}` and `{}`. (Keys are only wrapped in these when using them, not when setting them.)", m_opening, m_closing);
+            VERIFY_NOT_REACHED();
+        }
+        m_mapping.set(key, move(value));
+    }
+
     String get(StringView key) const
     {
         auto result = m_mapping.get(key);
@@ -49,23 +64,16 @@ public:
     }
 
     StringView as_string_view() const { return m_builder.string_view(); }
-    String as_string() const { return m_builder.build(); }
 
     void append(StringView pattern)
     {
         GenericLexer lexer { pattern };
 
         while (!lexer.is_eof()) {
-            // FIXME: It is a bit inconvenient, that 'consume_until' also consumes the 'stop' character, this makes
-            //        the method less generic because there is no way to check if the 'stop' character ever appeared.
-            auto const consume_until_without_consuming_stop_character = [&](char stop) {
-                return lexer.consume_while([&](char ch) { return ch != stop; });
-            };
-
-            m_builder.append(consume_until_without_consuming_stop_character(m_opening));
+            m_builder.append(lexer.consume_until(m_opening));
 
             if (lexer.consume_specific(m_opening)) {
-                auto const placeholder = consume_until_without_consuming_stop_character(m_closing);
+                auto const placeholder = lexer.consume_until(m_closing);
 
                 if (!lexer.consume_specific(m_closing))
                     VERIFY_NOT_REACHED();
@@ -107,6 +115,17 @@ public:
         appendln(StringView { pattern, N - 1 });
     }
 
+    // FIXME: These are deprecated.
+    void set(StringView key, ByteString value)
+    {
+        set(key, MUST(String::from_byte_string(value)));
+    }
+    template<size_t N>
+    void set(char const (&key)[N], ByteString value)
+    {
+        set(StringView { key, N - 1 }, value);
+    }
+
 private:
     StringBuilder& m_builder;
     MappingType m_mapping;
@@ -115,4 +134,6 @@ private:
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::SourceGenerator;
+#endif

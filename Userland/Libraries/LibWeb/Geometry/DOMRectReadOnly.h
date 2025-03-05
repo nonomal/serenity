@@ -1,51 +1,84 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2024, Kenneth Myhra <kennethmyhra@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/RefCounted.h>
 #include <LibGfx/Rect.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/Serializable.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::Geometry {
 
+// https://drafts.fxtf.org/geometry/#dictdef-domrectinit
+struct DOMRectInit {
+    double x { 0.0 };
+    double y { 0.0 };
+    double width { 0.0 };
+    double height { 0.0 };
+};
+
 // https://drafts.fxtf.org/geometry/#domrectreadonly
 class DOMRectReadOnly
-    : public RefCounted<DOMRectReadOnly>
-    , public Bindings::Wrappable {
+    : public Bindings::PlatformObject
+    , public Bindings::Serializable {
+    WEB_PLATFORM_OBJECT(DOMRectReadOnly, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(DOMRectReadOnly);
+
 public:
-    using WrapperType = Bindings::DOMRectReadOnlyWrapper;
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMRectReadOnly>> construct_impl(JS::Realm&, double x = 0, double y = 0, double width = 0, double height = 0);
+    [[nodiscard]] static JS::NonnullGCPtr<DOMRectReadOnly> from_rect(JS::VM&, DOMRectInit const&);
+    static JS::NonnullGCPtr<DOMRectReadOnly> create(JS::Realm&);
 
-    static NonnullRefPtr<DOMRectReadOnly> create_with_global_object(Bindings::WindowObject&, double x = 0, double y = 0, double width = 0, double height = 0)
-    {
-        return DOMRectReadOnly::create(x, y, width, height);
-    }
-
-    static NonnullRefPtr<DOMRectReadOnly> create(double x = 0, double y = 0, double width = 0, double height = 0)
-    {
-        return adopt_ref(*new DOMRectReadOnly(x, y, width, height));
-    }
+    virtual ~DOMRectReadOnly() override;
 
     double x() const { return m_rect.x(); }
     double y() const { return m_rect.y(); }
     double width() const { return m_rect.width(); }
     double height() const { return m_rect.height(); }
 
-    double top() const { return min(y(), y() + height()); }
-    double right() const { return max(x(), x() + width()); }
-    double bottom() const { return max(y(), y() + height()); }
-    double left() const { return min(x(), x() + width()); }
-
-protected:
-    DOMRectReadOnly(float x, float y, float width, float height)
-        : m_rect(x, y, width, height)
+    double top() const
     {
+        if (isnan(y()) || isnan(height()))
+            return NAN;
+        return min(y(), y() + height());
     }
 
-    Gfx::FloatRect m_rect;
+    double right() const
+    {
+        if (isnan(x()) || isnan(width()))
+            return NAN;
+        return max(x(), x() + width());
+    }
+
+    double bottom() const
+    {
+        if (isnan(y()) || isnan(height()))
+            return NAN;
+        return max(y(), y() + height());
+    }
+
+    double left() const
+    {
+        if (isnan(x()) || isnan(width()))
+            return NAN;
+        return min(x(), x() + width());
+    }
+
+    virtual StringView interface_name() const override { return "DOMRectReadOnly"sv; }
+    virtual WebIDL::ExceptionOr<void> serialization_steps(HTML::SerializationRecord&, bool for_storage, HTML::SerializationMemory&) override;
+    virtual WebIDL::ExceptionOr<void> deserialization_steps(ReadonlySpan<u32> const&, size_t& position, HTML::DeserializationMemory&) override;
+
+protected:
+    DOMRectReadOnly(JS::Realm&, double x, double y, double width, double height);
+    explicit DOMRectReadOnly(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
+
+    Gfx::DoubleRect m_rect;
 };
 }

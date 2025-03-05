@@ -31,17 +31,43 @@ void set_system_theme(Core::AnonymousBuffer buffer)
     theme_page = theme_buffer.data<SystemTheme>();
 }
 
-Core::AnonymousBuffer load_system_theme(Core::ConfigFile const& file)
+ErrorOr<Core::AnonymousBuffer> load_system_theme(Core::ConfigFile const& file, Optional<ByteString> const& color_scheme)
 {
-    auto buffer = Core::AnonymousBuffer::create_with_size(sizeof(SystemTheme)).release_value();
+    auto buffer = TRY(Core::AnonymousBuffer::create_with_size(sizeof(SystemTheme)));
 
     auto* data = buffer.data<SystemTheme>();
 
-    auto get_color = [&](auto& name) {
+    if (color_scheme.has_value()) {
+        if (color_scheme.value().length() > 255)
+            return Error::from_string_literal("Passed an excessively long color scheme pathname");
+        if (color_scheme.value() != "Custom"sv)
+            memcpy(data->path[(int)PathRole::ColorScheme], color_scheme.value().characters(), color_scheme.value().length());
+        else
+            memcpy(buffer.data<SystemTheme>(), theme_buffer.data<SystemTheme>(), sizeof(SystemTheme));
+    }
+
+    auto get_color = [&](auto& name) -> Optional<Color> {
         auto color_string = file.read_entry("Colors", name);
         auto color = Color::from_string(color_string);
-        if (!color.has_value())
-            return Color(Color::Black);
+        if (color_scheme.has_value() && color_scheme.value() == "Custom"sv)
+            return color;
+        if (!color.has_value()) {
+            auto maybe_color_config = Core::ConfigFile::open(data->path[(int)PathRole::ColorScheme]);
+            if (maybe_color_config.is_error())
+                maybe_color_config = Core::ConfigFile::open("/res/color-schemes/Default.ini");
+            auto color_config = maybe_color_config.release_value();
+            if (name == "ColorSchemeBackground"sv)
+                color = Gfx::Color::from_string(color_config->read_entry("Primary", "Background"));
+            else if (name == "ColorSchemeForeground"sv)
+                color = Gfx::Color::from_string(color_config->read_entry("Primary", "Foreground"));
+            else if (strncmp(name, "Bright", 6) == 0)
+                color = Gfx::Color::from_string(color_config->read_entry("Bright", name + 6));
+            else
+                color = Gfx::Color::from_string(color_config->read_entry("Normal", name));
+
+            if (!color.has_value())
+                return Color(Color::Black);
+        }
         return color.value();
     };
 
@@ -72,6 +98,24 @@ Core::AnonymousBuffer load_system_theme(Core::ConfigFile const& file)
         return Gfx::TextAlignment::CenterLeft;
     };
 
+    auto get_window_theme = [&](auto& name, auto role) {
+        auto window_theme = file.read_entry("Window", name);
+        if (window_theme.is_empty()) {
+            switch (role) {
+            case (int)WindowThemeRole::WindowTheme:
+                return Gfx::WindowThemeProvider::Classic;
+            default:
+                dbgln("Window theme {} has no fallback value!", name);
+                return Gfx::WindowThemeProvider::Classic;
+            }
+        }
+
+        if (auto provider = window_theme_provider_from_string(window_theme); provider.has_value())
+            return *provider;
+        dbgln("Window theme {} has an invalid value!", name);
+        return Gfx::WindowThemeProvider::Classic;
+    };
+
     auto get_metric = [&](auto& name, auto role) {
         int metric = file.read_num_entry("Metrics", name, -1);
         if (metric == -1) {
@@ -86,6 +130,8 @@ Core::AnonymousBuffer load_system_theme(Core::ConfigFile const& file)
                 return 15;
             case (int)MetricRole::TitleButtonWidth:
                 return 15;
+            case (int)MetricRole::TitleButtonInactiveAlpha:
+                return 255;
             default:
                 dbgln("Metric {} has no fallback value!", name);
                 return 16;
@@ -107,30 +153,6 @@ Core::AnonymousBuffer load_system_theme(Core::ConfigFile const& file)
         return &path[0];
     };
 
-#undef __ENUMERATE_COLOR_ROLE
-#define __ENUMERATE_COLOR_ROLE(role) \
-    data->color[(int)ColorRole::role] = get_color(#role).value();
-    ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE)
-#undef __ENUMERATE_COLOR_ROLE
-
-#undef __ENUMERATE_ALIGNMENT_ROLE
-#define __ENUMERATE_ALIGNMENT_ROLE(role) \
-    data->alignment[(int)AlignmentRole::role] = get_alignment(#role, (int)AlignmentRole::role);
-    ENUMERATE_ALIGNMENT_ROLES(__ENUMERATE_ALIGNMENT_ROLE)
-#undef __ENUMERATE_ALIGNMENT_ROLE
-
-#undef __ENUMERATE_FLAG_ROLE
-#define __ENUMERATE_FLAG_ROLE(role) \
-    data->flag[(int)FlagRole::role] = get_flag(#role);
-    ENUMERATE_FLAG_ROLES(__ENUMERATE_FLAG_ROLE)
-#undef __ENUMERATE_FLAG_ROLE
-
-#undef __ENUMERATE_METRIC_ROLE
-#define __ENUMERATE_METRIC_ROLE(role) \
-    data->metric[(int)MetricRole::role] = get_metric(#role, (int)MetricRole::role);
-    ENUMERATE_METRIC_ROLES(__ENUMERATE_METRIC_ROLE)
-#undef __ENUMERATE_METRIC_ROLE
-
 #define ENCODE_PATH(x, allow_empty)                                                                              \
     do {                                                                                                         \
         auto path = get_path(#x, (int)PathRole::x, allow_empty);                                                 \
@@ -144,23 +166,73 @@ Core::AnonymousBuffer load_system_theme(Core::ConfigFile const& file)
     ENCODE_PATH(TaskbarShadow, true);
     ENCODE_PATH(MenuShadow, true);
     ENCODE_PATH(TooltipShadow, true);
+    if (!color_scheme.has_value())
+        ENCODE_PATH(ColorScheme, true);
+
+#undef __ENUMERATE_COLOR_ROLE
+#define __ENUMERATE_COLOR_ROLE(role)                                    \
+    {                                                                   \
+        Optional<Color> result = get_color(#role);                      \
+        if (result.has_value())                                         \
+            data->color[(int)ColorRole::role] = result.value().value(); \
+    }
+    ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE)
+#undef __ENUMERATE_COLOR_ROLE
+
+#undef __ENUMERATE_ALIGNMENT_ROLE
+#define __ENUMERATE_ALIGNMENT_ROLE(role) \
+    data->alignment[(int)AlignmentRole::role] = get_alignment(#role, (int)AlignmentRole::role);
+    ENUMERATE_ALIGNMENT_ROLES(__ENUMERATE_ALIGNMENT_ROLE)
+#undef __ENUMERATE_ALIGNMENT_ROLE
+
+#undef __ENUMERATE_WINDOW_THEME_ROLE
+#define __ENUMERATE_WINDOW_THEME_ROLE(role) \
+    data->window_theme[(int)WindowThemeRole::role] = get_window_theme(#role, (int)WindowThemeRole::role);
+    ENUMERATE_WINDOW_THEME_ROLES(__ENUMERATE_WINDOW_THEME_ROLE)
+#undef __ENUMERATE_WINDOW_THEME_ROLE
+
+#undef __ENUMERATE_FLAG_ROLE
+#define __ENUMERATE_FLAG_ROLE(role)                            \
+    {                                                          \
+        if (#role != "BoldTextAsBright"sv)                     \
+            data->flag[(int)FlagRole::role] = get_flag(#role); \
+    }
+    ENUMERATE_FLAG_ROLES(__ENUMERATE_FLAG_ROLE)
+#undef __ENUMERATE_FLAG_ROLE
+
+#undef __ENUMERATE_METRIC_ROLE
+#define __ENUMERATE_METRIC_ROLE(role) \
+    data->metric[(int)MetricRole::role] = get_metric(#role, (int)MetricRole::role);
+    ENUMERATE_METRIC_ROLES(__ENUMERATE_METRIC_ROLE)
+#undef __ENUMERATE_METRIC_ROLE
+
+    if (!color_scheme.has_value() || color_scheme.value() != "Custom"sv) {
+        auto maybe_color_config = Core::ConfigFile::open(data->path[(int)PathRole::ColorScheme]);
+        if (!maybe_color_config.is_error()) {
+            auto color_config = maybe_color_config.release_value();
+            data->flag[(int)FlagRole::BoldTextAsBright] = color_config->read_bool_entry("Options", "ShowBoldTextAsBright", true);
+        }
+    }
 
     return buffer;
 }
 
-Core::AnonymousBuffer load_system_theme(String const& path)
+ErrorOr<Core::AnonymousBuffer> load_system_theme(ByteString const& path, Optional<ByteString> const& color_scheme)
 {
-    return load_system_theme(Core::ConfigFile::open(path).release_value_but_fixme_should_propagate_errors());
+    auto config_file = TRY(Core::ConfigFile::open(path));
+    return TRY(load_system_theme(config_file, color_scheme));
 }
 
-Vector<SystemThemeMetaData> list_installed_system_themes()
+ErrorOr<Vector<SystemThemeMetaData>> list_installed_system_themes()
 {
     Vector<SystemThemeMetaData> system_themes;
     Core::DirIterator dt("/res/themes", Core::DirIterator::SkipDots);
     while (dt.has_next()) {
         auto theme_name = dt.next_path();
-        auto theme_path = String::formatted("/res/themes/{}", theme_name);
-        system_themes.append({ LexicalPath::title(theme_name), theme_path });
+        auto theme_path = ByteString::formatted("/res/themes/{}", theme_name);
+        auto config_file = TRY(Core::ConfigFile::open(theme_path));
+        auto menu_name = config_file->read_entry("Menu", "Name", theme_name);
+        TRY(system_themes.try_append({ LexicalPath::title(theme_name), menu_name, theme_path }));
     }
     quick_sort(system_themes, [](auto& a, auto& b) { return a.name < b.name; });
     return system_themes;

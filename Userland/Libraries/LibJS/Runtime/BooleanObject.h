@@ -12,14 +12,17 @@ namespace JS {
 
 class BooleanObject : public Object {
     JS_OBJECT(BooleanObject, Object);
+    JS_DECLARE_ALLOCATOR(BooleanObject);
 
 public:
-    static BooleanObject* create(GlobalObject&, bool);
+    static NonnullGCPtr<BooleanObject> create(Realm&, bool);
 
-    BooleanObject(bool, Object& prototype);
     virtual ~BooleanObject() override = default;
 
     bool boolean() const { return m_value; }
+
+protected:
+    BooleanObject(bool, Object& prototype);
 
 private:
     bool m_value { false };

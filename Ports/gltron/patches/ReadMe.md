@@ -1,28 +1,25 @@
 # Patches for gltron on SerenityOS
 
-## `0001-Build-Replace-lGL-with-lgl-to-reference-our-LibGL.patch`
-
-Build: Replace `-lGL` with `-lgl` to reference our LibGL
-
-
-## `0002-Build-Remove-ansi-build-argument.patch`
+## `0001-Build-Remove-ansi-build-argument.patch`
 
 Build: Remove `-ansi` build argument
 
 
-## `0003-Build-Fix-char-vs.-const-char-arguments.patch`
+## `0002-Build-Fix-char-vs.-const-char-arguments.patch`
 
 Build: Fix `char*` vs. `const char*` arguments
 
 These arguments are of the wrong constness, which will trip our
 compiler.
 
-## `0004-Build-Disable-nebu-using-SDL-s-glext.h-constants.patch`
+## `0003-System-Make-sure-to-exit-the-loop-on-receiving-SDL_Q.patch`
 
-Build: Disable nebu using SDL's glext.h constants
+System: Make sure to exit the loop on receiving SDL_QUIT
 
-SerenityOS provides glext.h definitions inside GL/gl.h, but the
-build process thinks that glext.h doesn't exist, therefore it attempts
-to use SDL's definitions, which leads to a conflict. Therefore, disable
-use of said definitions.
+This is fixed in more modern adaptations, as can be seen here:
+
+https://github.com/laanwj/gltron/blob/336dbbb75afe0aed1d9faaa5bbaa867b2b13d10b/nebu/base/system.c#L135
+
+Since we work with the original source material, we better patch this
+ourselves.
 

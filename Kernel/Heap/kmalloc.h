@@ -7,23 +7,28 @@
 #pragma once
 
 #include <AK/Types.h>
-#include <Kernel/Debug.h>
-#include <LibC/limits.h>
+#include <Kernel/API/POSIX/sys/limits.h> // For PAGE_SIZE. Everyone needs PAGE_SIZE
 
 #define KMALLOC_SCRUB_BYTE 0xbb
 #define KFREE_SCRUB_BYTE 0xaa
 
-#define MAKE_ALIGNED_ALLOCATED(type, alignment)                                                                                   \
-public:                                                                                                                           \
-    [[nodiscard]] void* operator new(size_t)                                                                                      \
-    {                                                                                                                             \
-        void* ptr = kmalloc_aligned(sizeof(type), alignment);                                                                     \
-        VERIFY(ptr);                                                                                                              \
-        return ptr;                                                                                                               \
-    }                                                                                                                             \
-    [[nodiscard]] void* operator new(size_t, std::nothrow_t const&) noexcept { return kmalloc_aligned(sizeof(type), alignment); } \
-    void operator delete(void* ptr) noexcept { kfree_aligned(ptr); }                                                              \
-                                                                                                                                  \
+#define MAKE_ALIGNED_ALLOCATED(type, alignment)                              \
+public:                                                                      \
+    [[nodiscard]] void* operator new(size_t)                                 \
+    {                                                                        \
+        void* ptr = kmalloc_aligned(sizeof(type), alignment);                \
+        VERIFY(ptr);                                                         \
+        return ptr;                                                          \
+    }                                                                        \
+    [[nodiscard]] void* operator new(size_t, std::nothrow_t const&) noexcept \
+    {                                                                        \
+        return kmalloc_aligned(sizeof(type), alignment);                     \
+    }                                                                        \
+    void operator delete(void* ptr) noexcept                                 \
+    {                                                                        \
+        kfree_sized(ptr, sizeof(type));                                      \
+    }                                                                        \
+                                                                             \
 private:
 
 // The C++ standard specifies that the nothrow allocation tag should live in the std namespace.
@@ -33,7 +38,7 @@ struct nothrow_t {
     explicit nothrow_t() = default;
 };
 
-extern const nothrow_t nothrow;
+extern nothrow_t const nothrow;
 
 enum class align_val_t : size_t {};
 };
@@ -75,13 +80,6 @@ void operator delete[](void* ptr, size_t) noexcept;
 [[gnu::malloc, gnu::alloc_size(1, 2)]] void* kcalloc(size_t, size_t);
 
 [[gnu::malloc, gnu::alloc_size(1), gnu::alloc_align(2)]] void* kmalloc_aligned(size_t size, size_t alignment);
-
-inline void kfree_aligned(void* ptr)
-{
-    if (ptr == nullptr)
-        return;
-    kfree_sized((u8*)ptr - ((ptrdiff_t const*)ptr)[-1], ((size_t const*)ptr)[-2]);
-}
 
 size_t kmalloc_good_size(size_t);
 

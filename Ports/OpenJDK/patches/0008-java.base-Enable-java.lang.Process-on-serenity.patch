@@ -6,13 +6,13 @@ Subject: [PATCH] java.base: Enable java.lang.Process on serenity
 ---
  make/modules/java.base/Launcher.gmk           |   2 +-
  make/modules/java.base/lib/CoreLibraries.gmk  |   3 +
- .../libjava/ProcessHandleImpl_serenity.cpp    | 167 ++++++++++++++++++
+ .../libjava/ProcessHandleImpl_serenity.cpp    | 163 ++++++++++++++++++
  .../unix/classes/java/lang/ProcessImpl.java   |   7 +-
- 4 files changed, 177 insertions(+), 2 deletions(-)
+ 4 files changed, 173 insertions(+), 2 deletions(-)
  create mode 100644 src/java.base/serenity/native/libjava/ProcessHandleImpl_serenity.cpp
 
 diff --git a/make/modules/java.base/Launcher.gmk b/make/modules/java.base/Launcher.gmk
-index 700ddefda..78c884dae 100644
+index 700ddefda49e891ac1a2cfd8602fb8a9409ad1d4..78c884dae8271aea4431976823a0f18506cab4b4 100644
 --- a/make/modules/java.base/Launcher.gmk
 +++ b/make/modules/java.base/Launcher.gmk
 @@ -73,7 +73,7 @@ endif
@@ -25,7 +25,7 @@ index 700ddefda..78c884dae 100644
        NAME := jspawnhelper, \
        SRC := $(TOPDIR)/src/$(MODULE)/unix/native/jspawnhelper, \
 diff --git a/make/modules/java.base/lib/CoreLibraries.gmk b/make/modules/java.base/lib/CoreLibraries.gmk
-index 0a61d009f..7867a3095 100644
+index e29f9d5ad78d6da367579dfda7b8e9c0d09be2c9..6054e584b13928cecf4ef0547bf32f5a9d830050 100644
 --- a/make/modules/java.base/lib/CoreLibraries.gmk
 +++ b/make/modules/java.base/lib/CoreLibraries.gmk
 @@ -90,6 +90,8 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBJAVA, \
@@ -33,7 +33,7 @@ index 0a61d009f..7867a3095 100644
      CFLAGS := $(CFLAGS_JDKLIB) \
          $(LIBJAVA_CFLAGS), \
 +    CXXFLAGS := $(CXXFLAGS_JDKLIB) \
-+        $(LIBJAVA_CXXFLAGS), \
++        $(LIBJAVA_CXXFLAGS) -fno-exceptions, \
      jdk_util.c_CFLAGS := $(VERSION_CFLAGS), \
      EXTRA_HEADER_DIRS := libfdlibm, \
      WARNINGS_AS_ERRORS_xlc := false, \
@@ -41,16 +41,16 @@ index 0a61d009f..7867a3095 100644
      LIBS_unix := -ljvm, \
      LIBS_linux := $(LIBDL), \
      LIBS_aix := $(LIBDL) $(LIBM),\
-+    LIBS_serenity := $(LIBDL) -lcore, \
++    LIBS_serenity := $(LIBDL) -lcore -lcoreminimal, \
      LIBS_macosx := -framework CoreFoundation \
          -framework Foundation \
          -framework SystemConfiguration, \
 diff --git a/src/java.base/serenity/native/libjava/ProcessHandleImpl_serenity.cpp b/src/java.base/serenity/native/libjava/ProcessHandleImpl_serenity.cpp
 new file mode 100644
-index 000000000..e9bb2ec4a
+index 0000000000000000000000000000000000000000..a3d5cdc94f59d38f7dd216f9661592cde746bb02
 --- /dev/null
 +++ b/src/java.base/serenity/native/libjava/ProcessHandleImpl_serenity.cpp
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,163 @@
 +/*
 + * Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
 + * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -88,8 +88,8 @@ index 000000000..e9bb2ec4a
 +}
 +
 +#include <AK/JsonArray.h>
++#include <LibCore/File.h>
 +#include <LibCore/ProcessStatisticsReader.h>
-+#include <LibCore/Stream.h>
 +#include <stdio.h>
 +#include <string.h>
 +
@@ -107,11 +107,8 @@ index 000000000..e9bb2ec4a
 +    })
 +
 +
-+static RefPtr<Core::File> proc_all;
-+
 +extern "C" {
 +void os_initNative(JNIEnv *env, jclass clazz) {
-+    proc_all = MUST(Core::File::open("/proc/all", Core::OpenMode::ReadOnly));
 +}
 +
 +jint os_getChildren(JNIEnv *env, jlong jpid, jlongArray jarray,
@@ -120,8 +117,9 @@ index 000000000..e9bb2ec4a
 +}
 +
 +pid_t os_getParentPidAndTimings(JNIEnv *env, pid_t pid, jlong *total, jlong *start) {
-+    auto maybe_stats = Core::ProcessStatisticsReader::get_all(proc_all);
-+    if (!maybe_stats.has_value()) {
++    // Won't read usernames, not even UIDs:
++    auto maybe_stats = Core::ProcessStatisticsReader::get_all(false);
++    if (maybe_stats.is_error()) {
 +        JNU_ThrowByNameWithLastError(env,
 +            "java/lang/RuntimeException", "ProcessStatisticsReader::get_all failed");
 +            return -1;
@@ -141,7 +139,7 @@ index 000000000..e9bb2ec4a
 +        *total += thread.time_user + thread.time_kernel;
 +    }
 +
-+    *start = 0; // FIXME: When did thread start? not reported in /proc/all
++    *start = 0; // FIXME: When did thread start? not reported in /sys/kernel/processes
 +
 +    return proc.ppid;
 +}
@@ -167,8 +165,9 @@ index 000000000..e9bb2ec4a
 +}
 +
 +void os_getCmdlineAndUserInfo(JNIEnv *env, jobject jinfo, pid_t pid) {
-+    auto maybe_stats = Core::ProcessStatisticsReader::get_all(proc_all);
-+    if (!maybe_stats.has_value()) {
++    // Won't read usernames, only UIDs:
++    auto maybe_stats = Core::ProcessStatisticsReader::get_all(false);
++    if (maybe_stats.is_error()) {
 +        JNU_ThrowByNameWithLastError(env,
 +            "java/lang/RuntimeException", "ProcessStatisticsReader::get_all failed");
 +        return;
@@ -188,15 +187,12 @@ index 000000000..e9bb2ec4a
 +    unix_getUserInfo(env, jinfo, proc.pid);
 +    JNU_CHECK_EXCEPTION(env);
 +
-+    char cmdline_name[256];
-+    snprintf(cmdline_name , sizeof(cmdline_name) - 1, "/proc/%d/cmdline", pid);
-+
-+    auto cmdline_file = JAVA_TRY(Core::Stream::File::open(cmdline_name, Core::Stream::OpenMode::Read), "Unable to open /proc/pid/cmdline"sv);
-+    auto contents = JAVA_TRY(cmdline_file->read_all(), "Unable to read /proc/pid/cmdline"sv);
++    auto cmdline_file = JAVA_TRY(Core::File::open(ByteString::formatted("/proc/{}/cmdline", pid), Core::File::OpenMode::Read), "Unable to open /proc/pid/cmdline"sv);
++    auto contents = JAVA_TRY(cmdline_file->read_until_eof(), "Unable to read /proc/pid/cmdline"sv);
 +    auto cmdline = JAVA_TRY(JsonValue::from_string(contents), "Invalid JSON in /proc/pid/cmdline"sv);
 +
 +    if (!cmdline.is_array())
-+        return throwSerenityError(env, Error::from_string_literal("Not an array"), "Unexpected JSON in /proc/pid/cmdline");
++        return throwSerenityError(env, Error::from_string_literal("Not an array"), "Unexpected JSON in /proc/pid/cmdline"sv);
 +
 +    jstring cmdexe = JNU_NewStringPlatform(env, cmdline.as_array()[0].as_string().characters());
 +    env->ExceptionClear();        // unconditionally clear any exception
@@ -219,7 +215,7 @@ index 000000000..e9bb2ec4a
 +}
 +}
 diff --git a/src/java.base/unix/classes/java/lang/ProcessImpl.java b/src/java.base/unix/classes/java/lang/ProcessImpl.java
-index 2bf36f8f1..317bbf158 100644
+index 2bf36f8f136794af4030e12c64026ab217696959..317bbf158a2032cc23ef3b73528a9e9c801612cf 100644
 --- a/src/java.base/unix/classes/java/lang/ProcessImpl.java
 +++ b/src/java.base/unix/classes/java/lang/ProcessImpl.java
 @@ -89,7 +89,9 @@ final class ProcessImpl extends Process {

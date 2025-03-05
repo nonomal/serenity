@@ -4,9 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/Bus/PCI/API.h>
 #include <Kernel/Bus/PCI/Access.h>
-#include <Kernel/Debug.h>
 #include <Kernel/FileSystem/SysFS/Subsystems/Devices/Storage/DeviceAttribute.h>
 #include <Kernel/Sections.h>
 
@@ -21,8 +19,6 @@ StringView StorageDeviceAttributeSysFSComponent::name() const
         return "sector_size"sv;
     case Type::CommandSet:
         return "command_set"sv;
-    case Type::InterfaceType:
-        return "interface_type"sv;
     default:
         VERIFY_NOT_REACHED();
     }
@@ -64,9 +60,6 @@ ErrorOr<NonnullOwnPtr<KBuffer>> StorageDeviceAttributeSysFSComponent::try_to_gen
         break;
     case Type::CommandSet:
         value = TRY(KString::formatted("{}", m_device->command_set_to_string_view()));
-        break;
-    case Type::InterfaceType:
-        value = TRY(KString::formatted("{}", m_device->interface_type_to_string_view()));
         break;
     default:
         VERIFY_NOT_REACHED();

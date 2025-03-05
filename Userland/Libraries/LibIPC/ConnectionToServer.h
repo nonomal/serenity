@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <LibCore/Stream.h>
+#include <LibCore/SessionManagement.h>
 #include <LibIPC/Connection.h>
 
 namespace IPC {
@@ -17,7 +17,8 @@ public:                                                                         
     template<typename Klass = klass, class... Args>                                                    \
     static ErrorOr<NonnullRefPtr<klass>> try_create(Args&&... args)                                    \
     {                                                                                                  \
-        auto socket = TRY(Core::Stream::LocalSocket::connect(socket_path));                            \
+        auto parsed_socket_path = TRY(Core::SessionManagement::parse_path_with_sid(socket_path));      \
+        auto socket = TRY(Core::LocalSocket::connect(move(parsed_socket_path)));                       \
         /* We want to rate-limit our clients */                                                        \
         TRY(socket->set_blocking(true));                                                               \
                                                                                                        \
@@ -32,7 +33,7 @@ public:
     using ClientStub = typename ClientEndpoint::Stub;
     using IPCProxy = typename ServerEndpoint::template Proxy<ClientEndpoint>;
 
-    ConnectionToServer(ClientStub& local_endpoint, NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+    ConnectionToServer(ClientStub& local_endpoint, NonnullOwnPtr<Core::LocalSocket> socket)
         : Connection<ClientEndpoint, ServerEndpoint>(local_endpoint, move(socket))
         , ServerEndpoint::template Proxy<ClientEndpoint>(*this, {})
     {

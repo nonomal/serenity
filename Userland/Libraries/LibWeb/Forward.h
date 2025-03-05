@@ -1,19 +1,89 @@
 /*
- * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, the SerenityOS developers.
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/Variant.h>
+#include <LibJS/Forward.h>
+
 namespace Web {
+class DragAndDropEventHandler;
+class EditEventHandler;
+class EventHandler;
+class LoadRequest;
+class Page;
+class PageClient;
+class PaintContext;
+class Resource;
+class ResourceLoader;
 class XMLDocumentBuilder;
+
+enum class InvalidateDisplayList;
+enum class TraversalDecision;
+}
+
+namespace Web::Painting {
+class DisplayListRecorder;
+class SVGGradientPaintStyle;
+using PaintStyle = RefPtr<SVGGradientPaintStyle>;
+}
+
+namespace Web::Animations {
+class Animatable;
+class Animation;
+class AnimationEffect;
+class AnimationPlaybackEvent;
+class AnimationTimeline;
+class DocumentTimeline;
+class KeyframeEffect;
+}
+
+namespace Web::ARIA {
+class AriaData;
+class ARIAMixin;
+
+enum class StateAndProperties;
+}
+
+namespace Web::Bindings {
+class Intrinsics;
+class OptionConstructor;
+
+enum class AudioContextLatencyCategory;
+enum class CanPlayTypeResult;
+enum class CanvasFillRule;
+enum class CanvasTextAlign;
+enum class CanvasTextBaseline;
+enum class DOMParserSupportedType;
+enum class EndingType;
+enum class ImageSmoothingQuality;
+enum class ReadableStreamReaderMode;
+enum class ReferrerPolicy;
+enum class RequestCache;
+enum class RequestCredentials;
+enum class RequestDestination;
+enum class RequestDuplex;
+enum class RequestMode;
+enum class RequestPriority;
+enum class RequestRedirect;
+enum class ResizeObserverBoxOptions;
+enum class ResponseType;
+enum class TextTrackKind;
+enum class XMLHttpRequestResponseType;
+}
+
+namespace Web::Clipboard {
+class Clipboard;
 }
 
 namespace Web::Cookie {
 struct Cookie;
 struct ParsedCookie;
+
 enum class Source;
 }
 
@@ -23,102 +93,160 @@ class SubtleCrypto;
 }
 
 namespace Web::CSS {
+class AbstractImageStyleValue;
 class Angle;
+class AngleOrCalculated;
 class AnglePercentage;
 class AngleStyleValue;
 class BackgroundRepeatStyleValue;
 class BackgroundSizeStyleValue;
-class BackgroundStyleValue;
+class BasicShapeStyleValue;
 class BorderRadiusStyleValue;
-class BorderRadiusShorthandStyleValue;
-class BorderStyleValue;
-class CalculatedStyleValue;
-class ColorStyleValue;
+class Clip;
+class ConicGradientStyleValue;
 class ContentStyleValue;
+class CounterDefinitionsStyleValue;
+class CounterStyleValue;
+class CSSAnimation;
+class CSSColorValue;
 class CSSConditionRule;
-class CSSGroupingRule;
-class CSSImportRule;
 class CSSFontFaceRule;
+class CSSGroupingRule;
+class CSSHSL;
+class CSSHWB;
+class CSSImportRule;
+class CSSKeyframeRule;
+class CSSKeyframesRule;
+class CSSKeywordValue;
+class CSSLayerBlockRule;
+class CSSLayerStatementRule;
+class CSSMathValue;
 class CSSMediaRule;
+class CSSNestedDeclarations;
+class CSSOKLab;
+class CSSOKLCH;
+class CSSRGB;
 class CSSRule;
 class CSSRuleList;
 class CSSStyleDeclaration;
 class CSSStyleRule;
 class CSSStyleSheet;
+class CSSStyleValue;
 class CSSSupportsRule;
+class CustomIdentStyleValue;
 class Display;
+class DisplayStyleValue;
+class EasingStyleValue;
+class EdgeStyleValue;
 class ElementInlineCSSStyleDeclaration;
-class FlexFlowStyleValue;
+class ExplicitGridTrack;
+class FilterValueListStyleValue;
+class Flex;
+class FlexOrCalculated;
 class FlexStyleValue;
 class FontFace;
-class FontStyleValue;
+class FontFaceSet;
 class Frequency;
+class FrequencyOrCalculated;
 class FrequencyPercentage;
 class FrequencyStyleValue;
-class IdentifierStyleValue;
+class GridAutoFlowStyleValue;
+class GridFitContent;
+class GridMinMax;
+class GridRepeat;
+class GridSize;
+class GridTemplateAreaStyleValue;
+class GridTrackPlacement;
+class GridTrackPlacementStyleValue;
+class GridTrackSizeList;
+class GridTrackSizeListStyleValue;
 class ImageStyleValue;
-class InheritStyleValue;
-class InitialStyleValue;
+class IntegerOrCalculated;
+class IntegerStyleValue;
 class Length;
+class LengthBox;
+class LengthOrCalculated;
 class LengthPercentage;
 class LengthStyleValue;
 class LinearGradientStyleValue;
-class ListStyleStyleValue;
+class MathDepthStyleValue;
+class MediaFeatureValue;
 class MediaList;
 class MediaQuery;
 class MediaQueryList;
 class MediaQueryListEvent;
 class Number;
-class NumericStyleValue;
-class OverflowStyleValue;
+class NumberOrCalculated;
+class NumberStyleValue;
+class OpenTypeTaggedStyleValue;
+class ParsedFontFace;
 class Percentage;
+class PercentageOrCalculated;
 class PercentageStyleValue;
 class PositionStyleValue;
 class PropertyOwningCSSStyleDeclaration;
+class RadialGradientStyleValue;
+class Ratio;
+class RatioStyleValue;
+class RectStyleValue;
 class Resolution;
+class ResolutionOrCalculated;
 class ResolutionStyleValue;
+class RotationStyleValue;
 class Screen;
+class ScreenOrientation;
+class ScrollbarGutterStyleValue;
 class Selector;
 class ShadowStyleValue;
+class ShorthandStyleValue;
+class Size;
 class StringStyleValue;
 class StyleComputer;
 class StyleProperties;
 class StyleSheet;
 class StyleSheetList;
-class StyleValue;
 class StyleValueList;
 class Supports;
-class TextDecorationStyleValue;
+class SVGPaint;
 class Time;
+class TimeOrCalculated;
 class TimePercentage;
 class TimeStyleValue;
+class Transformation;
 class TransformationStyleValue;
-class UnicodeRange;
+class TransitionStyleValue;
 class UnresolvedStyleValue;
-class UnsetStyleValue;
+class URLStyleValue;
+class VisualViewport;
 
+enum class Keyword;
 enum class MediaFeatureID;
 enum class PropertyID;
-enum class ValueID;
+
+struct BackgroundLayerData;
+struct CSSStyleSheetInit;
+struct StyleSheetIdentifier;
 }
 
 namespace Web::CSS::Parser {
-class Block;
 class ComponentValue;
-class Declaration;
-class DeclarationOrAtRule;
-class Function;
 class Parser;
-class Rule;
 class Token;
 class Tokenizer;
+
+struct AtRule;
+struct Declaration;
+struct Function;
+struct QualifiedRule;
+struct SimpleBlock;
 }
 
 namespace Web::DOM {
-class AbstractRange;
 class AbortController;
 class AbortSignal;
-class Attribute;
+class AbstractRange;
+class AccessibilityTreeNode;
+class Attr;
 class CDATASection;
 class CharacterData;
 class Comment;
@@ -126,9 +254,9 @@ class CustomEvent;
 class Document;
 class DocumentFragment;
 class DocumentLoadEventDelayer;
+class DocumentObserver;
 class DocumentType;
 class DOMEventListener;
-class DOMException;
 class DOMImplementation;
 class DOMTokenList;
 class Element;
@@ -149,17 +277,18 @@ class ParentNode;
 class Position;
 class ProcessingInstruction;
 class Range;
+class RegisteredObserver;
 class ShadowRoot;
 class StaticNodeList;
 class StaticRange;
 class Text;
 class TreeWalker;
-enum class QuirksMode;
-struct EventListenerOptions;
-struct AddEventListenerOptions;
+class XMLDocument;
 
-template<typename ValueType>
-class ExceptionOr;
+enum class QuirksMode;
+
+struct AddEventListenerOptions;
+struct EventListenerOptions;
 }
 
 namespace Web::DOMParsing {
@@ -167,52 +296,110 @@ class XMLSerializer;
 }
 
 namespace Web::Encoding {
+class TextDecoder;
 class TextEncoder;
+
+struct TextDecodeOptions;
+struct TextDecoderOptions;
+struct TextEncoderEncodeIntoResult;
+}
+
+namespace Web::EntriesAPI {
+class FileSystemEntry;
+}
+
+namespace Web::EventTiming {
+class PerformanceEventTiming;
 }
 
 namespace Web::Fetch {
+class BodyMixin;
 class Headers;
 class HeadersIterator;
-}
-
-namespace Web::Fetch::Infrastructure {
-class Body;
-struct Header;
-class HeaderList;
 class Request;
 class Response;
 }
 
+namespace Web::Fetch::Fetching {
+class PendingResponse;
+class RefCountedFlag;
+}
+
+namespace Web::Fetch::Infrastructure {
+class Body;
+class ConnectionTimingInfo;
+class FetchAlgorithms;
+class FetchController;
+class FetchParams;
+class FetchRecord;
+class FetchTimingInfo;
+class HeaderList;
+class IncrementalReadLoopReadRequest;
+class Request;
+class Response;
+
+struct BodyWithType;
+struct Header;
+}
+
 namespace Web::FileAPI {
 class Blob;
+class File;
+class FileList;
 }
 
 namespace Web::Geometry {
+class DOMMatrix;
+class DOMMatrixReadOnly;
 class DOMPoint;
 class DOMPointReadOnly;
+class DOMQuad;
 class DOMRect;
 class DOMRectList;
 class DOMRectReadOnly;
+
+struct DOMMatrix2DInit;
+struct DOMMatrixInit;
+struct DOMPointInit;
 }
 
 namespace Web::HTML {
+class AudioTrack;
+class AudioTrackList;
+class BeforeUnloadEvent;
+class BroadcastChannel;
 class BrowsingContext;
-class BrowsingContextContainer;
+class BrowsingContextGroup;
 class CanvasRenderingContext2D;
 class ClassicScript;
 class CloseEvent;
+class CloseWatcher;
+class CloseWatcherManager;
+class CustomElementDefinition;
+class CustomElementRegistry;
+class DataTransfer;
+class DataTransferItem;
+class DataTransferItemList;
+class DecodedImageData;
+class DocumentState;
 class DOMParser;
+class DOMStringList;
 class DOMStringMap;
-struct Environment;
-struct EnvironmentSettingsObject;
+class DragDataStore;
+class DragEvent;
+class ElementInternals;
 class ErrorEvent;
-struct EventHandler;
+class EventHandler;
 class EventLoop;
+class EventSource;
+class FormAssociatedElement;
+class FormDataEvent;
+class History;
+class HTMLAllCollection;
 class HTMLAnchorElement;
 class HTMLAreaElement;
 class HTMLAudioElement;
 class HTMLBaseElement;
-class HTMLBlinkElement;
 class HTMLBodyElement;
 class HTMLBRElement;
 class HTMLButtonElement;
@@ -228,6 +415,7 @@ class HTMLElement;
 class HTMLEmbedElement;
 class HTMLFieldSetElement;
 class HTMLFontElement;
+class HTMLFormControlsCollection;
 class HTMLFormElement;
 class HTMLFrameElement;
 class HTMLFrameSetElement;
@@ -268,6 +456,7 @@ class HTMLSlotElement;
 class HTMLSourceElement;
 class HTMLSpanElement;
 class HTMLStyleElement;
+class HTMLSummaryElement;
 class HTMLTableCaptionElement;
 class HTMLTableCellElement;
 class HTMLTableColElement;
@@ -282,94 +471,109 @@ class HTMLTrackElement;
 class HTMLUListElement;
 class HTMLUnknownElement;
 class HTMLVideoElement;
+class ImageBitmap;
 class ImageData;
+class ImageRequest;
+class ListOfAvailableImages;
+class Location;
+class MediaError;
 class MessageChannel;
 class MessageEvent;
 class MessagePort;
-class Origin;
+class MimeType;
+class MimeTypeArray;
+class Navigable;
+class NavigableContainer;
+class NavigateEvent;
+class Navigation;
+class NavigationCurrentEntryChangeEvent;
+class NavigationDestination;
+class NavigationHistoryEntry;
+class NavigationObserver;
+class NavigationTransition;
+class Navigator;
 class PageTransitionEvent;
-struct PolicyContainer;
+class Path2D;
+class Plugin;
+class PluginArray;
 class PromiseRejectionEvent;
-class WorkerDebugConsoleClient;
+class RadioNodeList;
+class SelectedFile;
+class ServiceWorkerContainer;
+class ServiceWorkerRegistration;
+class SessionHistoryEntry;
+class SharedResourceRequest;
 class Storage;
 class SubmitEvent;
 class TextMetrics;
+class TextTrack;
+class TextTrackCue;
+class TextTrackCueList;
+class TextTrackList;
 class Timer;
+class TimeRanges;
+class ToggleEvent;
+class TrackEvent;
+class TraversableNavigable;
+class UserActivation;
+class ValidityState;
+class VideoTrack;
+class VideoTrackList;
 class Window;
 class WindowEnvironmentSettingsObject;
+class WindowProxy;
 class Worker;
+class WorkerAgent;
+class WorkerDebugConsoleClient;
 class WorkerEnvironmentSettingsObject;
 class WorkerGlobalScope;
 class WorkerLocation;
 class WorkerNavigator;
+
+enum class AllowMultipleFiles;
+enum class MediaSeekMode;
+enum class SandboxingFlagSet;
+
+struct EmbedderPolicy;
+struct Environment;
+struct EnvironmentSettingsObject;
+struct NavigationParams;
+struct OpenerPolicy;
+struct OpenerPolicyEnforcementResult;
+struct PolicyContainer;
+struct POSTResource;
+struct ScrollOptions;
+struct ScrollToOptions;
+struct SerializedFormData;
+struct StructuredSerializeOptions;
+struct ToggleTaskTracker;
+struct TransferDataHolder;
 }
 
 namespace Web::HighResolutionTime {
 class Performance;
 }
 
+namespace Web::IndexedDB {
+class IDBFactory;
+class IDBOpenDBRequest;
+class IDBRequest;
+}
+
+namespace Web::Internals {
+class Inspector;
+class Internals;
+}
+
 namespace Web::IntersectionObserver {
 class IntersectionObserver;
-}
+class IntersectionObserverEntry;
 
-namespace Web::MimeSniff {
-class MimeType;
-}
-
-namespace Web::NavigationTiming {
-class PerformanceTiming;
-}
-
-namespace Web::Painting {
-enum class PaintPhase;
-class ButtonPaintable;
-class CheckBoxPaintable;
-class LabelablePaintable;
-class Paintable;
-class PaintableBox;
-class PaintableWithLines;
-class StackingContext;
-class TextPaintable;
-struct BorderRadiusData;
-struct BorderRadiiData;
-}
-
-namespace Web::RequestIdleCallback {
-class IdleDeadline;
-}
-
-namespace Web::ResizeObserver {
-class ResizeObserver;
-}
-
-namespace Web::SVG {
-class SVGAnimatedLength;
-class SVGCircleElement;
-class SVGClipPathElement;
-class SVGDefsElement;
-class SVGElement;
-class SVGEllipseElement;
-class SVGGeometryElement;
-class SVGGraphicsElement;
-class SVGLength;
-class SVGLineElement;
-class SVGPathElement;
-class SVGPolygonElement;
-class SVGPolylineElement;
-class SVGRectElement;
-class SVGSVGElement;
-}
-
-namespace Web::Selection {
-class Selection;
-}
-
-namespace Web::WebSockets {
-class WebSocket;
+struct IntersectionObserverRegistration;
 }
 
 namespace Web::Layout {
-enum class LayoutMode;
+class AudioBox;
 class BlockContainer;
 class BlockFormattingContext;
 class Box;
@@ -377,9 +581,9 @@ class ButtonBox;
 class CheckBox;
 class FlexFormattingContext;
 class FormattingContext;
-struct LayoutState;
-class InitialContainingBlock;
+class ImageBox;
 class InlineFormattingContext;
+class InlineNode;
 class Label;
 class LabelableNode;
 class LineBox;
@@ -391,19 +595,206 @@ class NodeWithStyle;
 class NodeWithStyleAndBoxModelMetrics;
 class RadioButton;
 class ReplacedBox;
+class TableWrapper;
 class TextNode;
+class TreeBuilder;
+class VideoBox;
+class Viewport;
+
+enum class LayoutMode;
+
+struct LayoutState;
 }
 
-namespace Web {
-class EditEventHandler;
-class EventHandler;
-class FrameLoader;
-class LoadRequest;
-class Page;
-class PageClient;
-class PaintContext;
-class Resource;
-class ResourceLoader;
+namespace Web::MathML {
+class MathMLElement;
+}
+
+namespace Web::MediaCapabilitiesAPI {
+class MediaCapabilities;
+}
+
+namespace Web::MediaSourceExtensions {
+class BufferedChangeEvent;
+class ManagedMediaSource;
+class ManagedSourceBuffer;
+class MediaSource;
+class MediaSourceHandle;
+class SourceBuffer;
+class SourceBufferList;
+}
+
+namespace Web::MimeSniff {
+class MimeType;
+}
+
+namespace Web::NavigationTiming {
+class PerformanceNavigation;
+class PerformanceTiming;
+}
+
+namespace Web::Painting {
+class AudioPaintable;
+class ButtonPaintable;
+class CheckBoxPaintable;
+class LabelablePaintable;
+class MediaPaintable;
+class Paintable;
+class PaintableBox;
+class PaintableWithLines;
+class StackingContext;
+class TextPaintable;
+class VideoPaintable;
+class ViewportPaintable;
+
+enum class PaintPhase;
+
+struct BorderRadiiData;
+struct BorderRadiusData;
+struct LinearGradientData;
+}
+
+namespace Web::PerformanceTimeline {
+class PerformanceEntry;
+class PerformanceObserver;
+class PerformanceObserverEntryList;
+
+struct PerformanceObserverInit;
+}
+
+namespace Web::PermissionsPolicy {
+class AutoplayAllowlist;
+}
+
+namespace Web::Platform {
+class AudioCodecPlugin;
+class Timer;
+}
+
+namespace Web::ReferrerPolicy {
+enum class ReferrerPolicy;
+}
+
+namespace Web::RequestIdleCallback {
+class IdleDeadline;
+}
+
+namespace Web::ResizeObserver {
+class ResizeObserver;
+}
+
+namespace Web::Selection {
+class Selection;
+}
+
+namespace Web::Streams {
+class ByteLengthQueuingStrategy;
+class CountQueuingStrategy;
+class ReadableByteStreamController;
+class ReadableStream;
+class ReadableStreamBYOBReader;
+class ReadableStreamBYOBRequest;
+class ReadableStreamDefaultController;
+class ReadableStreamDefaultReader;
+class ReadableStreamGenericReaderMixin;
+class ReadIntoRequest;
+class ReadRequest;
+class TransformStream;
+class TransformStreamDefaultController;
+class WritableStream;
+class WritableStreamDefaultController;
+class WritableStreamDefaultWriter;
+
+struct PullIntoDescriptor;
+struct QueuingStrategy;
+struct QueuingStrategyInit;
+struct ReadableStreamGetReaderOptions;
+struct Transformer;
+struct UnderlyingSink;
+struct UnderlyingSource;
+}
+
+namespace Web::StorageAPI {
+class NavigatorStorage;
+class StorageManager;
+}
+
+namespace Web::SVG {
+class SVGAnimatedLength;
+class SVGAnimatedRect;
+class SVGCircleElement;
+class SVGClipPathElement;
+class SVGDefsElement;
+class SVGDescElement;
+class SVGElement;
+class SVGEllipseElement;
+class SVGForeignObjectElement;
+class SVGGeometryElement;
+class SVGGraphicsElement;
+class SVGImageElement;
+class SVGLength;
+class SVGLineElement;
+class SVGMaskElement;
+class SVGMetadataElement;
+class SVGPathElement;
+class SVGPolygonElement;
+class SVGPolylineElement;
+class SVGRectElement;
+class SVGScriptElement;
+class SVGSVGElement;
+class SVGTitleElement;
+}
+
+namespace Web::UIEvents {
+class CompositionEvent;
+class InputEvent;
+class KeyboardEvent;
+class MouseEvent;
+class PointerEvent;
+class TextEvent;
+class UIEvent;
+}
+
+namespace Web::DOMURL {
+class DOMURL;
+class URLSearchParams;
+class URLSearchParamsIterator;
+}
+
+namespace Web::UserTiming {
+class PerformanceMark;
+class PerformanceMeasure;
+}
+
+namespace Web::WebAssembly {
+class Instance;
+class Memory;
+class Module;
+class Table;
+}
+
+namespace Web::WebAudio {
+class AudioBuffer;
+class AudioBufferSourceNode;
+class AudioContext;
+class AudioDestinationNode;
+class AudioListener;
+class AudioNode;
+class AudioParam;
+class AudioScheduledSourceNode;
+class BaseAudioContext;
+class BiquadFilterNode;
+class DynamicsCompressorNode;
+class GainNode;
+class OfflineAudioContext;
+class OscillatorNode;
+class PeriodicWave;
+
+enum class AudioContextState;
+
+struct AudioContextOptions;
+struct DynamicsCompressorOptions;
+struct OscillatorOptions;
 }
 
 namespace Web::WebGL {
@@ -412,232 +803,41 @@ class WebGLRenderingContext;
 class WebGLRenderingContextBase;
 }
 
+namespace Web::WebIDL {
+class ArrayBufferView;
+class BufferSource;
+class CallbackType;
+class DOMException;
+
+template<typename ValueType>
+class ExceptionOr;
+
+using Promise = JS::PromiseCapability;
+}
+
+namespace Web::WebDriver {
+class HeapTimer;
+
+struct ActionObject;
+struct InputState;
+};
+
+namespace Web::WebSockets {
+class WebSocket;
+}
+
+namespace Web::WebVTT {
+class VTTCue;
+class VTTRegion;
+}
+
 namespace Web::XHR {
+class FormData;
+class FormDataIterator;
 class ProgressEvent;
 class XMLHttpRequest;
 class XMLHttpRequestEventTarget;
-}
+class XMLHttpRequestUpload;
 
-namespace Web::UIEvents {
-class MouseEvent;
-class KeyboardEvent;
-class UIEvents;
-}
-
-namespace Web::URL {
-class URL;
-class URLSearchParams;
-class URLSearchParamsIterator;
-}
-
-namespace Web::Bindings {
-class AbstractRangeWrapper;
-class AbortControllerWrapper;
-class AbortSignalWrapper;
-class AttributeWrapper;
-class BlobWrapper;
-struct CallbackType;
-class CanvasGradientWrapper;
-class CanvasRenderingContext2DWrapper;
-class CDATASectionWrapper;
-class CharacterDataWrapper;
-class CloseEventWrapper;
-class CommentWrapper;
-class CryptoWrapper;
-class CSSConditionRuleWrapper;
-class CSSFontFaceRuleWrapper;
-class CSSGroupingRuleWrapper;
-class CSSImportRuleWrapper;
-class CSSMediaRuleWrapper;
-class CSSRuleListWrapper;
-class CSSRuleWrapper;
-class CSSStyleDeclarationWrapper;
-class CSSStyleRuleWrapper;
-class CSSStyleSheetWrapper;
-class CSSSupportsRuleWrapper;
-class CustomEventWrapper;
-class DocumentFragmentWrapper;
-class DocumentTypeWrapper;
-class DocumentWrapper;
-class DOMExceptionWrapper;
-class DOMImplementationWrapper;
-class DOMParserWrapper;
-class DOMPointWrapper;
-class DOMPointReadOnlyWrapper;
-class DOMRectListWrapper;
-class DOMRectReadOnlyWrapper;
-class DOMRectWrapper;
-class DOMStringMapWrapper;
-class DOMTokenListWrapper;
-class ElementWrapper;
-class ErrorEventWrapper;
-class EventListenerWrapper;
-class EventTargetWrapper;
-class EventWrapper;
-class FocusEventWrapper;
-class HeadersWrapper;
-class HeadersIteratorWrapper;
-class HistoryWrapper;
-class HTMLAnchorElementWrapper;
-class HTMLAreaElementWrapper;
-class HTMLAudioElementWrapper;
-class HTMLBaseElementWrapper;
-class HTMLBodyElementWrapper;
-class HTMLBRElementWrapper;
-class HTMLButtonElementWrapper;
-class HTMLCanvasElementWrapper;
-class HTMLCollectionWrapper;
-class HTMLDataElementWrapper;
-class HTMLDataListElementWrapper;
-class HTMLDetailsElementWrapper;
-class HTMLDialogElementWrapper;
-class HTMLDirectoryElementWrapper;
-class HTMLDivElementWrapper;
-class HTMLDListElementWrapper;
-class HTMLElementWrapper;
-class HTMLEmbedElementWrapper;
-class HTMLFieldSetElementWrapper;
-class HTMLFontElementWrapper;
-class HTMLFormElementWrapper;
-class HTMLFrameElementWrapper;
-class HTMLFrameSetElementWrapper;
-class HTMLHeadElementWrapper;
-class HTMLHeadingElementWrapper;
-class HTMLHRElementWrapper;
-class HTMLHtmlElementWrapper;
-class HTMLIFrameElementWrapper;
-class HTMLImageElementWrapper;
-class HTMLInputElementWrapper;
-class HTMLLabelElementWrapper;
-class HTMLLegendElementWrapper;
-class HTMLLIElementWrapper;
-class HTMLLinkElementWrapper;
-class HTMLMapElementWrapper;
-class HTMLMarqueeElementWrapper;
-class HTMLMediaElementWrapper;
-class HTMLMenuElementWrapper;
-class HTMLMetaElementWrapper;
-class HTMLMeterElementWrapper;
-class HTMLModElementWrapper;
-class HTMLObjectElementWrapper;
-class HTMLOListElementWrapper;
-class HTMLOptGroupElementWrapper;
-class HTMLOptionElementWrapper;
-class HTMLOptionsCollectionWrapper;
-class HTMLOutputElementWrapper;
-class HTMLParagraphElementWrapper;
-class HTMLParamElementWrapper;
-class HTMLPictureElementWrapper;
-class HTMLPreElementWrapper;
-class HTMLProgressElementWrapper;
-class HTMLQuoteElementWrapper;
-class HTMLScriptElementWrapper;
-class HTMLSelectElementWrapper;
-class HTMLSlotElementWrapper;
-class HTMLSourceElementWrapper;
-class HTMLSpanElementWrapper;
-class HTMLStyleElementWrapper;
-class HTMLTableCaptionElementWrapper;
-class HTMLTableCellElementWrapper;
-class HTMLTableColElementWrapper;
-class HTMLTableElementWrapper;
-class HTMLTableRowElementWrapper;
-class HTMLTableSectionElementWrapper;
-class HTMLTemplateElementWrapper;
-class HTMLTextAreaElementWrapper;
-class HTMLTimeElementWrapper;
-class HTMLTitleElementWrapper;
-class HTMLTrackElementWrapper;
-class HTMLUListElementWrapper;
-class HTMLUnknownElementWrapper;
-class HTMLVideoElementWrapper;
-class IdleDeadlineWrapper;
-class ImageDataWrapper;
-class IntersectionObserverWrapper;
-class KeyboardEventWrapper;
-class LocationObject;
-class MediaListWrapper;
-class MediaQueryListEventWrapper;
-class MediaQueryListWrapper;
-class MessageChannelWrapper;
-class MessageEventWrapper;
-class MessagePortWrapper;
-class MouseEventWrapper;
-class MutationObserverWrapper;
-class MutationRecordWrapper;
-class NamedNodeMapWrapper;
-class NodeFilterWrapper;
-class NodeIteratorWrapper;
-class NodeListWrapper;
-class NodeWrapper;
-class OptionConstructor;
-class PageTransitionEventWrapper;
-class PerformanceTimingWrapper;
-class PerformanceWrapper;
-class ProcessingInstructionWrapper;
-class ProgressEventWrapper;
-class PromiseRejectionEventWrapper;
-class RangeConstructor;
-class RangePrototype;
-class RangeWrapper;
-class ResizeObserverWrapper;
-class ScreenWrapper;
-class SelectionWrapper;
-class StaticRangeWrapper;
-class StorageWrapper;
-class StyleSheetListWrapper;
-class StyleSheetWrapper;
-class SubmitEventWrapper;
-class SubtleCryptoWrapper;
-class SVGAnimatedLengthWrapper;
-class SVGCircleElementWrapper;
-class SVGDefsElementWrapper;
-class SVGClipPathElementWrapper;
-class SVGElementWrapper;
-class SVGEllipseElementWrapper;
-class SVGGeometryElementWrapper;
-class SVGGraphicsElementWrapper;
-class SVGLengthWrapper;
-class SVGLineElementWrapper;
-class SVGPathElementWrapper;
-class SVGPolygonElementWrapper;
-class SVGPolylineElementWrapper;
-class SVGRectElementWrapper;
-class SVGSVGElementWrapper;
-class SVGTextContentElementWrapper;
-class TextDecoderWrapper;
-class TextEncoderWrapper;
-class TextMetricsWrapper;
-class TextWrapper;
-class TreeWalkerWrapper;
-class UIEventWrapper;
-class URLConstructor;
-class URLPrototype;
-class URLSearchParamsConstructor;
-class URLSearchParamsIteratorPrototype;
-class URLSearchParamsIteratorWrapper;
-class URLSearchParamsPrototype;
-class URLSearchParamsWrapper;
-class URLWrapper;
-class WebGLContextEventWrapper;
-class WebGLRenderingContextWrapper;
-class WebSocketWrapper;
-class WindowObject;
-class WindowProxy;
-class WorkerWrapper;
-class WorkerGlobalScopeWrapper;
-class WorkerLocationWrapper;
-class WorkerNavigatorWrapper;
-class Wrappable;
-class Wrapper;
-class XMLHttpRequestConstructor;
-class XMLHttpRequestEventTargetWrapper;
-class XMLHttpRequestPrototype;
-class XMLHttpRequestWrapper;
-class XMLSerializerWrapper;
-enum class CanPlayTypeResult;
-enum class EndingType;
-enum class DOMParserSupportedType;
-enum class ResizeObserverBoxOptions;
-enum class XMLHttpRequestResponseType;
+struct FormDataEntry;
 }

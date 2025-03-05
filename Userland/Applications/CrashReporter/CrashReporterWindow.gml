@@ -1,4 +1,4 @@
-@GUI::Widget {
+@CrashReporter::MainWidget {
     fill_with_background_color: true
     layout: @GUI::VerticalBoxLayout {
         margins: [4]
@@ -93,7 +93,7 @@
 
         @GUI::DialogButton {
             name: "save_backtrace_button"
-            text: "Save Backtrace"
+            text: "Save Backtrace..."
             fixed_width: 160
         }
 

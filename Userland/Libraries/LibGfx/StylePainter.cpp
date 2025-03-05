@@ -18,9 +18,9 @@ BaseStylePainter& StylePainter::current()
     return style;
 }
 
-void StylePainter::paint_tab_button(Painter& painter, IntRect const& rect, Palette const& palette, bool active, bool hovered, bool enabled, GUI::TabWidget::TabPosition position, bool in_active_window)
+void StylePainter::paint_tab_button(Painter& painter, IntRect const& rect, Palette const& palette, bool active, bool hovered, bool enabled, TabPosition position, bool in_active_window, bool accented)
 {
-    current().paint_tab_button(painter, rect, palette, active, hovered, enabled, position, in_active_window);
+    current().paint_tab_button(painter, rect, palette, active, hovered, enabled, position, in_active_window, accented);
 }
 
 void StylePainter::paint_button(Painter& painter, IntRect const& rect, Palette const& palette, ButtonStyle button_style, bool pressed, bool hovered, bool checked, bool enabled, bool focused, bool default_button)
@@ -28,9 +28,9 @@ void StylePainter::paint_button(Painter& painter, IntRect const& rect, Palette c
     current().paint_button(painter, rect, palette, button_style, pressed, hovered, checked, enabled, focused, default_button);
 }
 
-void StylePainter::paint_frame(Painter& painter, IntRect const& rect, Palette const& palette, FrameShape shape, FrameShadow shadow, int thickness, bool skip_vertical_lines)
+void StylePainter::paint_frame(Painter& painter, IntRect const& rect, Palette const& palette, FrameStyle style, bool skip_vertical_lines)
 {
-    current().paint_frame(painter, rect, palette, shape, shadow, thickness, skip_vertical_lines);
+    current().paint_frame(painter, rect, palette, style, skip_vertical_lines);
 }
 
 void StylePainter::paint_window_frame(Painter& painter, IntRect const& rect, Palette const& palette)

@@ -33,21 +33,19 @@ describe("errors", () => {
         expect(() => {
             new Intl.PluralRules().selectRange(1, NaN);
         }).toThrowWithMessage(RangeError, "end must not be NaN");
-
-        expect(() => {
-            new Intl.PluralRules().selectRange(1, 0);
-        }).toThrowWithMessage(RangeError, "Range start 1 is greater than range end 0");
     });
 });
 
 describe("correct behavior", () => {
     test("basic functionality", () => {
         const en = new Intl.PluralRules("en");
+        expect(en.selectRange(1, 1)).toBe("one"); // one + one = one
         expect(en.selectRange(1, 2)).toBe("other"); // one + other = other
         expect(en.selectRange(0, 1)).toBe("other"); // other + one = other
         expect(en.selectRange(2, 3)).toBe("other"); // other + other = other
 
         const pl = new Intl.PluralRules("pl");
+        expect(pl.selectRange(1, 1)).toBe("one"); // one + one = one
         expect(pl.selectRange(1, 2)).toBe("few"); // one + few = few
         expect(pl.selectRange(1, 5)).toBe("many"); // one + many = many
         expect(pl.selectRange(1, 3.14)).toBe("other"); // one + other = other
@@ -69,5 +67,17 @@ describe("correct behavior", () => {
         const so = new Intl.PluralRules("so");
         expect(so.selectRange(0, 1)).toBe("one");
         expect(so.selectRange(1, 2)).toBe("other");
+    });
+
+    test("numbers in reverse order", () => {
+        const en = new Intl.PluralRules("en");
+        expect(en.selectRange(1, -Infinity)).toBe("other");
+        expect(en.selectRange(Infinity, -Infinity)).toBe("other");
+        expect(en.selectRange(-0, -Infinity)).toBe("other");
+
+        const ja = new Intl.PluralRules("ja");
+        expect(ja.selectRange(1, -Infinity)).toBe("other");
+        expect(ja.selectRange(Infinity, -Infinity)).toBe("other");
+        expect(ja.selectRange(-0, -Infinity)).toBe("other");
     });
 });

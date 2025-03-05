@@ -6,23 +6,24 @@
 
 #pragma once
 
-#include <LibJS/AST.h>
 #include <LibJS/Runtime/NativeFunction.h>
 
 namespace JS {
 
 class AsyncFunctionConstructor final : public NativeFunction {
     JS_OBJECT(AsyncFunctionConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(AsyncFunctionConstructor);
 
 public:
-    explicit AsyncFunctionConstructor(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~AsyncFunctionConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 private:
+    explicit AsyncFunctionConstructor(Realm&);
+
     virtual bool has_constructor() const override { return true; }
 };
 

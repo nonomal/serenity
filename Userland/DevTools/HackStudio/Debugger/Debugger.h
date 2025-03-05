@@ -26,18 +26,20 @@ public:
     };
 
     static void initialize(
-        String source_root,
+        ByteString source_root,
         Function<HasControlPassedToUser(PtraceRegisters const&)> on_stop_callback,
         Function<void()> on_continue_callback,
-        Function<void()> on_exit_callback);
+        Function<void()> on_exit_callback,
+        Function<void(float)> on_initialization_progress);
 
     static bool is_initialized();
 
-    void on_breakpoint_change(String const& file, size_t line, BreakpointChange change_type);
-    bool set_execution_position(String const& file, size_t line);
+    [[nodiscard]] bool change_breakpoint(ByteString const& file, size_t line, BreakpointChange change_type);
+    bool set_execution_position(ByteString const& file, size_t line);
 
-    void set_executable_path(String const& path) { m_executable_path = path; }
-    void set_source_root(String const& source_root) { m_source_root = source_root; }
+    void set_executable_path(ByteString const& path) { m_executable_path = path; }
+    void set_source_root(ByteString const& source_root) { m_source_root = source_root; }
+    void set_pid_to_attach(pid_t pid) { m_pid_to_attach = pid; }
 
     Debug::DebugSession* session() { return m_debug_session.ptr(); }
 
@@ -61,6 +63,8 @@ public:
     void reset_breakpoints() { m_breakpoints.clear(); }
 
     void set_child_setup_callback(Function<ErrorOr<void>()> callback) { m_child_setup_callback = move(callback); }
+
+    void stop_debuggee();
 
 private:
     class DebuggingState {
@@ -90,15 +94,16 @@ private:
     };
 
     explicit Debugger(
-        String source_root,
+        ByteString source_root,
         Function<HasControlPassedToUser(PtraceRegisters const&)> on_stop_callback,
         Function<void()> on_continue_callback,
-        Function<void()> on_exit_callback);
+        Function<void()> on_exit_callback,
+        Function<void(float)> on_initialization_progress);
 
-    Debug::DebugInfo::SourcePosition create_source_position(String const& file, size_t line);
+    Debug::DebugInfo::SourcePosition create_source_position(ByteString const& file, size_t line);
 
     void start();
-    int debugger_loop();
+    int debugger_loop(Debug::DebugSession::DesiredInitialDebugeeState);
 
     void remove_temporary_breakpoints();
     void do_step_out(PtraceRegisters const&);
@@ -106,8 +111,14 @@ private:
     void insert_temporary_breakpoint(FlatPtr address);
     void insert_temporary_breakpoint_at_return_address(PtraceRegisters const&);
 
+    struct CreateDebugSessionResult {
+        NonnullOwnPtr<Debug::DebugSession> session;
+        Debug::DebugSession::DesiredInitialDebugeeState initial_state { Debug::DebugSession::Stopped };
+    };
+    CreateDebugSessionResult create_debug_session();
+
     OwnPtr<Debug::DebugSession> m_debug_session;
-    String m_source_root;
+    ByteString m_source_root;
     DebuggingState m_state;
 
     pthread_mutex_t m_ui_action_mutex {};
@@ -116,12 +127,14 @@ private:
 
     Vector<Debug::DebugInfo::SourcePosition> m_breakpoints;
 
-    String m_executable_path;
+    ByteString m_executable_path;
+    Optional<pid_t> m_pid_to_attach;
 
     Function<HasControlPassedToUser(PtraceRegisters const&)> m_on_stopped_callback;
     Function<void()> m_on_continue_callback;
     Function<void()> m_on_exit_callback;
     Function<ErrorOr<void>()> m_child_setup_callback;
+    Function<void(float)> m_on_initialization_progress;
 };
 
 }

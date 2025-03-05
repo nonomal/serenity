@@ -11,8 +11,10 @@
 #include <LibTest/TestCase.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <serenity.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <syscall.h>
 #include <unistd.h>
 
 #define EXPECT_OK(syscall, address, size)                                                                                         \
@@ -40,6 +42,9 @@ TEST_CASE(test_efault)
 {
     int fd = open("/dev/zero", O_RDONLY);
     int rc = -1;
+
+    // Make an inaccessible hole before the next mapping.
+    (void)mmap(nullptr, 4096, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
 
     // Test a one-page mapping (4KB)
     u8* one_page = (u8*)mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
@@ -87,4 +92,36 @@ TEST_CASE(test_efault)
 
     // Test something that would wrap around the 2^32 mark.
     EXPECT_EFAULT(read, jerk_page, 0x50000000);
+}
+
+TEST_CASE(test_dbgputstr_efault)
+{
+    EXPECT_EQ(-syscall(SC_dbgputstr, nullptr, 3), EFAULT);
+    EXPECT_EQ(-syscall(SC_dbgputstr, nullptr, 4096), EFAULT);
+}
+
+TEST_CASE(test_futex_wake_op_efault)
+{
+    EXPECT(futex(nullptr, FUTEX_WAKE_OP, 0, nullptr, nullptr, FUTEX_OP(FUTEX_OP_SET, 0, FUTEX_OP_CMP_EQ, 0)) < 0);
+    EXPECT_EQ(errno, EFAULT);
+
+    EXPECT(futex(nullptr, FUTEX_WAKE_OP, 0, nullptr, nullptr, FUTEX_OP(FUTEX_OP_ADD, 0, FUTEX_OP_CMP_EQ, 0)) < 0);
+    EXPECT_EQ(errno, EFAULT);
+
+    EXPECT(futex(nullptr, FUTEX_WAKE_OP, 0, nullptr, nullptr, FUTEX_OP(FUTEX_OP_OR, 0, FUTEX_OP_CMP_EQ, 0)) < 0);
+    EXPECT_EQ(errno, EFAULT);
+
+    EXPECT(futex(nullptr, FUTEX_WAKE_OP, 0, nullptr, nullptr, FUTEX_OP(FUTEX_OP_ANDN, 0, FUTEX_OP_CMP_EQ, 0)) < 0);
+    EXPECT_EQ(errno, EFAULT);
+
+    EXPECT(futex(nullptr, FUTEX_WAKE_OP, 0, nullptr, nullptr, FUTEX_OP(FUTEX_OP_XOR, 0, FUTEX_OP_CMP_EQ, 0)) < 0);
+    EXPECT_EQ(errno, EFAULT);
+
+    u32 test = 0;
+
+    EXPECT(futex(&test, FUTEX_WAKE_OP, 0, nullptr, &test, FUTEX_OP(FUTEX_OP_SET, 0, FUTEX_OP_CMP_EQ, 0)) >= 0);
+    EXPECT(futex(&test, FUTEX_WAKE_OP, 0, nullptr, &test, FUTEX_OP(FUTEX_OP_ADD, 0, FUTEX_OP_CMP_EQ, 0)) >= 0);
+    EXPECT(futex(&test, FUTEX_WAKE_OP, 0, nullptr, &test, FUTEX_OP(FUTEX_OP_OR, 0, FUTEX_OP_CMP_EQ, 0)) >= 0);
+    EXPECT(futex(&test, FUTEX_WAKE_OP, 0, nullptr, &test, FUTEX_OP(FUTEX_OP_ANDN, 0, FUTEX_OP_CMP_EQ, 0)) >= 0);
+    EXPECT(futex(&test, FUTEX_WAKE_OP, 0, nullptr, &test, FUTEX_OP(FUTEX_OP_XOR, 0, FUTEX_OP_CMP_EQ, 0)) >= 0);
 }

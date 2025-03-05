@@ -33,6 +33,13 @@ public:
         m_frame_count = 0;
     }
 
+    void reset_buffer()
+    {
+        m_sample_buffer.clear();
+        m_render_buffer.fill_with(.0f);
+        m_frame_count = 0;
+    }
+
     virtual void set_samplerate(int samplerate)
     {
         m_samplerate = samplerate;
@@ -70,7 +77,7 @@ public:
 
     ErrorOr<void> set_render_sample_count(size_t count)
     {
-        auto new_buffer = TRY(FixedArray<float>::try_create(count));
+        auto new_buffer = TRY(FixedArray<float>::create(count));
         m_render_buffer.swap(new_buffer);
         return {};
     }

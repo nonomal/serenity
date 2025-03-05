@@ -6,11 +6,21 @@
 
 #pragma once
 
-#define PAGE_MASK (~(FlatPtr)0xfffu)
+#include <AK/Forward.h>
+#include <AK/Types.h>
+#include <Kernel/Memory/PhysicalAddress.h>
 
 namespace Kernel {
 
-void drop_to_exception_level_1();
-void init_prekernel_page_tables();
+void initialize_exceptions();
+void panic_without_mmu(StringView);
+void dbgln_without_mmu(StringView);
+
+namespace Memory {
+
+void init_page_tables(PhysicalPtr flattened_devicetree_paddr);
+void unmap_identity_map();
+
+}
 
 }

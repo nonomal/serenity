@@ -9,8 +9,6 @@
 #include <AK/Debug.h>
 #include <AK/ScopedValueRollback.h>
 #include <AK/Vector.h>
-#include <LibELF/AuxiliaryVector.h>
-#include <assert.h>
 #include <errno.h>
 #include <mallocdefs.h>
 #include <pthread.h>
@@ -257,7 +255,7 @@ static ErrorOr<void*> os_alloc(size_t size, char const* name)
 static void os_free(void* ptr, size_t size)
 {
     int rc = munmap(ptr, size);
-    assert(rc == 0);
+    VERIFY(rc == 0);
 }
 
 static void* try_allocate_chunk_aligned(size_t align, ChunkedBlock& block)
@@ -291,9 +289,7 @@ enum class CallerWillInitializeMemory {
 };
 
 #ifndef NO_TLS
-// HACK: This is a __thread - marked thread-local variable. If we initialize it globally here, VERY weird errors happen.
-// The initialization happens in __malloc_init() and pthread_create_helper().
-__thread bool s_allocation_enabled;
+__thread bool s_allocation_enabled = true;
 #endif
 
 static ErrorOr<void*> malloc_impl(size_t size, size_t align, CallerWillInitializeMemory caller_will_initialize_memory)
@@ -489,7 +485,7 @@ static void free_impl(void* ptr)
         return;
     }
 
-    assert(magic == MAGIC_PAGE_HEADER);
+    VERIFY(magic == MAGIC_PAGE_HEADER);
     auto* block = (ChunkedBlock*)block_base;
 
     dbgln_if(MALLOC_DEBUG, "LibC: freeing {:p} in allocator {:p} (size={}, used={})", ptr, block, block->bytes_per_chunk(), block->used_chunks());
@@ -556,37 +552,6 @@ void* malloc(size_t size)
     return ptr_or_error.value();
 }
 
-// This is a Microsoft extension, and is not found on other Unix-like systems.
-// FIXME: Remove this when all patches have been switched to aligned_alloc()
-//
-// This is used in libc++ to implement C++17 aligned new/delete.
-//
-// Both Unix-y alternatives to _aligned_malloc(), the C11 aligned_alloc() and
-// posix_memalign() say that the resulting pointer can be deallocated with
-// regular free(), which means that the allocator has to keep track of the
-// requested alignments. By contrast, _aligned_malloc() is paired with
-// _aligned_free(), so it can be easily implemented on top of malloc().
-void* _aligned_malloc(size_t size, size_t alignment)
-{
-    if (popcount(alignment) != 1) {
-        errno = EINVAL;
-        return nullptr;
-    }
-    alignment = max(alignment, sizeof(void*));
-    if (Checked<size_t>::addition_would_overflow(size, alignment)) {
-        errno = ENOMEM;
-        return nullptr;
-    }
-    void* ptr = malloc(size + alignment);
-    if (!ptr) {
-        errno = ENOMEM;
-        return nullptr;
-    }
-    auto aligned_ptr = (void*)(((FlatPtr)ptr + alignment) & ~(alignment - 1));
-    ((void**)aligned_ptr)[-1] = ptr;
-    return aligned_ptr;
-}
-
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/free.html
 void free(void* ptr)
 {
@@ -595,12 +560,6 @@ void free(void* ptr)
         perf_event(PERF_EVENT_FREE, reinterpret_cast<FlatPtr>(ptr), 0);
     ue_notify_free(ptr);
     free_impl(ptr);
-}
-
-void _aligned_free(void* ptr)
-{
-    if (ptr)
-        free(((void**)ptr)[-1]);
 }
 
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/calloc.html
@@ -697,12 +656,6 @@ void* realloc(void* ptr, size_t size)
 
 void __malloc_init()
 {
-#ifndef NO_TLS
-    // HACK: This is a __thread - marked thread-local variable. If we initialize it globally, VERY weird errors happen.
-    // Therefore, we need to do the initialization here and in pthread_create_helper().
-    s_allocation_enabled = true;
-#endif
-
     s_in_userspace_emulator = (int)syscall(SC_emuctl, 0) != -ENOSYS;
     if (s_in_userspace_emulator) {
         // Don't bother scrubbing memory if we're running in UE since it

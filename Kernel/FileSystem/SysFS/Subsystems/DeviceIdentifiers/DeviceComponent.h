@@ -8,13 +8,13 @@
 
 #include <AK/IntrusiveList.h>
 #include <Kernel/FileSystem/SysFS/Component.h>
-#include <Kernel/KString.h>
+#include <Kernel/Library/KString.h>
 
 namespace Kernel {
 
 class SysFSDeviceComponent final
     : public SysFSComponent
-    , public Weakable<SysFSDeviceComponent> {
+    , public LockWeakable<SysFSDeviceComponent> {
     friend class SysFSBlockDevicesDirectory;
     friend class SysFSCharacterDevicesDirectory;
 

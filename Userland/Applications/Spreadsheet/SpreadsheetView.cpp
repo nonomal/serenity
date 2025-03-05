@@ -7,7 +7,6 @@
 #include "SpreadsheetView.h"
 #include "CellTypeDialog.h"
 #include <AK/ScopeGuard.h>
-#include <AK/URL.h>
 #include <LibCore/MimeData.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/HeaderView.h>
@@ -17,12 +16,13 @@
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/TableView.h>
 #include <LibGfx/Palette.h>
+#include <LibURL/URL.h>
 
 namespace Spreadsheet {
 
 void SpreadsheetView::EditingDelegate::set_value(GUI::Variant const& value, GUI::ModelEditingDelegate::SelectionBehavior selection_behavior)
 {
-    if (value.as_string().is_null()) {
+    if (!value.is_valid()) {
         StringModelEditingDelegate::set_value("", selection_behavior);
         commit();
         return;
@@ -80,7 +80,7 @@ void InfinitelyScrollableTableView::mousemove_event(GUI::MouseEvent& event)
         if (!is_dragging()) {
             auto tooltip = model->data(index, static_cast<GUI::ModelRole>(SheetModel::Role::Tooltip));
             if (tooltip.is_string()) {
-                set_tooltip(tooltip.as_string());
+                set_tooltip(MUST(String::from_byte_string(tooltip.as_string())));
                 show_or_hide_tooltip();
             } else {
                 set_tooltip({});
@@ -202,7 +202,7 @@ void InfinitelyScrollableTableView::mousemove_event(GUI::MouseEvent& event)
 
 void InfinitelyScrollableTableView::mousedown_event(GUI::MouseEvent& event)
 {
-    // Override the mouse event so that the the cell that is 'clicked' is not
+    // Override the mouse event so that the cell that is 'clicked' is not
     // the one right beneath the cursor but instead the one that is referred to
     // when m_is_hovering_cut_zone as it can be the case that the user is targeting
     // a cell yet be outside of its bounding box due to the select_padding.
@@ -305,7 +305,7 @@ SpreadsheetView::SpreadsheetView(Sheet& sheet)
     : m_sheet(sheet)
     , m_sheet_model(SheetModel::create(*m_sheet))
 {
-    set_layout<GUI::VerticalBoxLayout>().set_margins(2);
+    set_layout<GUI::VerticalBoxLayout>(2);
     m_table_view = add<InfinitelyScrollableTableView>();
     m_table_view->set_grid_style(GUI::TableView::GridStyle::Both);
     m_table_view->set_selection_behavior(GUI::AbstractView::SelectionBehavior::SelectItems);
@@ -388,7 +388,7 @@ SpreadsheetView::SpreadsheetView(Sheet& sheet)
     };
 
     m_cell_range_context_menu = GUI::Menu::construct();
-    m_cell_range_context_menu->add_action(GUI::Action::create("Type and Formatting...", [this](auto&) {
+    m_cell_range_context_menu->add_action(GUI::Action::create("Format...", [this](auto&) {
         Vector<Position> positions;
         for (auto& index : m_table_view->selection().indices()) {
             Position position { (size_t)index.column(), (size_t)index.row() };
@@ -420,12 +420,12 @@ SpreadsheetView::SpreadsheetView(Sheet& sheet)
 
         ScopeGuard update_after_drop { [this] { update(); } };
 
-        if (event.mime_data().has_format("text/x-spreadsheet-data")) {
-            auto const& data = event.mime_data().data("text/x-spreadsheet-data");
+        if (event.mime_data().has_format("text/x-spreadsheet-data"sv)) {
+            auto const& data = event.mime_data().data("text/x-spreadsheet-data"sv);
             StringView urls { data.data(), data.size() };
             Vector<Position> source_positions, target_positions;
 
-            for (auto& line : urls.lines(false)) {
+            for (auto& line : urls.lines(StringView::ConsiderCarriageReturn::No)) {
                 auto position = m_sheet->position_from_url(line);
                 if (position.has_value())
                     source_positions.append(position.release_value());
@@ -495,7 +495,7 @@ void SpreadsheetView::TableCellPainter::paint(GUI::Painter& painter, Gfx::IntRec
     auto text_color = index.data(GUI::ModelRole::ForegroundColor).to_color(palette.color(m_table_view.foreground_role()));
     auto data = index.data();
     auto text_alignment = index.data(GUI::ModelRole::TextAlignment).to_text_alignment(Gfx::TextAlignment::CenterRight);
-    painter.draw_text(rect, data.to_string(), m_table_view.font_for_index(index), text_alignment, text_color, Gfx::TextElision::Right);
+    painter.draw_text(rect, data.to_byte_string(), m_table_view.font_for_index(index), text_alignment, text_color, Gfx::TextElision::Right);
 }
 
 }

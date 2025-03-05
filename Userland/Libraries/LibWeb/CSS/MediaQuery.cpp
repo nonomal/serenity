@@ -1,13 +1,15 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibWeb/CSS/MediaQuery.h>
 #include <LibWeb/CSS/Serialize.h>
+#include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/Page/Page.h>
 
 namespace Web::CSS {
 
@@ -23,7 +25,7 @@ NonnullRefPtr<MediaQuery> MediaQuery::create_not_all()
 String MediaFeatureValue::to_string() const
 {
     return m_value.visit(
-        [](ValueID const& ident) { return String { string_from_value_id(ident) }; },
+        [](Keyword const& ident) { return MUST(String::from_utf8(string_from_keyword(ident))); },
         [](Length const& length) { return length.to_string(); },
         [](Ratio const& ratio) { return ratio.to_string(); },
         [](Resolution const& resolution) { return resolution.to_string(); },
@@ -33,7 +35,7 @@ String MediaFeatureValue::to_string() const
 bool MediaFeatureValue::is_same_type(MediaFeatureValue const& other) const
 {
     return m_value.visit(
-        [&](ValueID const&) { return other.is_ident(); },
+        [&](Keyword const&) { return other.is_ident(); },
         [&](Length const&) { return other.is_length(); },
         [&](Ratio const&) { return other.is_ratio(); },
         [&](Resolution const&) { return other.is_resolution(); },
@@ -60,18 +62,18 @@ String MediaFeature::to_string() const
 
     switch (m_type) {
     case Type::IsTrue:
-        return string_from_media_feature_id(m_id);
+        return MUST(String::from_utf8(string_from_media_feature_id(m_id)));
     case Type::ExactValue:
-        return String::formatted("{}:{}", string_from_media_feature_id(m_id), m_value->to_string());
+        return MUST(String::formatted("{}: {}", string_from_media_feature_id(m_id), m_value->to_string()));
     case Type::MinValue:
-        return String::formatted("min-{}:{}", string_from_media_feature_id(m_id), m_value->to_string());
+        return MUST(String::formatted("min-{}: {}", string_from_media_feature_id(m_id), m_value->to_string()));
     case Type::MaxValue:
-        return String::formatted("max-{}:{}", string_from_media_feature_id(m_id), m_value->to_string());
+        return MUST(String::formatted("max-{}: {}", string_from_media_feature_id(m_id), m_value->to_string()));
     case Type::Range:
         if (!m_range->right_comparison.has_value())
-            return String::formatted("{} {} {}", m_range->left_value.to_string(), comparison_string(m_range->left_comparison), string_from_media_feature_id(m_id));
+            return MUST(String::formatted("{} {} {}", m_range->left_value.to_string(), comparison_string(m_range->left_comparison), string_from_media_feature_id(m_id)));
 
-        return String::formatted("{} {} {} {} {}", m_range->left_value.to_string(), comparison_string(m_range->left_comparison), string_from_media_feature_id(m_id), comparison_string(*m_range->right_comparison), m_range->right_value->to_string());
+        return MUST(String::formatted("{} {} {} {} {}", m_range->left_value.to_string(), comparison_string(m_range->left_comparison), string_from_media_feature_id(m_id), comparison_string(*m_range->right_comparison), m_range->right_value->to_string()));
     }
 
     VERIFY_NOT_REACHED();
@@ -98,10 +100,10 @@ bool MediaFeature::evaluate(HTML::Window const& window) const
         if (queried_value.is_ident()) {
             // NOTE: It is not technically correct to always treat `no-preference` as false, but every
             //       media-feature that accepts it as a value treats it as false, so good enough. :^)
-            //       If other features gain this property for other identifiers in the future, we can
+            //       If other features gain this property for other keywords in the future, we can
             //       add more robust handling for them then.
-            return queried_value.ident() != ValueID::None
-                && queried_value.ident() != ValueID::NoPreference;
+            return queried_value.ident() != Keyword::None
+                && queried_value.ident() != Keyword::NoPreference;
         }
         return false;
 
@@ -156,21 +158,21 @@ bool MediaFeature::compare(HTML::Window const& window, MediaFeatureValue left, C
     }
 
     if (left.is_length()) {
-        float left_px;
-        float right_px;
+        CSSPixels left_px;
+        CSSPixels right_px;
         // Save ourselves some work if neither side is a relative length.
         if (left.length().is_absolute() && right.length().is_absolute()) {
             left_px = left.length().absolute_length_to_px();
             right_px = right.length().absolute_length_to_px();
         } else {
-            Gfx::IntRect viewport_rect { 0, 0, window.inner_width(), window.inner_height() };
+            auto viewport_rect = window.page().web_exposed_screen_area();
 
             auto const& initial_font = window.associated_document().style_computer().initial_font();
             Gfx::FontPixelMetrics const& initial_font_metrics = initial_font.pixel_metrics();
-            float initial_font_size = initial_font.presentation_size();
+            Length::FontMetrics font_metrics { initial_font.presentation_size(), initial_font_metrics };
 
-            left_px = left.length().to_px(viewport_rect, initial_font_metrics, initial_font_size, initial_font_size);
-            right_px = right.length().to_px(viewport_rect, initial_font_metrics, initial_font_size, initial_font_size);
+            left_px = left.length().to_px(viewport_rect, font_metrics, font_metrics);
+            right_px = right.length().to_px(viewport_rect, font_metrics, font_metrics);
         }
 
         switch (comparison) {
@@ -257,7 +259,7 @@ NonnullOwnPtr<MediaCondition> MediaCondition::from_not(NonnullOwnPtr<MediaCondit
     return adopt_own(*result);
 }
 
-NonnullOwnPtr<MediaCondition> MediaCondition::from_and_list(NonnullOwnPtrVector<MediaCondition>&& conditions)
+NonnullOwnPtr<MediaCondition> MediaCondition::from_and_list(Vector<NonnullOwnPtr<MediaCondition>>&& conditions)
 {
     auto result = new MediaCondition;
     result->type = Type::And;
@@ -266,7 +268,7 @@ NonnullOwnPtr<MediaCondition> MediaCondition::from_and_list(NonnullOwnPtrVector<
     return adopt_own(*result);
 }
 
-NonnullOwnPtr<MediaCondition> MediaCondition::from_or_list(NonnullOwnPtrVector<MediaCondition>&& conditions)
+NonnullOwnPtr<MediaCondition> MediaCondition::from_or_list(Vector<NonnullOwnPtr<MediaCondition>>&& conditions)
 {
     auto result = new MediaCondition;
     result->type = Type::Or;
@@ -285,7 +287,7 @@ String MediaCondition::to_string() const
         break;
     case Type::Not:
         builder.append("not "sv);
-        builder.append(conditions.first().to_string());
+        builder.append(conditions.first()->to_string());
         break;
     case Type::And:
         builder.join(" and "sv, conditions);
@@ -298,7 +300,7 @@ String MediaCondition::to_string() const
         break;
     }
     builder.append(')');
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 MatchResult MediaCondition::evaluate(HTML::Window const& window) const
@@ -307,11 +309,11 @@ MatchResult MediaCondition::evaluate(HTML::Window const& window) const
     case Type::Single:
         return as_match_result(feature->evaluate(window));
     case Type::Not:
-        return negate(conditions.first().evaluate(window));
+        return negate(conditions.first()->evaluate(window));
     case Type::And:
-        return evaluate_and(conditions, [&](auto& child) { return child.evaluate(window); });
+        return evaluate_and(conditions, [&](auto& child) { return child->evaluate(window); });
     case Type::Or:
-        return evaluate_or(conditions, [&](auto& child) { return child.evaluate(window); });
+        return evaluate_or(conditions, [&](auto& child) { return child->evaluate(window); });
     case Type::GeneralEnclosed:
         return general_enclosed->evaluate();
     }
@@ -335,7 +337,7 @@ String MediaQuery::to_string() const
         builder.append(m_media_condition->to_string());
     }
 
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 bool MediaQuery::evaluate(HTML::Window const& window)
@@ -350,6 +352,8 @@ bool MediaQuery::evaluate(HTML::Window const& window)
         case MediaType::Screen:
             // FIXME: Disable for printing, when we have printing!
             return MatchResult::True;
+        case MediaType::Unknown:
+            return MatchResult::False;
         // Deprecated, must never match:
         case MediaType::TTY:
         case MediaType::TV:
@@ -377,98 +381,42 @@ bool MediaQuery::evaluate(HTML::Window const& window)
 }
 
 // https://www.w3.org/TR/cssom-1/#serialize-a-media-query-list
-String serialize_a_media_query_list(NonnullRefPtrVector<MediaQuery> const& media_queries)
+String serialize_a_media_query_list(Vector<NonnullRefPtr<MediaQuery>> const& media_queries)
 {
     // 1. If the media query list is empty, then return the empty string.
     if (media_queries.is_empty())
-        return "";
+        return String {};
 
     // 2. Serialize each media query in the list of media queries, in the same order as they
     // appear in the media query list, and then serialize the list.
-    StringBuilder builder;
-    builder.join(", "sv, media_queries);
-    return builder.to_string();
+    return MUST(String::join(", "sv, media_queries));
 }
 
-bool is_media_feature_name(StringView name)
+MediaQuery::MediaType media_type_from_string(StringView name)
 {
-    // MEDIAQUERIES-4 - https://www.w3.org/TR/mediaqueries-4/#media-descriptor-table
-    if (name.equals_ignoring_case("any-hover"sv))
-        return true;
-    if (name.equals_ignoring_case("any-pointer"sv))
-        return true;
-    if (name.equals_ignoring_case("aspect-ratio"sv))
-        return true;
-    if (name.equals_ignoring_case("color"sv))
-        return true;
-    if (name.equals_ignoring_case("color-gamut"sv))
-        return true;
-    if (name.equals_ignoring_case("color-index"sv))
-        return true;
-    if (name.equals_ignoring_case("device-aspect-ratio"sv))
-        return true;
-    if (name.equals_ignoring_case("device-height"sv))
-        return true;
-    if (name.equals_ignoring_case("device-width"sv))
-        return true;
-    if (name.equals_ignoring_case("grid"sv))
-        return true;
-    if (name.equals_ignoring_case("height"sv))
-        return true;
-    if (name.equals_ignoring_case("hover"sv))
-        return true;
-    if (name.equals_ignoring_case("monochrome"sv))
-        return true;
-    if (name.equals_ignoring_case("orientation"sv))
-        return true;
-    if (name.equals_ignoring_case("overflow-block"sv))
-        return true;
-    if (name.equals_ignoring_case("overflow-inline"sv))
-        return true;
-    if (name.equals_ignoring_case("pointer"sv))
-        return true;
-    if (name.equals_ignoring_case("resolution"sv))
-        return true;
-    if (name.equals_ignoring_case("scan"sv))
-        return true;
-    if (name.equals_ignoring_case("update"sv))
-        return true;
-    if (name.equals_ignoring_case("width"sv))
-        return true;
-
-    // MEDIAQUERIES-5 - https://www.w3.org/TR/mediaqueries-5/#media-descriptor-table
-    if (name.equals_ignoring_case("prefers-color-scheme"sv))
-        return true;
-    // FIXME: Add other level 5 feature names
-
-    return false;
-}
-
-Optional<MediaQuery::MediaType> media_type_from_string(StringView name)
-{
-    if (name.equals_ignoring_case("all"sv))
+    if (name.equals_ignoring_ascii_case("all"sv))
         return MediaQuery::MediaType::All;
-    if (name.equals_ignoring_case("aural"sv))
+    if (name.equals_ignoring_ascii_case("aural"sv))
         return MediaQuery::MediaType::Aural;
-    if (name.equals_ignoring_case("braille"sv))
+    if (name.equals_ignoring_ascii_case("braille"sv))
         return MediaQuery::MediaType::Braille;
-    if (name.equals_ignoring_case("embossed"sv))
+    if (name.equals_ignoring_ascii_case("embossed"sv))
         return MediaQuery::MediaType::Embossed;
-    if (name.equals_ignoring_case("handheld"sv))
+    if (name.equals_ignoring_ascii_case("handheld"sv))
         return MediaQuery::MediaType::Handheld;
-    if (name.equals_ignoring_case("print"sv))
+    if (name.equals_ignoring_ascii_case("print"sv))
         return MediaQuery::MediaType::Print;
-    if (name.equals_ignoring_case("projection"sv))
+    if (name.equals_ignoring_ascii_case("projection"sv))
         return MediaQuery::MediaType::Projection;
-    if (name.equals_ignoring_case("screen"sv))
+    if (name.equals_ignoring_ascii_case("screen"sv))
         return MediaQuery::MediaType::Screen;
-    if (name.equals_ignoring_case("speech"sv))
+    if (name.equals_ignoring_ascii_case("speech"sv))
         return MediaQuery::MediaType::Speech;
-    if (name.equals_ignoring_case("tty"sv))
+    if (name.equals_ignoring_ascii_case("tty"sv))
         return MediaQuery::MediaType::TTY;
-    if (name.equals_ignoring_case("tv"sv))
+    if (name.equals_ignoring_ascii_case("tv"sv))
         return MediaQuery::MediaType::TV;
-    return {};
+    return MediaQuery::MediaType::Unknown;
 }
 
 StringView to_string(MediaQuery::MediaType media_type)
@@ -496,6 +444,8 @@ StringView to_string(MediaQuery::MediaType media_type)
         return "tty"sv;
     case MediaQuery::MediaType::TV:
         return "tv"sv;
+    case MediaQuery::MediaType::Unknown:
+        return "unknown"sv;
     }
     VERIFY_NOT_REACHED();
 }

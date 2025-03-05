@@ -16,8 +16,8 @@ namespace GUI {
 
 static DragOperation* s_current_drag_operation;
 
-DragOperation::DragOperation(Core::Object* parent)
-    : Core::Object(parent)
+DragOperation::DragOperation(Core::EventReceiver* parent)
+    : Core::EventReceiver(parent)
 {
 }
 
@@ -28,9 +28,9 @@ DragOperation::Outcome DragOperation::exec()
     VERIFY(m_mime_data);
 
     Gfx::ShareableBitmap drag_bitmap;
-    if (m_mime_data->has_format("image/x-raw-bitmap")) {
-        auto data = m_mime_data->data("image/x-raw-bitmap");
-        auto bitmap = Gfx::Bitmap::try_create_from_serialized_byte_buffer(move(data)).release_value_but_fixme_should_propagate_errors();
+    if (m_mime_data->has_format("image/x-raw-bitmap"sv)) {
+        auto data = m_mime_data->data("image/x-raw-bitmap"sv);
+        auto bitmap = Gfx::Bitmap::create_from_serialized_byte_buffer(move(data)).release_value_but_fixme_should_propagate_errors();
         drag_bitmap = bitmap->to_shareable_bitmap();
     }
 
@@ -48,7 +48,7 @@ DragOperation::Outcome DragOperation::exec()
     m_event_loop = make<Core::EventLoop>();
     auto result = m_event_loop->exec();
     m_event_loop = nullptr;
-    dbgln("{}: event loop returned with result {}", class_name(), result);
+    dbgln_if(DRAG_DEBUG, "{}: event loop returned with result {}", class_name(), result);
     remove_from_parent();
     s_current_drag_operation = nullptr;
     return m_outcome;
@@ -73,7 +73,7 @@ void DragOperation::notify_cancelled(Badge<ConnectionToWindowServer>)
         s_current_drag_operation->done(Outcome::Cancelled);
 }
 
-void DragOperation::set_text(String const& text)
+void DragOperation::set_text(ByteString const& text)
 {
     if (!m_mime_data)
         m_mime_data = Core::MimeData::construct();
@@ -84,9 +84,9 @@ void DragOperation::set_bitmap(Gfx::Bitmap const* bitmap)
     if (!m_mime_data)
         m_mime_data = Core::MimeData::construct();
     if (bitmap)
-        m_mime_data->set_data("image/x-raw-bitmap", bitmap->serialize_to_byte_buffer());
+        m_mime_data->set_data("image/x-raw-bitmap"_string, bitmap->serialize_to_byte_buffer().release_value_but_fixme_should_propagate_errors());
 }
-void DragOperation::set_data(String const& data_type, String const& data)
+void DragOperation::set_data(String const& data_type, ByteString const& data)
 {
     if (!m_mime_data)
         m_mime_data = Core::MimeData::construct();

@@ -200,9 +200,7 @@ static auto const& ensure_currency_codes()
 Optional<CurrencyCode> get_currency_code(StringView currency)
 {
     static auto const& currency_codes = ensure_currency_codes();
-    return currency_codes.get(currency);
+    return currency_codes.get(currency).copy();
 }
-
-Span<StringView const> __attribute__((weak)) get_available_currencies() { return {}; }
 
 }

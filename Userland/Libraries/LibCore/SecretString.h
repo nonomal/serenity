@@ -14,9 +14,10 @@ namespace Core {
 
 class SecretString {
     AK_MAKE_NONCOPYABLE(SecretString);
+    AK_MAKE_DEFAULT_MOVABLE(SecretString);
 
 public:
-    [[nodiscard]] static SecretString take_ownership(char*&, size_t);
+    [[nodiscard]] static ErrorOr<SecretString> take_ownership(char*&, size_t);
     [[nodiscard]] static SecretString take_ownership(ByteBuffer&&);
 
     [[nodiscard]] bool is_empty() const { return m_secure_buffer.is_empty(); }
@@ -26,8 +27,6 @@ public:
 
     SecretString() = default;
     ~SecretString();
-    SecretString(SecretString&&) = default;
-    SecretString& operator=(SecretString&&) = default;
 
 private:
     explicit SecretString(ByteBuffer&&);

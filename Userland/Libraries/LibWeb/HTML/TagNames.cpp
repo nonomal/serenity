@@ -12,18 +12,17 @@ namespace Web::HTML::TagNames {
 ENUMERATE_HTML_TAGS
 #undef __ENUMERATE_HTML_TAG
 
-[[gnu::constructor]] static void initialize()
+void initialize_strings()
 {
     static bool s_initialized = false;
-    if (s_initialized)
-        return;
+    VERIFY(!s_initialized);
 
 #define __ENUMERATE_HTML_TAG(name) \
-    name = #name;
+    name = #name##_fly_string;
     ENUMERATE_HTML_TAGS
 #undef __ENUMERATE_HTML_TAG
 
-    template_ = "template";
+    template_ = "template"_fly_string;
 
     s_initialized = true;
 }

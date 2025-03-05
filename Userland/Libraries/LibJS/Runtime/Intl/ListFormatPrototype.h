@@ -13,13 +13,15 @@ namespace JS::Intl {
 
 class ListFormatPrototype final : public PrototypeObject<ListFormatPrototype, ListFormat> {
     JS_PROTOTYPE_OBJECT(ListFormatPrototype, ListFormat, Intl.ListFormat);
+    JS_DECLARE_ALLOCATOR(ListFormatPrototype);
 
 public:
-    explicit ListFormatPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~ListFormatPrototype() override = default;
 
 private:
+    explicit ListFormatPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(format);
     JS_DECLARE_NATIVE_FUNCTION(format_to_parts);
     JS_DECLARE_NATIVE_FUNCTION(resolved_options);

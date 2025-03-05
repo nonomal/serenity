@@ -106,14 +106,15 @@ enum class DHCPMessageType : u8 {
 };
 
 template<>
-struct AK::Traits<DHCPOption> : public GenericTraits<DHCPOption> {
+struct AK::Traits<DHCPOption> : public DefaultTraits<DHCPOption> {
     static constexpr bool is_trivial() { return true; }
     static unsigned hash(DHCPOption u) { return int_hash((u8)u); }
 };
 
 struct ParsedDHCPv4Options {
     template<typename T>
-    Optional<const T> get(DHCPOption option_name) const requires(IsTriviallyCopyable<T>)
+    Optional<T const> get(DHCPOption option_name) const
+    requires(IsTriviallyCopyable<T>)
     {
         auto option = options.get(option_name);
         if (!option.has_value()) {
@@ -150,7 +151,7 @@ struct ParsedDHCPv4Options {
         return values;
     }
 
-    String to_string() const
+    ByteString to_byte_string() const
     {
         StringBuilder builder;
         builder.append("DHCP Options ("sv);
@@ -162,7 +163,7 @@ struct ParsedDHCPv4Options {
                 builder.appendff(" {} ", ((u8 const*)opt.value.value)[i]);
             builder.append('\n');
         }
-        return builder.build();
+        return builder.to_byte_string();
     }
 
     struct DHCPOptionValue {

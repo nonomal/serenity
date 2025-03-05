@@ -6,9 +6,9 @@
 
 #pragma once
 
+#include <Kernel/Devices/GPU/DisplayConnector.h>
 #include <Kernel/FileSystem/SysFS/Component.h>
-#include <Kernel/Graphics/DisplayConnector.h>
-#include <Kernel/KString.h>
+#include <Kernel/Library/KString.h>
 
 namespace Kernel {
 
@@ -23,7 +23,7 @@ public:
 
 private:
     DisplayConnectorSysFSDirectory(NonnullOwnPtr<KString> device_directory_name, SysFSDirectory const&, DisplayConnector const&);
-    RefPtr<DisplayConnector> m_device;
+    NonnullRefPtr<DisplayConnector> const m_device;
     NonnullOwnPtr<KString> m_device_directory_name;
 };
 

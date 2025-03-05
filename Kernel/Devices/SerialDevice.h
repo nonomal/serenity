@@ -6,13 +6,13 @@
 
 #pragma once
 
-#include <Kernel/Arch/x86/IO.h>
 #include <Kernel/Devices/CharacterDevice.h>
+#include <Kernel/Library/IOWindow.h>
 
 namespace Kernel {
 
 class SerialDevice final : public CharacterDevice {
-    friend class DeviceManagement;
+    friend class Device;
 
 public:
     static NonnullRefPtr<SerialDevice> must_create(size_t com_number);
@@ -104,7 +104,7 @@ public:
     };
 
 private:
-    SerialDevice(IOAddress base_addr, unsigned minor);
+    SerialDevice(NonnullOwnPtr<IOWindow> registers_io_window, unsigned minor);
 
     friend class PCISerialDevice;
 
@@ -120,7 +120,7 @@ private:
     void set_modem_control(u8 modem_control);
     u8 get_line_status() const;
 
-    IOAddress m_base_addr;
+    mutable NonnullOwnPtr<IOWindow> m_registers_io_window;
     bool m_interrupt_enable { false };
     u8 m_fifo_control { 0 };
     Baud m_baud { Baud38400 };
@@ -130,7 +130,7 @@ private:
     bool m_break_enable { false };
     u8 m_modem_control { 0 };
     bool m_last_put_char_was_carriage_return { false };
-    Spinlock m_serial_lock;
+    Spinlock<LockRank::None> m_serial_lock {};
 };
 
 }

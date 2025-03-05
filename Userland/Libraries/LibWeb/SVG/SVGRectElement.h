@@ -12,27 +12,29 @@ namespace Web::SVG {
 
 // https://www.w3.org/TR/SVG11/shapes.html#RectElement
 class SVGRectElement final : public SVGGeometryElement {
-public:
-    using WrapperType = Bindings::SVGRectElementWrapper;
+    WEB_PLATFORM_OBJECT(SVGRectElement, SVGGeometryElement);
+    JS_DECLARE_ALLOCATOR(SVGRectElement);
 
-    SVGRectElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~SVGRectElement() override = default;
 
-    virtual void parse_attribute(FlyString const& name, String const& value) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value) override;
 
-    virtual Gfx::Path& get_path() override;
+    virtual Gfx::Path get_path(CSSPixelSize viewport_size) override;
 
-    NonnullRefPtr<SVGAnimatedLength> x() const;
-    NonnullRefPtr<SVGAnimatedLength> y() const;
-    NonnullRefPtr<SVGAnimatedLength> width() const;
-    NonnullRefPtr<SVGAnimatedLength> height() const;
-    NonnullRefPtr<SVGAnimatedLength> rx() const;
-    NonnullRefPtr<SVGAnimatedLength> ry() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> x() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> y() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> width() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> height() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> rx() const;
+    JS::NonnullGCPtr<SVGAnimatedLength> ry() const;
 
 private:
-    Gfx::FloatPoint calculate_used_corner_radius_values();
+    SVGRectElement(DOM::Document&, DOM::QualifiedName);
 
-    Optional<Gfx::Path> m_path;
+    virtual void initialize(JS::Realm&) override;
+
+    Gfx::FloatSize calculate_used_corner_radius_values() const;
 
     Optional<float> m_x;
     Optional<float> m_y;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2024, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -48,312 +48,41 @@ TEST_CASE(to_unicode_uppercase)
     EXPECT_EQ(Unicode::to_unicode_uppercase(0x3401u), 0x3401u);
     EXPECT_EQ(Unicode::to_unicode_uppercase(0x3402u), 0x3402u);
     EXPECT_EQ(Unicode::to_unicode_uppercase(0x4dbfu), 0x4dbfu);
+
+    // Code points whose uppercase and titlecase mappings actually differ.
+    EXPECT_EQ(Unicode::to_unicode_uppercase(0x01c6u), 0x01c4u); // "ǆ" to "Ǆ"
+    EXPECT_EQ(Unicode::to_unicode_uppercase(0x01c9u), 0x01c7u); // "ǉ" to "Ǉ"
+    EXPECT_EQ(Unicode::to_unicode_uppercase(0x01ccu), 0x01cau); // "ǌ" to "Ǌ"
+    EXPECT_EQ(Unicode::to_unicode_uppercase(0x01f3u), 0x01f1u); // "ǳ" to "Ǳ"
 }
 
-TEST_CASE(to_unicode_lowercase_unconditional_special_casing)
+TEST_CASE(to_unicode_titlecase)
 {
-    // LATIN SMALL LETTER SHARP S
-    auto result = Unicode::to_unicode_lowercase_full("\u00DF"sv);
-    EXPECT_EQ(result, "\u00DF");
+    compare_to_ascii(toupper, Unicode::to_unicode_titlecase);
 
-    // LATIN CAPITAL LETTER I WITH DOT ABOVE
-    result = Unicode::to_unicode_lowercase_full("\u0130"sv);
-    EXPECT_EQ(result, "\u0069\u0307");
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x03c9u), 0x03a9u); // "ω" to "Ω"
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x03a9u), 0x03a9u); // "Ω" to "Ω"
 
-    // LATIN SMALL LIGATURE FF
-    result = Unicode::to_unicode_lowercase_full("\uFB00"sv);
-    EXPECT_EQ(result, "\uFB00");
+    // Code points encoded by ranges in UnicodeData.txt
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x3400u), 0x3400u);
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x3401u), 0x3401u);
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x3402u), 0x3402u);
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x4dbfu), 0x4dbfu);
 
-    // LATIN SMALL LIGATURE FI
-    result = Unicode::to_unicode_lowercase_full("\uFB01"sv);
-    EXPECT_EQ(result, "\uFB01");
-
-    // LATIN SMALL LIGATURE FL
-    result = Unicode::to_unicode_lowercase_full("\uFB02"sv);
-    EXPECT_EQ(result, "\uFB02");
-
-    // LATIN SMALL LIGATURE FFI
-    result = Unicode::to_unicode_lowercase_full("\uFB03"sv);
-    EXPECT_EQ(result, "\uFB03");
-
-    // LATIN SMALL LIGATURE FFL
-    result = Unicode::to_unicode_lowercase_full("\uFB04"sv);
-    EXPECT_EQ(result, "\uFB04");
-
-    // LATIN SMALL LIGATURE LONG S T
-    result = Unicode::to_unicode_lowercase_full("\uFB05"sv);
-    EXPECT_EQ(result, "\uFB05");
-
-    // LATIN SMALL LIGATURE ST
-    result = Unicode::to_unicode_lowercase_full("\uFB06"sv);
-    EXPECT_EQ(result, "\uFB06");
-
-    // GREEK SMALL LETTER ALPHA WITH PERISPOMENI AND YPOGEGRAMMENI
-    result = Unicode::to_unicode_lowercase_full("\u1FB7"sv);
-    EXPECT_EQ(result, "\u1FB7");
-
-    // GREEK SMALL LETTER ETA WITH PERISPOMENI AND YPOGEGRAMMENI
-    result = Unicode::to_unicode_lowercase_full("\u1FC7"sv);
-    EXPECT_EQ(result, "\u1FC7");
-
-    // GREEK SMALL LETTER OMEGA WITH PERISPOMENI AND YPOGEGRAMMENI
-    result = Unicode::to_unicode_lowercase_full("\u1FF7"sv);
-    EXPECT_EQ(result, "\u1FF7");
+    // Code points whose uppercase and titlecase mappings actually differ.
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x01c6u), 0x01c5u); // "ǆ" to "ǅ"
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x01c9u), 0x01c8u); // "ǉ" to "ǈ"
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x01ccu), 0x01cbu); // "ǌ" to "ǋ"
+    EXPECT_EQ(Unicode::to_unicode_titlecase(0x01f3u), 0x01f2u); // "ǳ" to "ǲ"
 }
 
-TEST_CASE(to_unicode_lowercase_special_casing_sigma)
+BENCHMARK_CASE(casing)
 {
-    auto result = Unicode::to_unicode_lowercase_full("ABCI"sv);
-    EXPECT_EQ(result, "abci");
-
-    // Sigma preceded by A
-    result = Unicode::to_unicode_lowercase_full("A\u03A3"sv);
-    EXPECT_EQ(result, "a\u03C2");
-
-    // Sigma preceded by FEMININE ORDINAL INDICATOR
-    result = Unicode::to_unicode_lowercase_full("\u00AA\u03A3"sv);
-    EXPECT_EQ(result, "\u00AA\u03C2");
-
-    // Sigma preceded by ROMAN NUMERAL ONE
-    result = Unicode::to_unicode_lowercase_full("\u2160\u03A3"sv);
-    EXPECT_EQ(result, "\u2170\u03C2");
-
-    // Sigma preceded by COMBINING GREEK YPOGEGRAMMENI
-    result = Unicode::to_unicode_lowercase_full("\u0345\u03A3"sv);
-    EXPECT_EQ(result, "\u0345\u03C3");
-
-    // Sigma preceded by A and FULL STOP
-    result = Unicode::to_unicode_lowercase_full("A.\u03A3"sv);
-    EXPECT_EQ(result, "a.\u03C2");
-
-    // Sigma preceded by A and MONGOLIAN VOWEL SEPARATOR
-    result = Unicode::to_unicode_lowercase_full("A\u180E\u03A3"sv);
-    EXPECT_EQ(result, "a\u180E\u03C2");
-
-    // Sigma preceded by A and MONGOLIAN VOWEL SEPARATOR, followed by B
-    result = Unicode::to_unicode_lowercase_full("A\u180E\u03A3B"sv);
-    EXPECT_EQ(result, "a\u180E\u03C3b");
-
-    // Sigma followed by A
-    result = Unicode::to_unicode_lowercase_full("\u03A3A"sv);
-    EXPECT_EQ(result, "\u03C3a");
-
-    // Sigma preceded by A, followed by MONGOLIAN VOWEL SEPARATOR
-    result = Unicode::to_unicode_lowercase_full("A\u03A3\u180E"sv);
-    EXPECT_EQ(result, "a\u03C2\u180E");
-
-    // Sigma preceded by A, followed by MONGOLIAN VOWEL SEPARATOR and B
-    result = Unicode::to_unicode_lowercase_full("A\u03A3\u180EB"sv);
-    EXPECT_EQ(result, "a\u03C3\u180Eb");
-
-    // Sigma preceded by A and MONGOLIAN VOWEL SEPARATOR, followed by MONGOLIAN VOWEL SEPARATOR
-    result = Unicode::to_unicode_lowercase_full("A\u180E\u03A3\u180E"sv);
-    EXPECT_EQ(result, "a\u180E\u03C2\u180E");
-
-    // Sigma preceded by A and MONGOLIAN VOWEL SEPARATOR, followed by MONGOLIAN VOWEL SEPARATOR and B
-    result = Unicode::to_unicode_lowercase_full("A\u180E\u03A3\u180EB"sv);
-    EXPECT_EQ(result, "a\u180E\u03C3\u180Eb");
-}
-
-TEST_CASE(to_unicode_lowercase_special_casing_i)
-{
-    // LATIN CAPITAL LETTER I
-    auto result = Unicode::to_unicode_lowercase_full("I"sv, "en"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I"sv, "az"sv);
-    EXPECT_EQ(result, "\u0131"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I"sv, "tr"sv);
-    EXPECT_EQ(result, "\u0131"sv);
-
-    // LATIN CAPITAL LETTER I WITH DOT ABOVE
-    result = Unicode::to_unicode_lowercase_full("\u0130"sv, "en"sv);
-    EXPECT_EQ(result, "\u0069\u0307"sv);
-
-    result = Unicode::to_unicode_lowercase_full("\u0130"sv, "az"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    result = Unicode::to_unicode_lowercase_full("\u0130"sv, "tr"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    // LATIN CAPITAL LETTER I followed by COMBINING DOT ABOVE
-    result = Unicode::to_unicode_lowercase_full("I\u0307"sv, "en"sv);
-    EXPECT_EQ(result, "i\u0307"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I\u0307"sv, "az"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I\u0307"sv, "tr"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    // LATIN CAPITAL LETTER I followed by combining class 0 and COMBINING DOT ABOVE
-    result = Unicode::to_unicode_lowercase_full("IA\u0307"sv, "en"sv);
-    EXPECT_EQ(result, "ia\u0307"sv);
-
-    result = Unicode::to_unicode_lowercase_full("IA\u0307"sv, "az"sv);
-    EXPECT_EQ(result, "\u0131a\u0307"sv);
-
-    result = Unicode::to_unicode_lowercase_full("IA\u0307"sv, "tr"sv);
-    EXPECT_EQ(result, "\u0131a\u0307"sv);
-}
-
-TEST_CASE(to_unicode_lowercase_special_casing_more_above)
-{
-    // LATIN CAPITAL LETTER I
-    auto result = Unicode::to_unicode_lowercase_full("I"sv, "en"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I"sv, "lt"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    // LATIN CAPITAL LETTER J
-    result = Unicode::to_unicode_lowercase_full("J"sv, "en"sv);
-    EXPECT_EQ(result, "j"sv);
-
-    result = Unicode::to_unicode_lowercase_full("J"sv, "lt"sv);
-    EXPECT_EQ(result, "j"sv);
-
-    // LATIN CAPITAL LETTER I WITH OGONEK
-    result = Unicode::to_unicode_lowercase_full("\u012e"sv, "en"sv);
-    EXPECT_EQ(result, "\u012f"sv);
-
-    result = Unicode::to_unicode_lowercase_full("\u012e"sv, "lt"sv);
-    EXPECT_EQ(result, "\u012f"sv);
-
-    // LATIN CAPITAL LETTER I followed by COMBINING GRAVE ACCENT
-    result = Unicode::to_unicode_lowercase_full("I\u0300"sv, "en"sv);
-    EXPECT_EQ(result, "i\u0300"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I\u0300"sv, "lt"sv);
-    EXPECT_EQ(result, "i\u0307\u0300"sv);
-
-    // LATIN CAPITAL LETTER J followed by COMBINING GRAVE ACCENT
-    result = Unicode::to_unicode_lowercase_full("J\u0300"sv, "en"sv);
-    EXPECT_EQ(result, "j\u0300"sv);
-
-    result = Unicode::to_unicode_lowercase_full("J\u0300"sv, "lt"sv);
-    EXPECT_EQ(result, "j\u0307\u0300"sv);
-
-    // LATIN CAPITAL LETTER I WITH OGONEK followed by COMBINING GRAVE ACCENT
-    result = Unicode::to_unicode_lowercase_full("\u012e\u0300"sv, "en"sv);
-    EXPECT_EQ(result, "\u012f\u0300"sv);
-
-    result = Unicode::to_unicode_lowercase_full("\u012e\u0300"sv, "lt"sv);
-    EXPECT_EQ(result, "\u012f\u0307\u0300"sv);
-}
-
-TEST_CASE(to_unicode_lowercase_special_casing_not_before_dot)
-{
-    // LATIN CAPITAL LETTER I
-    auto result = Unicode::to_unicode_lowercase_full("I"sv, "en"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I"sv, "az"sv);
-    EXPECT_EQ(result, "\u0131"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I"sv, "tr"sv);
-    EXPECT_EQ(result, "\u0131"sv);
-
-    // LATIN CAPITAL LETTER I followed by COMBINING DOT ABOVE
-    result = Unicode::to_unicode_lowercase_full("I\u0307"sv, "en"sv);
-    EXPECT_EQ(result, "i\u0307"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I\u0307"sv, "az"sv);
-    EXPECT_EQ(result, "i"sv);
-
-    result = Unicode::to_unicode_lowercase_full("I\u0307"sv, "tr"sv);
-    EXPECT_EQ(result, "i"sv);
-}
-
-TEST_CASE(to_unicode_uppercase_unconditional_special_casing)
-{
-    // LATIN SMALL LETTER SHARP S
-    auto result = Unicode::to_unicode_uppercase_full("\u00DF"sv);
-    EXPECT_EQ(result, "\u0053\u0053");
-
-    // LATIN CAPITAL LETTER I WITH DOT ABOVE
-    result = Unicode::to_unicode_uppercase_full("\u0130"sv);
-    EXPECT_EQ(result, "\u0130");
-
-    // LATIN SMALL LIGATURE FF
-    result = Unicode::to_unicode_uppercase_full("\uFB00"sv);
-    EXPECT_EQ(result, "\u0046\u0046");
-
-    // LATIN SMALL LIGATURE FI
-    result = Unicode::to_unicode_uppercase_full("\uFB01"sv);
-    EXPECT_EQ(result, "\u0046\u0049");
-
-    // LATIN SMALL LIGATURE FL
-    result = Unicode::to_unicode_uppercase_full("\uFB02"sv);
-    EXPECT_EQ(result, "\u0046\u004C");
-
-    // LATIN SMALL LIGATURE FFI
-    result = Unicode::to_unicode_uppercase_full("\uFB03"sv);
-    EXPECT_EQ(result, "\u0046\u0046\u0049");
-
-    // LATIN SMALL LIGATURE FFL
-    result = Unicode::to_unicode_uppercase_full("\uFB04"sv);
-    EXPECT_EQ(result, "\u0046\u0046\u004C");
-
-    // LATIN SMALL LIGATURE LONG S T
-    result = Unicode::to_unicode_uppercase_full("\uFB05"sv);
-    EXPECT_EQ(result, "\u0053\u0054");
-
-    // LATIN SMALL LIGATURE ST
-    result = Unicode::to_unicode_uppercase_full("\uFB06"sv);
-    EXPECT_EQ(result, "\u0053\u0054");
-
-    // GREEK SMALL LETTER IOTA WITH DIALYTIKA AND TONOS
-    result = Unicode::to_unicode_uppercase_full("\u0390"sv);
-    EXPECT_EQ(result, "\u0399\u0308\u0301");
-
-    // GREEK SMALL LETTER UPSILON WITH DIALYTIKA AND TONOS
-    result = Unicode::to_unicode_uppercase_full("\u03B0"sv);
-    EXPECT_EQ(result, "\u03A5\u0308\u0301");
-
-    // GREEK SMALL LETTER ALPHA WITH PERISPOMENI AND YPOGEGRAMMENI
-    result = Unicode::to_unicode_uppercase_full("\u1FB7"sv);
-    EXPECT_EQ(result, "\u0391\u0342\u0399");
-
-    // GREEK SMALL LETTER ETA WITH PERISPOMENI AND YPOGEGRAMMENI
-    result = Unicode::to_unicode_uppercase_full("\u1FC7"sv);
-    EXPECT_EQ(result, "\u0397\u0342\u0399");
-
-    // GREEK SMALL LETTER OMEGA WITH PERISPOMENI AND YPOGEGRAMMENI
-    result = Unicode::to_unicode_uppercase_full("\u1FF7"sv);
-    EXPECT_EQ(result, "\u03A9\u0342\u0399");
-}
-
-TEST_CASE(to_unicode_uppercase_special_casing_soft_dotted)
-{
-    // LATIN SMALL LETTER I
-    auto result = Unicode::to_unicode_uppercase_full("i"sv, "en"sv);
-    EXPECT_EQ(result, "I"sv);
-
-    result = Unicode::to_unicode_uppercase_full("i"sv, "lt"sv);
-    EXPECT_EQ(result, "I"sv);
-
-    // LATIN SMALL LETTER J
-    result = Unicode::to_unicode_uppercase_full("j"sv, "en"sv);
-    EXPECT_EQ(result, "J"sv);
-
-    result = Unicode::to_unicode_uppercase_full("j"sv, "lt"sv);
-    EXPECT_EQ(result, "J"sv);
-
-    // LATIN SMALL LETTER I followed by COMBINING DOT ABOVE
-    result = Unicode::to_unicode_uppercase_full("i\u0307"sv, "en"sv);
-    EXPECT_EQ(result, "I\u0307"sv);
-
-    result = Unicode::to_unicode_uppercase_full("i\u0307"sv, "lt"sv);
-    EXPECT_EQ(result, "I"sv);
-
-    // LATIN SMALL LETTER J followed by COMBINING DOT ABOVE
-    result = Unicode::to_unicode_uppercase_full("j\u0307"sv, "en"sv);
-    EXPECT_EQ(result, "J\u0307"sv);
-
-    result = Unicode::to_unicode_uppercase_full("j\u0307"sv, "lt"sv);
-    EXPECT_EQ(result, "J"sv);
+    for (size_t i = 0; i < 50'000; ++i) {
+        __test_to_unicode_lowercase();
+        __test_to_unicode_uppercase();
+        __test_to_unicode_titlecase();
+    }
 }
 
 TEST_CASE(general_category)
@@ -445,6 +174,28 @@ TEST_CASE(general_category)
         EXPECT(!Unicode::code_point_has_general_category(code_point, general_category_co));
         EXPECT(!Unicode::code_point_has_general_category(code_point, general_category_cn));
         EXPECT(!Unicode::code_point_has_general_category(code_point, general_category_ll));
+    }
+}
+
+BENCHMARK_CASE(general_category_performance)
+{
+    auto general_category_cased_letter = Unicode::general_category_from_string("Cased_Letter"sv).value();
+
+    for (size_t i = 0; i < 1'000'000; ++i) {
+        for (u32 code_point = 0; code_point <= 0x1f; ++code_point)
+            EXPECT(!Unicode::code_point_has_general_category(code_point, general_category_cased_letter));
+
+        for (u32 code_point = 0x41; code_point <= 0x5a; ++code_point)
+            EXPECT(Unicode::code_point_has_general_category(code_point, general_category_cased_letter));
+
+        for (u32 code_point = 0x61; code_point <= 0x7a; ++code_point)
+            EXPECT(Unicode::code_point_has_general_category(code_point, general_category_cased_letter));
+
+        for (u32 code_point = 0xe000; code_point <= 0xe100; ++code_point)
+            EXPECT(!Unicode::code_point_has_general_category(code_point, general_category_cased_letter));
+
+        for (u32 code_point = 0x101fe; code_point <= 0x1027f; ++code_point)
+            EXPECT(!Unicode::code_point_has_general_category(code_point, general_category_cased_letter));
     }
 }
 
@@ -562,14 +313,6 @@ TEST_CASE(script)
         EXPECT(!Unicode::code_point_has_script(code_point, script_greek));
     }
 
-    for (u32 code_point = 0x400; code_point <= 0x481; ++code_point) {
-        EXPECT(Unicode::code_point_has_script(code_point, script_cyrillic));
-        EXPECT(Unicode::code_point_has_script_extension(code_point, script_cyrillic));
-
-        EXPECT(!Unicode::code_point_has_script(code_point, script_latin));
-        EXPECT(!Unicode::code_point_has_script(code_point, script_greek));
-    }
-
     for (u32 code_point = 0x1f80; code_point <= 0x1fb4; ++code_point) {
         EXPECT(Unicode::code_point_has_script(code_point, script_greek));
         EXPECT(Unicode::code_point_has_script_extension(code_point, script_greek));
@@ -581,34 +324,6 @@ TEST_CASE(script)
 
 TEST_CASE(block)
 {
-    auto block = [](StringView name) {
-        auto block = Unicode::block_from_string(name);
-        VERIFY(block.has_value());
-        return *block;
-    };
-
-    auto no_block = block("No_Block"sv);
-    auto block_nb = block("NB"sv);
-    EXPECT_EQ(no_block, block_nb);
-
-    auto block_basic_latin = block("Basic_Latin"sv);
-    auto block_ascii = block("ASCII"sv);
-    EXPECT_EQ(block_basic_latin, block_ascii);
-
-    auto block_greek_coptic = block("Greek_And_Coptic"sv);
-    auto block_greek = block("Greek"sv);
-    EXPECT_EQ(block_greek_coptic, block_greek);
-
-    auto block_variation = block("Variation_Selectors_Supplement"sv);
-    auto block_vs_sup = block("VS_Sup"sv);
-    EXPECT_EQ(block_variation, block_vs_sup);
-
-    for (u32 code_point = 0x0000; code_point <= 0x007F; ++code_point)
-        EXPECT(Unicode::code_point_has_block(code_point, block_basic_latin));
-
-    for (u32 code_point = 0xE0100; code_point <= 0xE01EF; ++code_point)
-        EXPECT(Unicode::code_point_has_block(code_point, block_variation));
-
     for (u32 code_point = 0x0000; code_point <= 0x007F; ++code_point)
         EXPECT_EQ("Basic Latin"sv, Unicode::code_point_block_display_name(code_point).value());
 
@@ -689,11 +404,25 @@ TEST_CASE(code_point_display_name)
     EXPECT_EQ(code_point_display_name(0x20000), "CJK UNIFIED IDEOGRAPH-20000"sv);
     EXPECT_EQ(code_point_display_name(0x20001), "CJK UNIFIED IDEOGRAPH-20001"sv);
     EXPECT_EQ(code_point_display_name(0x20002), "CJK UNIFIED IDEOGRAPH-20002"sv);
-    EXPECT(!Unicode::code_point_display_name(0x2a6df).has_value());
+    EXPECT_EQ(code_point_display_name(0x2a6df), "CJK UNIFIED IDEOGRAPH-2A6DF"sv);
+    EXPECT(!Unicode::code_point_display_name(0x2a6e0).has_value());
 
     // Ideographic code points (which appeared individually in UnicodeData.txt and were coalesced into a range).
     EXPECT_EQ(code_point_display_name(0x2f800), "CJK COMPATIBILITY IDEOGRAPH-2F800"sv);
     EXPECT_EQ(code_point_display_name(0x2f801), "CJK COMPATIBILITY IDEOGRAPH-2F801"sv);
     EXPECT_EQ(code_point_display_name(0x2f802), "CJK COMPATIBILITY IDEOGRAPH-2F802"sv);
     EXPECT_EQ(code_point_display_name(0x2fa1d), "CJK COMPATIBILITY IDEOGRAPH-2FA1D"sv);
+}
+
+TEST_CASE(code_point_bidirectional_character_type)
+{
+    // Left-to-right
+    EXPECT_EQ(Unicode::bidirectional_class('A'), Unicode::BidiClass::LeftToRight);
+    EXPECT_EQ(Unicode::bidirectional_class('z'), Unicode::BidiClass::LeftToRight);
+    // European number
+    EXPECT_EQ(Unicode::bidirectional_class('7'), Unicode::BidiClass::EuropeanNumber);
+    // Whitespace
+    EXPECT_EQ(Unicode::bidirectional_class(' '), Unicode::BidiClass::WhiteSpaceNeutral);
+    // Arabic right-to-left (U+FEB4 ARABIC LETTER SEEN MEDIAL FORM)
+    EXPECT_EQ(Unicode::bidirectional_class(0xFEB4), Unicode::BidiClass::RightToLeftArabic);
 }

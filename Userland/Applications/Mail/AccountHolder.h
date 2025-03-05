@@ -8,9 +8,8 @@
 #pragma once
 
 #include "MailboxTreeModel.h"
-#include <AK/NonnullRefPtrVector.h>
+#include <AK/ByteString.h>
 #include <AK/RefCounted.h>
-#include <AK/String.h>
 #include <LibIMAP/Objects.h>
 
 class BaseNode : public RefCounted<BaseNode> {
@@ -22,7 +21,7 @@ class MailboxNode;
 
 class AccountNode final : public BaseNode {
 public:
-    static NonnullRefPtr<AccountNode> create(String name)
+    static NonnullRefPtr<AccountNode> create(ByteString name)
     {
         return adopt_ref(*new AccountNode(move(name)));
     }
@@ -34,22 +33,22 @@ public:
         m_mailboxes.append(move(mailbox));
     }
 
-    NonnullRefPtrVector<MailboxNode> const& mailboxes() const { return m_mailboxes; }
-    String const& name() const { return m_name; }
+    Vector<NonnullRefPtr<MailboxNode>> const& mailboxes() const { return m_mailboxes; }
+    ByteString const& name() const { return m_name; }
 
 private:
-    explicit AccountNode(String name)
+    explicit AccountNode(ByteString name)
         : m_name(move(name))
     {
     }
 
-    String m_name;
-    NonnullRefPtrVector<MailboxNode> m_mailboxes;
+    ByteString m_name;
+    Vector<NonnullRefPtr<MailboxNode>> m_mailboxes;
 };
 
 class MailboxNode final : public BaseNode {
 public:
-    static NonnullRefPtr<MailboxNode> create(AccountNode const& associated_account, IMAP::ListItem const& mailbox, String display_name)
+    static NonnullRefPtr<MailboxNode> create(AccountNode const& associated_account, IMAP::ListItem const& mailbox, ByteString display_name)
     {
         return adopt_ref(*new MailboxNode(associated_account, mailbox, move(display_name)));
     }
@@ -57,8 +56,9 @@ public:
     virtual ~MailboxNode() override = default;
 
     AccountNode const& associated_account() const { return m_associated_account; }
-    String const& select_name() const { return m_mailbox.name; }
-    String const& display_name() const { return m_display_name; }
+    ByteString const& select_name() const { return m_mailbox.name; }
+    ByteString const& display_name() const { return m_display_name; }
+    ByteString const& display_name_with_unseen_count() const { return m_display_name_with_unseen_count; }
     IMAP::ListItem const& mailbox() const { return m_mailbox; }
 
     bool has_parent() const { return m_parent; }
@@ -66,22 +66,31 @@ public:
     void set_parent(NonnullRefPtr<MailboxNode> parent) { m_parent = parent; }
 
     bool has_children() const { return !m_children.is_empty(); }
-    NonnullRefPtrVector<MailboxNode> const& children() const { return m_children; }
+    Vector<NonnullRefPtr<MailboxNode>> const& children() const { return m_children; }
     void add_child(NonnullRefPtr<MailboxNode> child) { m_children.append(child); }
 
+    unsigned unseen_count() const { return m_unseen_count; }
+    void decrement_unseen_count();
+    void increment_unseen_count();
+    void set_unseen_count(unsigned unseen_count);
+
 private:
-    MailboxNode(AccountNode const& associated_account, IMAP::ListItem const& mailbox, String display_name)
+    MailboxNode(AccountNode const& associated_account, IMAP::ListItem const& mailbox, ByteString display_name)
         : m_associated_account(associated_account)
         , m_mailbox(mailbox)
         , m_display_name(move(display_name))
     {
     }
 
+    void update_display_name_with_unseen_count();
+
     AccountNode const& m_associated_account;
     IMAP::ListItem m_mailbox;
-    String m_display_name;
+    ByteString m_display_name;
+    ByteString m_display_name_with_unseen_count;
+    unsigned m_unseen_count;
 
-    NonnullRefPtrVector<MailboxNode> m_children;
+    Vector<NonnullRefPtr<MailboxNode>> m_children;
     RefPtr<MailboxNode> m_parent;
 };
 
@@ -94,9 +103,9 @@ public:
         return adopt_own(*new AccountHolder());
     }
 
-    void add_account_with_name_and_mailboxes(String, Vector<IMAP::ListItem> const&);
+    void add_account_with_name_and_mailboxes(ByteString, Vector<IMAP::ListItem> const&);
 
-    NonnullRefPtrVector<AccountNode> const& accounts() const { return m_accounts; }
+    Vector<NonnullRefPtr<AccountNode>> const& accounts() const { return m_accounts; }
     MailboxTreeModel& mailbox_tree_model() { return *m_mailbox_tree_model; }
 
 private:
@@ -104,6 +113,6 @@ private:
 
     void rebuild_tree();
 
-    NonnullRefPtrVector<AccountNode> m_accounts;
+    Vector<NonnullRefPtr<AccountNode>> m_accounts;
     RefPtr<MailboxTreeModel> m_mailbox_tree_model;
 };

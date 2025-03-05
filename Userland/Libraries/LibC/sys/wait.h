@@ -6,8 +6,13 @@
 
 #pragma once
 
+// Includes essentially mandated by POSIX:
+// https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/sys_wait.h.html
+#include <signal.h>
+
 #include <Kernel/API/POSIX/signal.h>
 #include <Kernel/API/POSIX/sys/wait.h>
+#include <sys/cdefs.h>
 
 __BEGIN_DECLS
 

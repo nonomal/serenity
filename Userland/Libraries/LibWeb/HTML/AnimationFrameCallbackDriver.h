@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2024, Andreas Kling <andreas@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,14 +8,15 @@
 #pragma once
 
 #include <AK/Function.h>
-#include <AK/IDAllocator.h>
+#include <AK/HashMap.h>
 #include <LibCore/Timer.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
+#include <LibWeb/WebIDL/Types.h>
 
 namespace Web::HTML {
 
 struct AnimationFrameCallbackDriver {
-    using Callback = Function<void(i32)>;
+    using Callback = Function<void(double)>;
 
     AnimationFrameCallbackDriver()
     {
@@ -23,30 +25,29 @@ struct AnimationFrameCallbackDriver {
         });
     }
 
-    i32 add(Callback handler)
+    [[nodiscard]] WebIDL::UnsignedLong add(Callback handler)
     {
-        auto id = m_id_allocator.allocate();
+        auto id = ++m_animation_frame_callback_identifier;
         m_callbacks.set(id, move(handler));
         if (!m_timer->is_active())
             m_timer->start();
         return id;
     }
 
-    bool remove(i32 id)
+    bool remove(WebIDL::UnsignedLong id)
     {
         auto it = m_callbacks.find(id);
         if (it == m_callbacks.end())
             return false;
         m_callbacks.remove(it);
-        m_id_allocator.deallocate(id);
         return true;
     }
 
-    void run()
+    void run(double now)
     {
         auto taken_callbacks = move(m_callbacks);
         for (auto& [id, callback] : taken_callbacks)
-            callback(id);
+            callback(now);
     }
 
     bool has_callbacks() const
@@ -55,8 +56,10 @@ struct AnimationFrameCallbackDriver {
     }
 
 private:
-    HashMap<i32, Callback> m_callbacks;
-    IDAllocator m_id_allocator;
+    // https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html#animation-frame-callback-identifier
+    WebIDL::UnsignedLong m_animation_frame_callback_identifier { 0 };
+
+    OrderedHashMap<WebIDL::UnsignedLong, Callback> m_callbacks;
     RefPtr<Core::Timer> m_timer;
 };
 

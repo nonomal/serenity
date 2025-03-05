@@ -12,11 +12,14 @@
     M(ArrayMaxSize, "Maximum array size exceeded")                                                                                      \
     M(AccessorBadField, "Accessor descriptor's '{}' field must be a function or undefined")                                             \
     M(AccessorValueOrWritable, "Accessor property descriptor cannot specify a value or writable key")                                   \
+    M(AgentCannotSuspend, "Agent is not allowed to suspend")                                                                            \
     M(BigIntBadOperator, "Cannot use {} operator with BigInt")                                                                          \
     M(BigIntBadOperatorOtherType, "Cannot use {} operator with BigInt and other type")                                                  \
     M(BigIntFromNonIntegral, "Cannot convert non-integral number to BigInt")                                                            \
     M(BigIntInvalidValue, "Invalid value for BigInt: {}")                                                                               \
     M(BindingNotInitialized, "Binding {} is not initialized")                                                                           \
+    M(BufferOutOfBounds, "{} contains a property which references a value at an index not contained within its buffer's bounds")        \
+    M(ByteLengthExceedsMaxByteLength, "ArrayBuffer byte length of {} exceeds the max byte length of {}")                                \
     M(CallStackSizeExceeded, "Call stack size limit exceeded")                                                                          \
     M(CannotDeclareGlobalFunction, "Cannot declare global function of name '{}'")                                                       \
     M(CannotDeclareGlobalVariable, "Cannot declare global variable of name '{}'")                                                       \
@@ -32,10 +35,14 @@
     M(DescWriteNonWritable, "Cannot write to non-writable property '{}'")                                                               \
     M(DetachedArrayBuffer, "ArrayBuffer is detached")                                                                                   \
     M(DetachKeyMismatch, "Provided detach key {} does not match the ArrayBuffer's detach key {}")                                       \
+    M(DisposableStackAlreadyDisposed, "DisposableStack already disposed values")                                                        \
     M(DivisionByZero, "Division by zero")                                                                                               \
     M(DynamicImportNotAllowed, "Dynamic Imports are not allowed")                                                                       \
     M(FinalizationRegistrySameTargetAndValue, "Target and held value must not be the same")                                             \
+    M(FixedArrayBuffer, "ArrayBuffer is not resizable")                                                                                 \
     M(GetCapabilitiesExecutorCalledMultipleTimes, "GetCapabilitiesExecutor was called multiple times")                                  \
+    M(GeneratorAlreadyExecuting, "Generator is already executing")                                                                      \
+    M(GeneratorBrandMismatch, "Generator brand '{}' does not match generator brand '{}')")                                              \
     M(GlobalEnvironmentAlreadyHasBinding, "Global environment already has binding '{}'")                                                \
     M(IndexOutOfRange, "Index {} is out of range of array length {}")                                                                   \
     M(InOperatorWithObject, "'in' operator must be used on an object")                                                                  \
@@ -48,11 +55,7 @@
     M(IntlInvalidRoundingIncrementForRoundingType, "{} is not a valid rounding increment for rounding type {}")                         \
     M(IntlInvalidTime, "Time value must be between -8.64E15 and 8.64E15")                                                               \
     M(IntlInvalidUnit, "Unit {} is not a valid time unit")                                                                              \
-    M(IntlStartRangeAfterEndRange, "Range start {} is greater than range end {}")                                                       \
-    M(IntlStartTimeAfterEndTime, "Start time {} is after end time {}")                                                                  \
     M(IntlMinimumExceedsMaximum, "Minimum value {} is larger than maximum value {}")                                                    \
-    M(IntlNumberIsNaN, "{} must not be NaN")                                                                                            \
-    M(IntlNumberIsNaNOrInfinity, "Number must not be NaN or Infinity")                                                                  \
     M(IntlNumberIsNaNOrOutOfRange, "Value {} is NaN or is not between {} and {}")                                                       \
     M(IntlOptionUndefined, "Option {} must be defined when option {} is {}")                                                            \
     M(IntlNonNumericOr2DigitAfterNumericOr2Digit, "Styles other than 'numeric' and '2-digit' may not be used in smaller units after "   \
@@ -67,6 +70,7 @@
     M(InvalidLength, "Invalid {} length")                                                                                               \
     M(InvalidOrAmbiguousExportEntry, "Invalid or ambiguous export entry '{}'")                                                          \
     M(InvalidPrecision, "Precision must be an integer no less than 1, and no greater than 100")                                         \
+    M(InvalidRestrictedFloatingPointParameter, "Expected {} to be a finite floating-point number")                                      \
     M(InvalidTimeValue, "Invalid time value")                                                                                           \
     M(InvalidRadix, "Radix must be an integer no less than 2, and no greater than 36")                                                  \
     M(IsNotA, "{} is not a {}")                                                                                                         \
@@ -85,6 +89,7 @@
     M(ModuleNotFound, "Cannot find/open module: '{}'")                                                                                  \
     M(ModuleNotFoundNoReferencingScript, "Cannot resolve module {} without any active script or module")                                \
     M(NegativeExponent, "Exponent must be positive")                                                                                    \
+    M(NoDisposeMethod, "{} does not have dispose method")                                                                               \
     M(NonExtensibleDefine, "Cannot define property {} on non-extensible object")                                                        \
     M(NotAConstructor, "{} is not a constructor")                                                                                       \
     M(NotAFunction, "{} is not a function")                                                                                             \
@@ -93,12 +98,16 @@
     M(NotAnObjectOfType, "Not an object of type {}")                                                                                    \
     M(NotAnObjectOrNull, "{} is neither an object nor null")                                                                            \
     M(NotAnObjectOrString, "{} is neither an object nor a string")                                                                      \
+    M(NotASharedArrayBuffer, "The array buffer object must be a SharedArrayBuffer")                                                     \
     M(NotAString, "{} is not a string")                                                                                                 \
     M(NotASymbol, "{} is not a symbol")                                                                                                 \
     M(NotImplemented, "TODO({} is not implemented in LibJS)")                                                                           \
     M(NotIterable, "{} is not iterable")                                                                                                \
     M(NotObjectCoercible, "{} cannot be converted to an object")                                                                        \
     M(NotUndefined, "{} is not undefined")                                                                                              \
+    M(NumberIsNaN, "{} must not be NaN")                                                                                                \
+    M(NumberIsNaNOrInfinity, "Number must not be NaN or Infinity")                                                                      \
+    M(NumberIsNegative, "{} must not be negative")                                                                                      \
     M(ObjectDefineOwnPropertyReturnedFalse, "Object's [[DefineOwnProperty]] method returned false")                                     \
     M(ObjectDeleteReturnedFalse, "Object's [[Delete]] method returned false")                                                           \
     M(ObjectFreezeFailed, "Could not freeze object")                                                                                    \
@@ -110,6 +119,7 @@
         "Object prototype must not be {} on a super property access")                                                                   \
     M(ObjectPrototypeWrongType, "Prototype must be an object or null")                                                                  \
     M(OptionIsNotValidValue, "{} is not a valid value for option {}")                                                                   \
+    M(OutOfMemory, "Out of memory")                                                                                                     \
     M(OverloadResolutionFailed, "Overload resolution failed")                                                                           \
     M(PrivateFieldAlreadyDeclared, "Private field '{}' has already been declared")                                                      \
     M(PrivateFieldDoesNotExistOnObject, "Private field '{}' does not exist on object")                                                  \
@@ -209,16 +219,19 @@
     M(RegExpCompileError, "RegExp compile error: {}")                                                                                   \
     M(RegExpObjectBadFlag, "Invalid RegExp flag '{}'")                                                                                  \
     M(RegExpObjectRepeatedFlag, "Repeated RegExp flag '{}'")                                                                            \
+    M(RegExpObjectIncompatibleFlags, "RegExp flag '{}' is incompatible with flag '{}'")                                                 \
     M(RestrictedFunctionPropertiesAccess, "Restricted function properties like 'callee', 'caller' and 'arguments' may "                 \
                                           "not be accessed in strict mode")                                                             \
     M(RestrictedGlobalProperty, "Cannot declare global property '{}'")                                                                  \
     M(ShadowRealmEvaluateAbruptCompletion, "The evaluated script did not complete normally")                                            \
     M(ShadowRealmWrappedValueNonFunctionObject, "Wrapped value must be primitive or a function object, got {}")                         \
+    M(SharedArrayBuffer, "The array buffer object cannot be a SharedArrayBuffer")                                                       \
     M(SpeciesConstructorDidNotCreate, "Species constructor did not create {}")                                                          \
     M(SpeciesConstructorReturned, "Species constructor returned {}")                                                                    \
     M(StringNonGlobalRegExp, "RegExp argument is non-global")                                                                           \
     M(StringRawCannotConvert, "Cannot convert property 'raw' to object from {}")                                                        \
     M(StringRepeatCountMustBe, "repeat count must be a {} number")                                                                      \
+    M(StringRepeatCountMustNotOverflow, "repeat count must not overflow")                                                               \
     M(TemporalAmbiguousMonthOfPlainMonthDay, "Accessing month of PlainMonthDay is ambiguous, use monthCode instead")                    \
     M(TemporalDifferentCalendars, "Cannot compare dates from two different calendars")                                                  \
     M(TemporalDifferentTimeZones, "Cannot compare dates from two different time zones")                                                 \
@@ -244,15 +257,19 @@
     M(TemporalInvalidEpochNanoseconds, "Invalid epoch nanoseconds value, must be in range -86400 * 10^17 to 86400 * 10^17")             \
     M(TemporalInvalidInstantString, "Invalid instant string '{}'")                                                                      \
     M(TemporalInvalidISODate, "Invalid ISO date")                                                                                       \
+    M(TemporalInvalidISODateTime, "Invalid ISO date time")                                                                              \
     M(TemporalInvalidMonthCode, "Invalid month code")                                                                                   \
     M(TemporalInvalidMonthDayString, "Invalid month day string '{}'")                                                                   \
     M(TemporalInvalidMonthDayStringUTCDesignator, "Invalid month day string '{}': must not contain a UTC designator")                   \
-    M(TemporalInvalidOffsetNanosecondsValue, "Invalid offset nanoseconds value, must be in range -86400 * 10^9 to 86400 * 10^9")        \
+    M(TemporalInvalidOffsetNanosecondsValue, "Invalid offset nanoseconds value, must be in range -86400 * 10^9 + 1 to "                 \
+                                             "86400 * 10^9 - 1")                                                                        \
     M(TemporalInvalidPlainDate, "Invalid plain date")                                                                                   \
     M(TemporalInvalidPlainDateTime, "Invalid plain date time")                                                                          \
     M(TemporalInvalidPlainMonthDay, "Invalid plain month day")                                                                          \
     M(TemporalInvalidPlainTime, "Invalid plain time")                                                                                   \
     M(TemporalInvalidPlainYearMonth, "Invalid plain year month")                                                                        \
+    M(TemporalInvalidRelativeToStringUTCDesignatorWithoutBracketedTimeZone, "Invalid relativeTo string '{}': must not contain a UTC "   \
+                                                                            "designator without bracketed time zone")                   \
     M(TemporalInvalidTime, "Invalid time")                                                                                              \
     M(TemporalInvalidTimeString, "Invalid time string '{}'")                                                                            \
     M(TemporalInvalidTimeStringUTCDesignator, "Invalid time string '{}': must not contain a UTC designator")                            \
@@ -263,24 +280,40 @@
     M(TemporalInvalidYearMonthStringUTCDesignator, "Invalid year month string '{}': must not contain a UTC designator")                 \
     M(TemporalInvalidZonedDateTimeOffset, "Invalid offset for the provided date and time in the current time zone")                     \
     M(TemporalInvalidZonedDateTimeString, "Invalid zoned date time string '{}'")                                                        \
+    M(TemporalOnlyISO8601WithMonthDayString, "MM-DD string format can only be used with the iso8601 calendar")                          \
+    M(TemporalOnlyISO8601WithYearMonthString, "YYYY-MM string format can only be used with the iso8601 calendar")                       \
     M(TemporalMissingOptionsObject, "Required options object is missing or undefined")                                                  \
     M(TemporalMissingStartingPoint, "A starting point is required for balancing {}")                                                    \
     M(TemporalMissingUnits, "One or both of smallestUnit or largestUnit is required")                                                   \
+    M(TemporalNanosecondsConvertedToDaysWithOppositeSign, "Time zone or calendar converted nanoseconds into a number of days with "     \
+                                                          "the opposite sign")                                                          \
+    M(TemporalNanosecondsConvertedToRemainderOfNanosecondsWithOppositeSign, "Time zone or calendar ended up with a remainder of "       \
+                                                                            "nanoseconds with the opposite sign")                       \
+    M(TemporalNanosecondsConvertedToRemainderOfNanosecondsLongerThanDayLength, "Time zone or calendar ended up with a remainder of "    \
+                                                                               "nanoseconds longer than the day length")                \
     M(TemporalObjectMustHaveOneOf, "Object must have at least one of the following properties: {}")                                     \
     M(TemporalObjectMustNotHave, "Object must not have a defined {} property")                                                          \
     M(TemporalPropertyMustBeFinite, "Property must not be Infinity")                                                                    \
     M(TemporalPropertyMustBePositiveInteger, "Property must be a positive integer")                                                     \
     M(TemporalTimeZoneOffsetStringMismatch, "Time zone offset string mismatch: '{}' is not equal to '{}'")                              \
-    M(TemporalZonedDateTimeRoundZeroLengthDay, "Cannot round a ZonedDateTime in a calendar that has zero-length days")                  \
+    M(TemporalUnexpectedCalendarObject, "Got unexpected Calendar object in conversion to TimeZone")                                     \
+    M(TemporalUnexpectedTimeZoneObject, "Got unexpected TimeZone object in conversion to Calendar")                                     \
+    M(TemporalUnknownCriticalAnnotation, "Unknown annotation key in critical annotation: '{}'")                                         \
+    M(TemporalZonedDateTimeRoundZeroOrNegativeLengthDay, "Cannot round a ZonedDateTime in a calendar or time zone that has zero or "    \
+                                                         "negative length days")                                                        \
     M(ThisHasNotBeenInitialized, "|this| has not been initialized")                                                                     \
     M(ThisIsAlreadyInitialized, "|this| is already initialized")                                                                        \
     M(ToObjectNullOrUndefined, "ToObject on null or undefined")                                                                         \
+    M(ToObjectNullOrUndefinedWithName, "\"{}\" is {}")                                                                                  \
+    M(ToObjectNullOrUndefinedWithProperty, "Cannot access property \"{}\" on {} object")                                                \
+    M(ToObjectNullOrUndefinedWithPropertyAndName, "Cannot access property \"{}\" on {} object \"{}\"")                                  \
     M(TopLevelVariableAlreadyDeclared, "Redeclaration of top level variable '{}'")                                                      \
     M(ToPrimitiveReturnedObject, "Can't convert {} to primitive with hint \"{}\", its @@toPrimitive method returned an object")         \
     M(TypedArrayContentTypeMismatch, "Can't create {} from {}")                                                                         \
     M(TypedArrayInvalidBufferLength, "Invalid buffer length for {}: must be a multiple of {}, got {}")                                  \
     M(TypedArrayInvalidByteOffset, "Invalid byte offset for {}: must be a multiple of {}, got {}")                                      \
     M(TypedArrayInvalidCopy, "Copy between arrays of different content types ({} and {}) is prohibited")                                \
+    M(TypedArrayInvalidIntegerIndex, "Invalid integer index: {}")                                                                       \
     M(TypedArrayInvalidTargetOffset, "Invalid target offset: must be {}")                                                               \
     M(TypedArrayOutOfRangeByteOffset, "Typed array byte offset {} is out of range for buffer with length {}")                           \
     M(TypedArrayOutOfRangeByteOffsetOrLength, "Typed array range {}:{} is out of range for buffer with length {}")                      \
@@ -293,6 +326,7 @@
     M(UnsupportedDeleteSuperProperty, "Can't delete a property on 'super'")                                                             \
     M(WrappedFunctionCallThrowCompletion, "Call of wrapped target function did not complete normally")                                  \
     M(WrappedFunctionCopyNameAndLengthThrowCompletion, "Trying to copy target name and length did not complete normally")               \
+    M(YieldFromIteratorMissingThrowMethod, "yield* protocol violation: iterator must have a throw method")                              \
     M(URIMalformed, "URI malformed") /* LibWeb bindings */                                                                              \
     M(NotAByteString, "Argument to {}() must be a byte string")                                                                         \
     M(BadArgCountOne, "{}() needs one argument")                                                                                        \
@@ -300,7 +334,12 @@
     M(BadArgCountMany, "{}() needs {} arguments")                                                                                       \
     M(NotEnoughMemoryToAllocate, "Not enough memory to allocate {} bytes")                                                              \
     M(InvalidEnumerationValue, "Invalid value '{}' for enumeration type '{}'")                                                          \
-    M(InvalidNormalizationForm, "The normalization form must be one of NFC, NFD, NFKC, NFKD. Got '{}'")
+    M(InvalidNormalizationForm, "The normalization form must be one of NFC, NFD, NFKC, NFKD. Got '{}'")                                 \
+    M(SetLegacyRegExpStaticPropertyThisValueMismatch, "Legacy RegExp static property setter "                                           \
+                                                      "must be called with the RegExp constructor for the this value")                  \
+    M(GetLegacyRegExpStaticPropertyThisValueMismatch, "Legacy RegExp static property getter "                                           \
+                                                      "must be called with the RegExp constructor for the this value")                  \
+    M(GetLegacyRegExpStaticPropertyValueEmpty, "Legacy RegExp static property getter value is empty")
 
 namespace JS {
 

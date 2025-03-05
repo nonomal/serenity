@@ -10,6 +10,8 @@
 
 namespace Web::Layout {
 
+JS_DEFINE_ALLOCATOR(ListItemBox);
+
 ListItemBox::ListItemBox(DOM::Document& document, DOM::Element* element, NonnullRefPtr<CSS::StyleProperties> style)
     : Layout::BlockContainer(document, element, move(style))
 {
@@ -17,7 +19,13 @@ ListItemBox::ListItemBox(DOM::Document& document, DOM::Element* element, Nonnull
 
 ListItemBox::~ListItemBox() = default;
 
-void ListItemBox::set_marker(RefPtr<ListItemMarkerBox> marker)
+void ListItemBox::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_marker);
+}
+
+void ListItemBox::set_marker(JS::GCPtr<ListItemMarkerBox> marker)
 {
     m_marker = move(marker);
 }

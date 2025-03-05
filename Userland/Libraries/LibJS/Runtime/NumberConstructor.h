@@ -12,16 +12,18 @@ namespace JS {
 
 class NumberConstructor final : public NativeFunction {
     JS_OBJECT(NumberConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(NumberConstructor);
 
 public:
-    explicit NumberConstructor(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~NumberConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 private:
+    explicit NumberConstructor(Realm&);
+
     virtual bool has_constructor() const override { return true; }
 
     JS_DECLARE_NATIVE_FUNCTION(is_finite);

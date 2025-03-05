@@ -3,22 +3,22 @@
  * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Ali Mohammad Pur <mpfard@serenityos.org>
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Format.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
+#include <AK/LexicalPath.h>
 #include <AK/QuickSort.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
-#include <LibCore/DirIterator.h>
 #include <LibTest/Results.h>
-#include <fcntl.h>
-#include <sys/time.h>
+#include <LibTest/TestRunnerUtil.h>
 
 namespace Test {
 
@@ -29,7 +29,7 @@ public:
         return s_the;
     }
 
-    TestRunner(String test_root, bool print_times, bool print_progress, bool print_json, bool detailed_json = false)
+    TestRunner(ByteString test_root, bool print_times, bool print_progress, bool print_json, bool detailed_json = false)
         : m_test_root(move(test_root))
         , m_print_times(print_times)
         , m_print_progress(print_progress)
@@ -40,9 +40,9 @@ public:
         s_the = this;
     }
 
-    virtual ~TestRunner() { s_the = nullptr; };
+    virtual ~TestRunner() { s_the = nullptr; }
 
-    virtual void run(String test_glob);
+    virtual void run(ByteString test_glob);
 
     Test::Counts const& counts() const { return m_counts; }
 
@@ -64,11 +64,11 @@ protected:
     void print_test_results() const;
     void print_test_results_as_json() const;
 
-    virtual Vector<String> get_test_paths() const = 0;
-    virtual void do_run_single_test(String const&, size_t current_test_index, size_t num_tests) = 0;
-    virtual Vector<String> const* get_failed_test_names() const { return nullptr; }
+    virtual Vector<ByteString> get_test_paths() const = 0;
+    virtual void do_run_single_test(ByteString const&, size_t current_test_index, size_t num_tests) = 0;
+    virtual Vector<ByteString> const* get_failed_test_names() const { return nullptr; }
 
-    String m_test_root;
+    ByteString m_test_root;
     bool m_print_times;
     bool m_print_progress;
     bool m_print_json;
@@ -92,35 +92,7 @@ inline void cleanup()
     exit(1);
 }
 
-inline double get_time_in_ms()
-{
-    struct timeval tv1;
-    auto return_code = gettimeofday(&tv1, nullptr);
-    VERIFY(return_code >= 0);
-    return static_cast<double>(tv1.tv_sec) * 1000.0 + static_cast<double>(tv1.tv_usec) / 1000.0;
-}
-
-template<typename Callback>
-inline void iterate_directory_recursively(String const& directory_path, Callback callback)
-{
-    Core::DirIterator directory_iterator(directory_path, Core::DirIterator::Flags::SkipDots);
-
-    while (directory_iterator.has_next()) {
-        auto name = directory_iterator.next_path();
-        struct stat st = {};
-        if (fstatat(directory_iterator.fd(), name.characters(), &st, AT_SYMLINK_NOFOLLOW) < 0)
-            continue;
-        bool is_directory = S_ISDIR(st.st_mode);
-        auto full_path = String::formatted("{}/{}", directory_path, name);
-        if (is_directory && name != "/Fixtures"sv) {
-            iterate_directory_recursively(full_path, callback);
-        } else if (!is_directory) {
-            callback(full_path);
-        }
-    }
-}
-
-inline void TestRunner::run(String test_glob)
+inline void TestRunner::run(ByteString test_glob)
 {
     size_t progress_counter = 0;
     auto test_paths = get_test_paths();
@@ -161,17 +133,17 @@ inline void print_modifiers(Vector<Modifier> modifiers)
         auto code = [&] {
             switch (modifier) {
             case BG_RED:
-                return "\033[48;2;255;0;102m";
+                return "\033[41m";
             case BG_GREEN:
-                return "\033[48;2;102;255;0m";
+                return "\033[42m";
             case FG_RED:
-                return "\033[38;2;255;0;102m";
+                return "\033[31m";
             case FG_GREEN:
-                return "\033[38;2;102;255;0m";
+                return "\033[32m";
             case FG_ORANGE:
-                return "\033[38;2;255;102;0m";
+                return "\033[33m";
             case FG_GRAY:
-                return "\033[38;2;135;139;148m";
+                return "\033[90m";
             case FG_BLACK:
                 return "\033[30m";
             case FG_BOLD:
@@ -213,12 +185,17 @@ inline void TestRunner::print_test_results() const
         out("{} skipped, ", m_counts.tests_skipped);
         print_modifiers({ CLEAR });
     }
+    if (m_counts.tests_expected_failed) {
+        print_modifiers({ FG_ORANGE });
+        out("{} expected failed, ", m_counts.tests_expected_failed);
+        print_modifiers({ CLEAR });
+    }
     if (m_counts.tests_passed) {
         print_modifiers({ FG_GREEN });
         out("{} passed, ", m_counts.tests_passed);
         print_modifiers({ CLEAR });
     }
-    outln("{} total", m_counts.tests_failed + m_counts.tests_skipped + m_counts.tests_passed);
+    outln("{} total", m_counts.tests_failed + m_counts.tests_skipped + m_counts.tests_passed + m_counts.tests_expected_failed);
 
     outln("Files:       {} total", m_counts.files_total);
 
@@ -256,6 +233,9 @@ inline void TestRunner::print_test_results_as_json() const
                 case Result::Skip:
                     result_name = "SKIPPED"sv;
                     break;
+                case Result::ExpectedFail:
+                    result_name = "XFAIL"sv;
+                    break;
                 case Result::Crashed:
                     result_name = "PROCESS_ERROR"sv;
                     break;
@@ -263,11 +243,11 @@ inline void TestRunner::print_test_results_as_json() const
 
                 auto name = suite.name;
                 if (name == "__$$TOP_LEVEL$$__"sv)
-                    name = String::empty();
+                    name = ByteString::empty();
 
                 auto path = LexicalPath::relative_path(suite.path, m_test_root);
 
-                tests.set(String::formatted("{}/{}::{}", path, name, case_.name), result_name);
+                tests.set(ByteString::formatted("{}/{}::{}", path, name, case_.name), result_name);
             }
         }
 
@@ -283,7 +263,8 @@ inline void TestRunner::print_test_results_as_json() const
         tests.set("failed", m_counts.tests_failed);
         tests.set("passed", m_counts.tests_passed);
         tests.set("skipped", m_counts.tests_skipped);
-        tests.set("total", m_counts.tests_failed + m_counts.tests_passed + m_counts.tests_skipped);
+        tests.set("xfail", m_counts.tests_expected_failed);
+        tests.set("total", m_counts.tests_failed + m_counts.tests_passed + m_counts.tests_skipped + m_counts.tests_expected_failed);
 
         JsonObject results;
         results.set("suites", suites);
@@ -293,7 +274,7 @@ inline void TestRunner::print_test_results_as_json() const
         root.set("files_total", m_counts.files_total);
         root.set("duration", m_total_elapsed_time_in_ms / 1000.0);
     }
-    outln("{}", root.to_string());
+    outln("{}", root.to_byte_string());
 }
 
 }

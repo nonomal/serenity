@@ -10,17 +10,17 @@
 #include <AK/LexicalPath.h>
 #include <AK/Optional.h>
 #include <AK/Platform.h>
-#include <LibCore/File.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibRegex/Regex.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 
 namespace Debug {
 
-DebugSession::DebugSession(pid_t pid, String source_root)
+DebugSession::DebugSession(pid_t pid, ByteString source_root, Function<void(float)> on_initialization_progress)
     : m_debuggee_pid(pid)
     , m_source_root(source_root)
-
+    , m_on_initialization_progress(move(on_initialization_progress))
 {
 }
 
@@ -53,9 +53,10 @@ void DebugSession::for_each_loaded_library(Function<IterationDecision(LoadedLibr
     }
 }
 
-OwnPtr<DebugSession> DebugSession::exec_and_attach(String const& command,
-    String source_root,
-    Function<ErrorOr<void>()> setup_child)
+OwnPtr<DebugSession> DebugSession::exec_and_attach(ByteString const& command,
+    ByteString source_root,
+    Function<ErrorOr<void>()> setup_child,
+    Function<void(float)> on_initialization_progress)
 {
     auto pid = fork();
 
@@ -114,7 +115,7 @@ OwnPtr<DebugSession> DebugSession::exec_and_attach(String const& command,
         return {};
     }
 
-    auto debug_session = adopt_own(*new DebugSession(pid, source_root));
+    auto debug_session = adopt_own(*new DebugSession(pid, source_root, move(on_initialization_progress)));
 
     // Continue until breakpoint before entry point of main program
     int wstatus = debug_session->continue_debuggee_and_wait();
@@ -124,7 +125,35 @@ OwnPtr<DebugSession> DebugSession::exec_and_attach(String const& command,
     }
 
     // At this point, libraries should have been loaded
-    debug_session->update_loaded_libs();
+    auto update_or_error = debug_session->update_loaded_libs();
+    if (update_or_error.is_error()) {
+        dbgln("update failed: {}", update_or_error.error());
+        return {};
+    }
+
+    return debug_session;
+}
+
+OwnPtr<DebugSession> DebugSession::attach(pid_t pid, ByteString source_root, Function<void(float)> on_initialization_progress)
+{
+    if (ptrace(PT_ATTACH, pid, 0, 0) < 0) {
+        perror("PT_ATTACH");
+        return {};
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, WSTOPPED | WEXITED) != pid || !WIFSTOPPED(status)) {
+        perror("waitpid");
+        return {};
+    }
+
+    auto debug_session = adopt_own(*new DebugSession(pid, source_root, move(on_initialization_progress)));
+    // At this point, libraries should have been loaded
+    auto update_or_error = debug_session->update_loaded_libs();
+    if (update_or_error.is_error()) {
+        dbgln("update failed: {}", update_or_error.error());
+        return {};
+    }
 
     return debug_session;
 }
@@ -343,11 +372,15 @@ FlatPtr DebugSession::single_step()
     // After the debuggee has stopped, we clear the TRAP flag.
 
     auto regs = get_registers();
+#if ARCH(X86_64)
     constexpr u32 TRAP_FLAG = 0x100;
-#if ARCH(I386)
-    regs.eflags |= TRAP_FLAG;
-#else
     regs.rflags |= TRAP_FLAG;
+#elif ARCH(AARCH64)
+    TODO_AARCH64();
+#elif ARCH(RISCV64)
+    TODO_RISCV64();
+#else
+#    error Unknown architecture
 #endif
     set_registers(regs);
 
@@ -359,10 +392,14 @@ FlatPtr DebugSession::single_step()
     }
 
     regs = get_registers();
-#if ARCH(I386)
-    regs.eflags &= ~(TRAP_FLAG);
-#else
+#if ARCH(X86_64)
     regs.rflags &= ~(TRAP_FLAG);
+#elif ARCH(AARCH64)
+    TODO_AARCH64();
+#elif ARCH(RISCV64)
+    TODO_RISCV64();
+#else
+#    error Unknown architecture
 #endif
     set_registers(regs);
     return regs.ip();
@@ -378,7 +415,7 @@ void DebugSession::detach()
     continue_debuggee();
 }
 
-Optional<DebugSession::InsertBreakpointAtSymbolResult> DebugSession::insert_breakpoint(String const& symbol_name)
+Optional<DebugSession::InsertBreakpointAtSymbolResult> DebugSession::insert_breakpoint(ByteString const& symbol_name)
 {
     Optional<InsertBreakpointAtSymbolResult> result;
     for_each_loaded_library([this, symbol_name, &result](auto& lib) {
@@ -401,7 +438,7 @@ Optional<DebugSession::InsertBreakpointAtSymbolResult> DebugSession::insert_brea
     return result;
 }
 
-Optional<DebugSession::InsertBreakpointAtSourcePositionResult> DebugSession::insert_breakpoint(String const& filename, size_t line_number)
+Optional<DebugSession::InsertBreakpointAtSourcePositionResult> DebugSession::insert_breakpoint(ByteString const& filename, size_t line_number)
 {
     auto address_and_source_position = get_address_from_source_position(filename, line_number);
     if (!address_and_source_position.has_value())
@@ -418,44 +455,54 @@ Optional<DebugSession::InsertBreakpointAtSourcePositionResult> DebugSession::ins
     return InsertBreakpointAtSourcePositionResult { lib->name, address_and_source_position.value().file, address_and_source_position.value().line, address };
 }
 
-void DebugSession::update_loaded_libs()
+ErrorOr<void> DebugSession::update_loaded_libs()
 {
-    auto file = Core::File::construct(String::formatted("/proc/{}/vm", m_debuggee_pid));
-    bool rc = file->open(Core::OpenMode::ReadOnly);
-    VERIFY(rc);
+    auto file_name = TRY(String::formatted("/proc/{}/vm", m_debuggee_pid));
+    auto file = TRY(Core::File::open(file_name, Core::File::OpenMode::Read));
 
-    auto file_contents = file->read_all();
-    auto json = JsonValue::from_string(file_contents).release_value_but_fixme_should_propagate_errors();
+    auto file_contents = TRY(file->read_until_eof());
+    auto json = TRY(JsonValue::from_string(file_contents));
 
     auto const& vm_entries = json.as_array();
     Regex<PosixExtended> segment_name_re("(.+): ");
 
-    auto get_path_to_object = [&segment_name_re](String const& vm_name) -> Optional<String> {
+    auto get_path_to_object = [&segment_name_re](ByteString const& vm_name) -> Optional<ByteString> {
         if (vm_name == "/usr/lib/Loader.so")
             return vm_name;
         RegexResult result;
         auto rc = segment_name_re.search(vm_name, result);
         if (!rc)
             return {};
-        auto lib_name = result.capture_group_matches.at(0).at(0).view.string_view().to_string();
+        auto lib_name = result.capture_group_matches.at(0).at(0).view.string_view().to_byte_string();
         if (lib_name.starts_with('/'))
             return lib_name;
-        return String::formatted("/usr/lib/{}", lib_name);
+        return ByteString::formatted("/usr/lib/{}", lib_name);
     };
 
+    ScopeGuard progress_guard([this]() {
+        if (m_on_initialization_progress)
+            m_on_initialization_progress(0);
+    });
+
+    size_t vm_entry_index = 0;
+
     vm_entries.for_each([&](auto& entry) {
+        ++vm_entry_index;
+        if (m_on_initialization_progress)
+            m_on_initialization_progress(vm_entry_index / static_cast<float>(vm_entries.size()));
+
         // TODO: check that region is executable
-        auto vm_name = entry.as_object().get("name"sv).as_string();
+        auto vm_name = entry.as_object().get_byte_string("name"sv).value();
 
         auto object_path = get_path_to_object(vm_name);
         if (!object_path.has_value())
             return IterationDecision::Continue;
 
-        String lib_name = object_path.value();
-        if (Core::File::looks_like_shared_library(lib_name))
+        ByteString lib_name = object_path.value();
+        if (FileSystem::looks_like_shared_library(lib_name))
             lib_name = LexicalPath::basename(object_path.value());
 
-        FlatPtr base_address = entry.as_object().get("address"sv).to_addr();
+        FlatPtr base_address = entry.as_object().get_addr("address"sv).value_or(0);
         if (auto it = m_loaded_libraries.find(lib_name); it != m_loaded_libraries.end()) {
             // We expect the VM regions to be sorted by address.
             VERIFY(base_address >= it->value->base_address);
@@ -473,6 +520,13 @@ void DebugSession::update_loaded_libs()
 
         return IterationDecision::Continue;
     });
+
+    return {};
+}
+
+void DebugSession::stop_debuggee()
+{
+    kill(pid(), SIGSTOP);
 }
 
 }

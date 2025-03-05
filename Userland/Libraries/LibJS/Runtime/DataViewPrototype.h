@@ -13,13 +13,15 @@ namespace JS {
 
 class DataViewPrototype final : public PrototypeObject<DataViewPrototype, DataView> {
     JS_PROTOTYPE_OBJECT(DataViewPrototype, DataView, DataView);
+    JS_DECLARE_ALLOCATOR(DataViewPrototype);
 
 public:
-    DataViewPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~DataViewPrototype() override = default;
 
 private:
+    explicit DataViewPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(get_big_int_64);
     JS_DECLARE_NATIVE_FUNCTION(get_big_uint_64);
     JS_DECLARE_NATIVE_FUNCTION(get_float_32);

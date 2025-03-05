@@ -6,16 +6,19 @@
 
 #pragma once
 
-#include <bits/pthread_integration.h>
+// Includes essentially mandated by POSIX:
+// https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/pthread.h.html
 #include <sched.h>
+#include <time.h>
+
+#include <bits/pthread_integration.h>
 #include <stdint.h>
 #include <sys/cdefs.h>
 #include <sys/types.h>
-#include <time.h>
 
 __BEGIN_DECLS
 
-int pthread_create(pthread_t*, pthread_attr_t*, void* (*)(void*), void*);
+int pthread_create(pthread_t*, pthread_attr_t const*, void* (*)(void*), void*);
 void pthread_exit(void*) __attribute__((noreturn));
 int pthread_kill(pthread_t, int);
 void pthread_cleanup_push(void (*)(void*), void*);
@@ -33,7 +36,7 @@ int pthread_attr_destroy(pthread_attr_t*);
 #define PTHREAD_CREATE_JOINABLE 0
 #define PTHREAD_CREATE_DETACHED 1
 
-#define PTHREAD_CANCELED (-1)
+#define PTHREAD_CANCELED ((void*)-1)
 
 int pthread_attr_getdetachstate(pthread_attr_t const*, int*);
 int pthread_attr_setdetachstate(pthread_attr_t*, int);

@@ -6,13 +6,15 @@
 
 #pragma once
 
-#include "HitTestResult.h"
 #include <AK/Forward.h>
-#include <AK/NonnullOwnPtrVector.h>
+#include <AK/HashMap.h>
+#include <AK/NonnullOwnPtr.h>
 #include <AK/RefPtr.h>
 #include <LibCore/Forward.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/WindowTheme.h>
+#include <WindowServer/HitTestResult.h>
+#include <WindowServer/ResizeDirection.h>
 
 namespace WindowServer {
 
@@ -31,7 +33,7 @@ public:
     public:
         void paint(WindowFrame&, Gfx::Painter&, Gfx::IntRect const&);
         void render(WindowFrame&, Screen&);
-        Optional<HitTestResult> hit_test(WindowFrame&, Gfx::IntPoint const&, Gfx::IntPoint const&);
+        Optional<HitTestResult> hit_test(WindowFrame&, Gfx::IntPoint, Gfx::IntPoint);
 
     private:
         RefPtr<Gfx::Bitmap> m_top_bottom;
@@ -42,6 +44,8 @@ public:
         bool m_dirty { true };
     };
     friend class RenderedCache;
+
+    static Gfx::IntRect frame_rect_for_window(Window&, Gfx::IntRect const&);
 
     static void reload_config();
 
@@ -56,8 +60,8 @@ public:
     Gfx::IntRect rect() const;
     Gfx::IntRect render_rect() const;
     Gfx::IntRect unconstrained_render_rect() const;
-    Gfx::DisjointRectSet opaque_render_rects() const;
-    Gfx::DisjointRectSet transparent_render_rects() const;
+    Gfx::DisjointIntRectSet opaque_render_rects() const;
+    Gfx::DisjointIntRectSet transparent_render_rects() const;
 
     void paint(Screen&, Gfx::Painter&, Gfx::IntRect const&);
     void render(Screen&, Gfx::Painter&);
@@ -92,52 +96,45 @@ public:
     void set_has_alpha_channel(bool value) { m_has_alpha_channel = value; }
     bool has_shadow() const;
 
-    void set_opacity(float);
-    float opacity() const { return m_opacity; }
-
     bool is_opaque() const
     {
-        if (opacity() < 1.0f)
-            return false;
-        if (has_alpha_channel())
-            return false;
-        return true;
+        return !has_alpha_channel();
     }
 
     void set_dirty(bool re_render_shadow = false)
     {
-        for (auto& it : m_rendered_cache) {
-            auto& cached = *it.value;
-            cached.m_dirty = true;
-            cached.m_shadow_dirty |= re_render_shadow;
+        for (auto& [_, cached] : m_rendered_cache) {
+            cached->m_dirty = true;
+            cached->m_shadow_dirty |= re_render_shadow;
         }
     }
 
     void theme_changed();
 
-    Optional<HitTestResult> hit_test(Gfx::IntPoint const&);
+    Optional<HitTestResult> hit_test(Gfx::IntPoint);
 
     void open_menubar_menu(Menu&);
+
+    Gfx::WindowTheme::WindowState window_state_for_theme() const;
 
 private:
     void paint_notification_frame(Gfx::Painter&);
     void paint_normal_frame(Gfx::Painter&);
-    void paint_tool_window_frame(Gfx::Painter&);
     void paint_menubar(Gfx::Painter&);
     MultiScaleBitmaps const* shadow_bitmap() const;
     Gfx::IntRect inflated_for_shadow(Gfx::IntRect const&) const;
+    void latch_window_to_screen_edge(ResizeDirection);
 
     void handle_menubar_mouse_event(MouseEvent const&);
     void handle_menu_mouse_event(Menu&, MouseEvent const&);
 
-    Gfx::WindowTheme::WindowState window_state_for_theme() const;
-    String computed_title() const;
+    ByteString computed_title() const;
 
     Gfx::IntRect constrained_render_rect_to_screen(Gfx::IntRect const&) const;
     Gfx::IntRect leftmost_titlebar_button_rect() const;
 
     Window& m_window;
-    NonnullOwnPtrVector<Button> m_buttons;
+    Vector<NonnullOwnPtr<Button>> m_buttons;
     Button* m_close_button { nullptr };
     Button* m_maximize_button { nullptr };
     Button* m_minimize_button { nullptr };
@@ -146,7 +143,6 @@ private:
 
     RefPtr<Core::Timer> m_flash_timer;
     size_t m_flash_counter { 0 };
-    float m_opacity { 1 };
     bool m_has_alpha_channel { false };
 };
 

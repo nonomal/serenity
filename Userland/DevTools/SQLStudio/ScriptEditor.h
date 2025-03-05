@@ -17,17 +17,19 @@ class ScriptEditor : public GUI::TextEditor {
 public:
     virtual ~ScriptEditor() = default;
 
-    void new_script_with_temp_name(String);
+    void new_script_with_temp_name(ByteString);
     ErrorOr<void> open_script_from_file(LexicalPath const&);
 
     ErrorOr<bool> save();
     ErrorOr<bool> save_as();
     ErrorOr<bool> attempt_to_close();
 
+    ByteString const& path() const { return m_path; }
+
 private:
     ScriptEditor();
 
-    String m_path;
+    ByteString m_path;
 };
 
 }

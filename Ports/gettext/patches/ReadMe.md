@@ -1,12 +1,21 @@
 # Patches for gettext on SerenityOS
 
-## `0001-Stub-out-the-getprogname-implementation.patch`
+## `0001-libtool-Enable-shared-library-support-for-SerenityOS.patch`
 
-Stub out the getprogname() implementation
+libtool: Enable shared library support for SerenityOS
 
+For some odd reason, libtool handles the configuration for shared
+libraries entirely statically and in its configure script. If no
+shared library support is "present", building shared libraries is
+disabled entirely.
 
-## `0002-Stub-out-some-wctype-functions.patch`
+Fix that by just adding the appropriate configuration options for
+`serenity`. This allows us to finally create dynamic libraries
+automatically using libtool, without having to manually link the
+static library into a shared library.
 
-Stub out some wctype functions
+This patch here is a bit more elaborate for other ports, as libintl's
+configure includes the code for detecting dynamic linker characteristics
+twice, and it also queries the C++ compiler for shared library support.
 
 

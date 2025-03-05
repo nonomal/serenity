@@ -29,25 +29,25 @@ static inline void full_memory_barrier() noexcept
 }
 
 template<typename T>
-static inline T atomic_exchange(volatile T* var, T desired, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline T atomic_exchange(T volatile* var, T desired, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_exchange_n(var, desired, order);
 }
 
 template<typename T, typename V = RemoveVolatile<T>>
-static inline V* atomic_exchange(volatile T** var, V* desired, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline V* atomic_exchange(T volatile** var, V* desired, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_exchange_n(var, desired, order);
 }
 
 template<typename T, typename V = RemoveVolatile<T>>
-static inline V* atomic_exchange(volatile T** var, std::nullptr_t, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline V* atomic_exchange(T volatile** var, nullptr_t, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_exchange_n(const_cast<V**>(var), nullptr, order);
 }
 
 template<typename T>
-[[nodiscard]] static inline bool atomic_compare_exchange_strong(volatile T* var, T& expected, T desired, MemoryOrder order = memory_order_seq_cst) noexcept
+[[nodiscard]] static inline bool atomic_compare_exchange_strong(T volatile* var, T& expected, T desired, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     if (order == memory_order_acq_rel || order == memory_order_release)
         return __atomic_compare_exchange_n(var, &expected, desired, false, memory_order_release, memory_order_acquire);
@@ -55,7 +55,7 @@ template<typename T>
 }
 
 template<typename T, typename V = RemoveVolatile<T>>
-[[nodiscard]] static inline bool atomic_compare_exchange_strong(volatile T** var, V*& expected, V* desired, MemoryOrder order = memory_order_seq_cst) noexcept
+[[nodiscard]] static inline bool atomic_compare_exchange_strong(T volatile** var, V*& expected, V* desired, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     if (order == memory_order_acq_rel || order == memory_order_release)
         return __atomic_compare_exchange_n(var, &expected, desired, false, memory_order_release, memory_order_acquire);
@@ -63,7 +63,7 @@ template<typename T, typename V = RemoveVolatile<T>>
 }
 
 template<typename T, typename V = RemoveVolatile<T>>
-[[nodiscard]] static inline bool atomic_compare_exchange_strong(volatile T** var, V*& expected, std::nullptr_t, MemoryOrder order = memory_order_seq_cst) noexcept
+[[nodiscard]] static inline bool atomic_compare_exchange_strong(T volatile** var, V*& expected, nullptr_t, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     if (order == memory_order_acq_rel || order == memory_order_release)
         return __atomic_compare_exchange_n(const_cast<V**>(var), &expected, nullptr, false, memory_order_release, memory_order_acquire);
@@ -71,67 +71,67 @@ template<typename T, typename V = RemoveVolatile<T>>
 }
 
 template<typename T>
-static inline T atomic_fetch_add(volatile T* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline T atomic_fetch_add(T volatile* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_fetch_add(var, val, order);
 }
 
 template<typename T>
-static inline T atomic_fetch_sub(volatile T* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline T atomic_fetch_sub(T volatile* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_fetch_sub(var, val, order);
 }
 
 template<typename T>
-static inline T atomic_fetch_and(volatile T* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline T atomic_fetch_and(T volatile* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_fetch_and(var, val, order);
 }
 
 template<typename T>
-static inline T atomic_fetch_or(volatile T* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline T atomic_fetch_or(T volatile* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_fetch_or(var, val, order);
 }
 
 template<typename T>
-static inline T atomic_fetch_xor(volatile T* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline T atomic_fetch_xor(T volatile* var, T val, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_fetch_xor(var, val, order);
 }
 
 template<typename T>
-static inline T atomic_load(volatile T* var, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline T atomic_load(T volatile* var, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_load_n(var, order);
 }
 
 template<typename T, typename V = RemoveVolatile<T>>
-static inline V* atomic_load(volatile T** var, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline V* atomic_load(T volatile** var, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     return __atomic_load_n(const_cast<V**>(var), order);
 }
 
 template<typename T>
-static inline void atomic_store(volatile T* var, T desired, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline void atomic_store(T volatile* var, T desired, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     __atomic_store_n(var, desired, order);
 }
 
 template<typename T, typename V = RemoveVolatile<T>>
-static inline void atomic_store(volatile T** var, V* desired, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline void atomic_store(T volatile** var, V* desired, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     __atomic_store_n(var, desired, order);
 }
 
 template<typename T, typename V = RemoveVolatile<T>>
-static inline void atomic_store(volatile T** var, std::nullptr_t, MemoryOrder order = memory_order_seq_cst) noexcept
+static inline void atomic_store(T volatile** var, nullptr_t, MemoryOrder order = memory_order_seq_cst) noexcept
 {
     __atomic_store_n(const_cast<V**>(var), nullptr, order);
 }
 
 template<typename T>
-static inline bool atomic_is_lock_free(volatile T* ptr = nullptr) noexcept
+static inline bool atomic_is_lock_free(T volatile* ptr = nullptr) noexcept
 {
     return __atomic_is_lock_free(sizeof(T), ptr);
 }
@@ -156,7 +156,7 @@ public:
     {
     }
 
-    volatile T* ptr() noexcept
+    T volatile* ptr() noexcept
     {
         return &m_value;
     }
@@ -225,7 +225,7 @@ public:
     {
     }
 
-    volatile T* ptr() noexcept
+    T volatile* ptr() noexcept
     {
         return &m_value;
     }
@@ -247,7 +247,17 @@ public:
         return fetch_add(1) + 1;
     }
 
+    ALWAYS_INLINE constexpr T operator++() noexcept
+    {
+        return fetch_add(1) + 1;
+    }
+
     ALWAYS_INLINE T operator++(int) volatile noexcept
+    {
+        return fetch_add(1);
+    }
+
+    ALWAYS_INLINE constexpr T operator++(int) noexcept
     {
         return fetch_add(1);
     }
@@ -262,12 +272,32 @@ public:
         return __atomic_fetch_add(&m_value, val, order);
     }
 
+    ALWAYS_INLINE constexpr T fetch_add(T val, MemoryOrder order = DefaultMemoryOrder) noexcept
+    {
+        if (is_constant_evaluated()) {
+            T old_value = m_value;
+            m_value += val;
+            return old_value;
+        }
+        return static_cast<Atomic volatile*>(this)->fetch_add(val, order);
+    }
+
     ALWAYS_INLINE T operator--() volatile noexcept
     {
         return fetch_sub(1) - 1;
     }
 
+    ALWAYS_INLINE constexpr T operator--() noexcept
+    {
+        return fetch_sub(1) - 1;
+    }
+
     ALWAYS_INLINE T operator--(int) volatile noexcept
+    {
+        return fetch_sub(1);
+    }
+
+    ALWAYS_INLINE constexpr T operator--(int) noexcept
     {
         return fetch_sub(1);
     }
@@ -279,7 +309,23 @@ public:
 
     ALWAYS_INLINE T fetch_sub(T val, MemoryOrder order = DefaultMemoryOrder) volatile noexcept
     {
-        return __atomic_fetch_sub(&m_value, val, order);
+        T volatile* ptr = &m_value;
+        // FIXME: GCC > 12 will wrongly warn on -Wstringop-overflow here with ASAN+UBSAN
+#if defined(AK_COMPILER_GCC) && defined(HAS_ADDRESS_SANITIZER)
+        if (!ptr)
+            __builtin_unreachable();
+#endif
+        return __atomic_fetch_sub(ptr, val, order);
+    }
+
+    ALWAYS_INLINE constexpr T fetch_sub(T val, MemoryOrder order = DefaultMemoryOrder) noexcept
+    {
+        if (is_constant_evaluated()) {
+            T old_value = m_value;
+            m_value -= val;
+            return old_value;
+        }
+        return static_cast<Atomic volatile*>(this)->fetch_sub(val, order);
     }
 
     ALWAYS_INLINE T operator&=(T val) volatile noexcept
@@ -317,9 +363,21 @@ public:
         return load();
     }
 
+    ALWAYS_INLINE constexpr operator T() const noexcept
+    {
+        return load();
+    }
+
     ALWAYS_INLINE T load(MemoryOrder order = DefaultMemoryOrder) const volatile noexcept
     {
         return __atomic_load_n(&m_value, order);
+    }
+
+    ALWAYS_INLINE constexpr T load(MemoryOrder order = DefaultMemoryOrder) const noexcept
+    {
+        if (is_constant_evaluated())
+            return m_value;
+        return static_cast<Atomic const volatile*>(this)->load(order);
     }
 
     // NOLINTNEXTLINE(misc-unconventional-assign-operator) We want operator= to exchange the value, so returning an object of type Atomic& here does not make sense
@@ -356,7 +414,7 @@ public:
     {
     }
 
-    volatile T** ptr() noexcept
+    T* volatile* ptr() noexcept
     {
         return &m_value;
     }
@@ -442,5 +500,7 @@ public:
 };
 }
 
+#if USING_AK_GLOBALLY
 using AK::Atomic;
 using AK::full_memory_barrier;
+#endif

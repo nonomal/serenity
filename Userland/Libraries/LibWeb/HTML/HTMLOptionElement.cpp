@@ -6,14 +6,20 @@
  */
 
 #include <AK/StringBuilder.h>
+#include <LibWeb/ARIA/Roles.h>
+#include <LibWeb/Bindings/HTMLOptionElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/Text.h>
+#include <LibWeb/HTML/HTMLOptGroupElement.h>
 #include <LibWeb/HTML/HTMLOptionElement.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
 #include <LibWeb/HTML/HTMLSelectElement.h>
-#include <ctype.h>
+#include <LibWeb/Infra/Strings.h>
 
 namespace Web::HTML {
+
+JS_DEFINE_ALLOCATOR(HTMLOptionElement);
 
 HTMLOptionElement::HTMLOptionElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
@@ -22,27 +28,28 @@ HTMLOptionElement::HTMLOptionElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLOptionElement::~HTMLOptionElement() = default;
 
-void HTMLOptionElement::parse_attribute(FlyString const& name, String const& value)
+void HTMLOptionElement::initialize(JS::Realm& realm)
 {
-    HTMLElement::parse_attribute(name, value);
-
-    if (name == HTML::AttributeNames::selected) {
-        // Except where otherwise specified, when the element is created, its selectedness must be set to true
-        // if the element has a selected attribute. Whenever an option element's selected attribute is added,
-        // if its dirtiness is false, its selectedness must be set to true.
-        if (!m_dirty)
-            m_selected = true;
-    }
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLOptionElement);
 }
 
-void HTMLOptionElement::did_remove_attribute(FlyString const& name)
+void HTMLOptionElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value)
 {
-    HTMLElement::did_remove_attribute(name);
+    HTMLElement::attribute_changed(name, old_value, value);
 
     if (name == HTML::AttributeNames::selected) {
-        // Whenever an option element's selected attribute is removed, if its dirtiness is false, its selectedness must be set to false.
-        if (!m_dirty)
-            m_selected = false;
+        if (!value.has_value()) {
+            // Whenever an option element's selected attribute is removed, if its dirtiness is false, its selectedness must be set to false.
+            if (!m_dirty)
+                m_selected = false;
+        } else {
+            // Except where otherwise specified, when the element is created, its selectedness must be set to true
+            // if the element has a selected attribute. Whenever an option element's selected attribute is added,
+            // if its dirtiness is false, its selectedness must be set to true.
+            if (!m_dirty)
+                m_selected = true;
+        }
     }
 }
 
@@ -50,51 +57,28 @@ void HTMLOptionElement::did_remove_attribute(FlyString const& name)
 void HTMLOptionElement::set_selected(bool selected)
 {
     // On setting, it must set the element's selectedness to the new value, set its dirtiness to true, and then cause the element to ask for a reset.
-    m_selected = selected;
+    set_selected_internal(selected);
     m_dirty = true;
     ask_for_a_reset();
+}
+
+void HTMLOptionElement::set_selected_internal(bool selected)
+{
+    m_selected = selected;
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-value
 String HTMLOptionElement::value() const
 {
     // The value of an option element is the value of the value content attribute, if there is one.
-    if (auto value_attr = get_attribute(HTML::AttributeNames::value); !value_attr.is_null())
-        return value_attr;
-
     // ...or, if there is not, the value of the element's text IDL attribute.
-    return text();
+    return attribute(HTML::AttributeNames::value).value_or(text());
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-value
-void HTMLOptionElement::set_value(String value)
+WebIDL::ExceptionOr<void> HTMLOptionElement::set_value(String const& value)
 {
-    set_attribute(HTML::AttributeNames::value, value);
-}
-
-// https://infra.spec.whatwg.org/#strip-and-collapse-ascii-whitespace
-static String strip_and_collapse_whitespace(StringView string)
-{
-    // Replace any sequence of one or more consecutive code points that are ASCII whitespace in the string with a single U+0020 SPACE code point.
-    StringBuilder builder;
-    for (size_t i = 0; i < string.length(); ++i) {
-        if (isspace(string[i])) {
-            builder.append(' ');
-            while (i < string.length()) {
-                if (isspace(string[i])) {
-                    ++i;
-                    continue;
-                }
-                builder.append(string[i]);
-                break;
-            }
-            continue;
-        }
-        builder.append(string[i]);
-    }
-
-    // ...and then remove any leading and trailing ASCII whitespace from that string.
-    return builder.to_string().trim_whitespace();
+    return set_attribute(HTML::AttributeNames::value, value);
 }
 
 static void concatenate_descendants_text_content(DOM::Node const* node, StringBuilder& builder)
@@ -106,6 +90,7 @@ static void concatenate_descendants_text_content(DOM::Node const* node, StringBu
         builder.append(verify_cast<DOM::Text>(node)->data());
     node->for_each_child([&](auto const& node) {
         concatenate_descendants_text_content(&node, builder);
+        return IterationDecision::Continue;
     });
 }
 
@@ -119,14 +104,15 @@ String HTMLOptionElement::text() const
     // script or SVG script elements.
     for_each_child([&](auto const& node) {
         concatenate_descendants_text_content(&node, builder);
+        return IterationDecision::Continue;
     });
 
     // Return the result of stripping and collapsing ASCII whitespace from the above concatenation.
-    return strip_and_collapse_whitespace(builder.to_string());
+    return MUST(Infra::strip_and_collapse_whitespace(builder.string_view()));
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-text
-void HTMLOptionElement::set_text(String text)
+void HTMLOptionElement::set_text(String const& text)
 {
     string_replace_all(text);
 }
@@ -138,7 +124,7 @@ int HTMLOptionElement::index() const
     if (auto select_element = first_ancestor_of_type<HTMLSelectElement>()) {
         int index = 0;
         for (auto const& option_element : select_element->list_of_options()) {
-            if (&option_element == this)
+            if (option_element.ptr() == this)
                 return index;
             ++index;
         }
@@ -151,7 +137,44 @@ int HTMLOptionElement::index() const
 // https://html.spec.whatwg.org/multipage/form-elements.html#ask-for-a-reset
 void HTMLOptionElement::ask_for_a_reset()
 {
-    // FIXME: Implement this operation.
+    // If an option element in the list of options asks for a reset, then run that select element's selectedness setting algorithm.
+    if (is<HTMLSelectElement>(parent_element())) {
+        static_cast<HTMLSelectElement*>(parent())->update_selectedness();
+    }
+}
+
+// https://html.spec.whatwg.org/multipage/form-elements.html#concept-option-disabled
+bool HTMLOptionElement::disabled() const
+{
+    // An option element is disabled if its disabled attribute is present or if it is a child of an optgroup element whose disabled attribute is present.
+    return has_attribute(AttributeNames::disabled)
+        || (parent() && is<HTMLOptGroupElement>(parent()) && static_cast<HTMLOptGroupElement const&>(*parent()).has_attribute(AttributeNames::disabled));
+}
+
+// https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-form
+JS::GCPtr<HTMLFormElement> HTMLOptionElement::form() const
+{
+    // The form IDL attribute's behavior depends on whether the option element is in a select element or not.
+    // If the option has a select element as its parent, or has an optgroup element as its parent and that optgroup element has a select element as its parent,
+    // then the form IDL attribute must return the same value as the form IDL attribute on that select element.
+    // Otherwise, it must return null.
+    auto const* parent = parent_element();
+    if (is<HTMLOptGroupElement>(parent))
+        parent = parent->parent_element();
+
+    if (is<HTML::HTMLSelectElement>(parent)) {
+        auto const* select_element = verify_cast<HTMLSelectElement>(parent);
+        return const_cast<HTMLFormElement*>(select_element->form());
+    }
+
+    return {};
+}
+
+Optional<ARIA::Role> HTMLOptionElement::default_role() const
+{
+    // https://www.w3.org/TR/html-aria/#el-option
+    // TODO: Only an option element that is in a list of options or that represents a suggestion in a datalist should return option
+    return ARIA::Role::option;
 }
 
 }

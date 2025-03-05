@@ -6,12 +6,13 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Debug.h>
 #include <AK/Function.h>
 #include <AK/ScopeGuard.h>
 #include <AK/Span.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
+#include <LibPDF/Error.h>
 
 namespace PDF {
 
@@ -38,25 +39,35 @@ public:
             return 0;
 
         if (m_forwards)
-            return bytes().size() - offset() - 1;
+            return bytes().size() - offset();
         return offset() + 1;
     }
 
-    void move_by(size_t count)
+    void move_by(ssize_t count)
     {
         if (m_forwards) {
-            m_offset += static_cast<ssize_t>(count);
+            m_offset += count;
         } else {
-            m_offset -= static_cast<ssize_t>(count);
+            m_offset -= count;
         }
     }
 
     template<typename T = char>
     T read()
     {
-        T value = reinterpret_cast<const T*>(m_bytes.offset(m_offset))[0];
+        T value = reinterpret_cast<T const*>(m_bytes.offset(m_offset))[0];
         move_by(sizeof(T));
         return value;
+    }
+
+    template<typename T = char>
+    PDFErrorOr<T> try_read()
+    {
+        if (sizeof(T) + m_offset > m_bytes.size()) {
+            auto message = ByteString::formatted("Cannot read {} bytes at offset {} of ReadonlyBytes of size {}", sizeof(T), m_offset, m_bytes.size());
+            return Error { Error::Type::Parse, message };
+        }
+        return read<T>();
     }
 
     char peek(size_t shift = 0) const
@@ -81,7 +92,7 @@ public:
 
     bool matches(char const* chars) const
     {
-        String string(chars);
+        ByteString string(chars);
         if (remaining() < string.length())
             return false;
 
@@ -99,7 +110,7 @@ public:
     template<typename T = char>
     void move_to(size_t offset)
     {
-        VERIFY(offset < m_bytes.size());
+        VERIFY(offset <= m_bytes.size());
         m_offset = static_cast<ssize_t>(offset);
     }
 
@@ -109,16 +120,34 @@ public:
             move_by(1);
     }
 
-    void move_until(Function<bool(char)> predicate)
+    void move_until(AK::Function<bool(char)> predicate)
     {
         while (!done() && !predicate(peek()))
             move_by(1);
     }
 
-    ALWAYS_INLINE void move_while(Function<bool(char)> predicate)
+    ALWAYS_INLINE void move_while(AK::Function<bool(char)> predicate)
     {
         move_until([&predicate](char t) { return !predicate(t); });
     }
+
+    static bool is_eol(char);
+    static bool is_whitespace(char);
+    static bool is_non_eol_whitespace(char);
+
+    bool matches_eol() const;
+    bool matches_whitespace() const;
+    bool matches_non_eol_whitespace() const;
+    bool matches_number() const;
+    bool matches_delimiter() const;
+    bool matches_regular_character() const;
+
+    bool consume_eol();
+    bool consume_whitespace();
+    bool consume_non_eol_whitespace();
+    char consume();
+    void consume(int amount);
+    bool consume(char);
 
     ALWAYS_INLINE void set_reading_forwards() { m_forwards = true; }
     ALWAYS_INLINE void set_reading_backwards() { m_forwards = false; }
@@ -137,7 +166,7 @@ public:
 
         for (auto i = from; i <= to; i++) {
             char value = static_cast<char>(bytes().at(i));
-            auto line = String::formatted("  {}: '{}' (value={:3d}) ", i, value, static_cast<u8>(value));
+            auto line = ByteString::formatted("  {}: '{}' (value={:3d}) ", i, value, static_cast<u8>(value));
             if (i == offset()) {
                 dbgln("{} <<< current location, forwards={}", line, m_forwards);
             } else {

@@ -6,6 +6,7 @@
 
 #include <LibTest/TestCase.h>
 
+#include <AK/ByteString.h>
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
 #include <AK/String.h>
@@ -19,7 +20,7 @@ TEST_CASE(construct)
 
 TEST_CASE(construct_from_initializer_list)
 {
-    HashMap<int, String> number_to_string {
+    HashMap<int, ByteString> number_to_string {
         { 1, "One" },
         { 2, "Two" },
         { 3, "Three" },
@@ -30,7 +31,7 @@ TEST_CASE(construct_from_initializer_list)
 
 TEST_CASE(populate)
 {
-    HashMap<int, String> number_to_string;
+    HashMap<int, ByteString> number_to_string;
     number_to_string.set(1, "One");
     number_to_string.set(2, "Two");
     number_to_string.set(3, "Three");
@@ -41,14 +42,14 @@ TEST_CASE(populate)
 
 TEST_CASE(range_loop)
 {
-    HashMap<int, String> number_to_string;
+    HashMap<int, ByteString> number_to_string;
     EXPECT_EQ(number_to_string.set(1, "One"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(number_to_string.set(2, "Two"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(number_to_string.set(3, "Three"), AK::HashSetResult::InsertedNewEntry);
 
     int loop_counter = 0;
     for (auto& it : number_to_string) {
-        EXPECT_EQ(it.value.is_null(), false);
+        EXPECT_EQ(it.value.is_empty(), false);
         ++loop_counter;
     }
     EXPECT_EQ(loop_counter, 3);
@@ -56,7 +57,7 @@ TEST_CASE(range_loop)
 
 TEST_CASE(map_remove)
 {
-    HashMap<int, String> number_to_string;
+    HashMap<int, ByteString> number_to_string;
     EXPECT_EQ(number_to_string.set(1, "One"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(number_to_string.set(2, "Two"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(number_to_string.set(3, "Three"), AK::HashSetResult::InsertedNewEntry);
@@ -73,7 +74,7 @@ TEST_CASE(map_remove)
 
 TEST_CASE(remove_all_matching)
 {
-    HashMap<int, String> map;
+    HashMap<int, ByteString> map;
 
     map.set(1, "One");
     map.set(2, "Two");
@@ -82,40 +83,48 @@ TEST_CASE(remove_all_matching)
 
     EXPECT_EQ(map.size(), 4u);
 
-    EXPECT_EQ(map.remove_all_matching([&](int key, String const& value) { return key == 1 || value == "Two"; }), true);
+    EXPECT_EQ(map.remove_all_matching([&](int key, ByteString const& value) { return key == 1 || value == "Two"; }), true);
     EXPECT_EQ(map.size(), 2u);
 
-    EXPECT_EQ(map.remove_all_matching([&](int, String const&) { return false; }), false);
+    EXPECT_EQ(map.remove_all_matching([&](int, ByteString const&) { return false; }), false);
     EXPECT_EQ(map.size(), 2u);
 
     EXPECT(map.contains(3));
     EXPECT(map.contains(4));
 
-    EXPECT_EQ(map.remove_all_matching([&](int, String const&) { return true; }), true);
-    EXPECT_EQ(map.remove_all_matching([&](int, String const&) { return false; }), false);
+    EXPECT_EQ(map.remove_all_matching([&](int, ByteString const&) { return true; }), true);
+    EXPECT_EQ(map.remove_all_matching([&](int, ByteString const&) { return false; }), false);
 
     EXPECT(map.is_empty());
 
-    EXPECT_EQ(map.remove_all_matching([&](int, String const&) { return true; }), false);
+    EXPECT_EQ(map.remove_all_matching([&](int, ByteString const&) { return true; }), false);
 }
 
 TEST_CASE(case_insensitive)
 {
-    HashMap<String, int, CaseInsensitiveStringTraits> casemap;
-    EXPECT_EQ(String("nickserv").to_lowercase(), String("NickServ").to_lowercase());
+    HashMap<ByteString, int, CaseInsensitiveStringTraits> casemap;
+    EXPECT_EQ(ByteString("nickserv").to_lowercase(), ByteString("NickServ").to_lowercase());
     EXPECT_EQ(casemap.set("nickserv", 3), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(casemap.set("NickServ", 3), AK::HashSetResult::ReplacedExistingEntry);
+    EXPECT_EQ(casemap.size(), 1u);
+}
+
+TEST_CASE(case_insensitive_stringview)
+{
+    HashMap<StringView, int, CaseInsensitiveASCIIStringViewTraits> casemap;
+    EXPECT_EQ(casemap.set("nickserv"sv, 3), AK::HashSetResult::InsertedNewEntry);
+    EXPECT_EQ(casemap.set("NickServ"sv, 3), AK::HashSetResult::ReplacedExistingEntry);
     EXPECT_EQ(casemap.size(), 1u);
 }
 
 TEST_CASE(hashmap_of_nonnullownptr_get)
 {
     struct Object {
-        Object(String const& s)
+        Object(ByteString const& s)
             : string(s)
         {
         }
-        String string;
+        ByteString string;
     };
 
     HashMap<int, NonnullOwnPtr<Object>> objects;
@@ -142,16 +151,16 @@ TEST_CASE(hashmap_of_nonnullownptr_get)
 
 TEST_CASE(many_strings)
 {
-    HashMap<String, int> strings;
+    HashMap<ByteString, int> strings;
     for (int i = 0; i < 999; ++i) {
-        EXPECT_EQ(strings.set(String::number(i), i), AK::HashSetResult::InsertedNewEntry);
+        EXPECT_EQ(strings.set(ByteString::number(i), i), AK::HashSetResult::InsertedNewEntry);
     }
     EXPECT_EQ(strings.size(), 999u);
     for (auto& it : strings) {
-        EXPECT_EQ(it.key.to_int().value(), it.value);
+        EXPECT_EQ(it.key.to_number<int>().value(), it.value);
     }
     for (int i = 0; i < 999; ++i) {
-        EXPECT_EQ(strings.remove(String::number(i)), true);
+        EXPECT_EQ(strings.remove(ByteString::number(i)), true);
     }
     EXPECT_EQ(strings.is_empty(), true);
 }
@@ -204,10 +213,117 @@ TEST_CASE(basic_contains)
 
 TEST_CASE(in_place_rehashing_ordered_loop_bug)
 {
-    OrderedHashMap<String, String> map;
+    OrderedHashMap<ByteString, ByteString> map;
     map.set("yt.innertube::nextId", "");
     map.set("yt.innertube::requests", "");
     map.remove("yt.innertube::nextId");
     map.set("yt.innertube::nextId", "");
     VERIFY(map.keys().size() == 2);
+}
+
+TEST_CASE(take)
+{
+    HashMap<String, int> map;
+
+    EXPECT(!map.take("foo"sv).has_value());
+    EXPECT(!map.take("bar"sv).has_value());
+    EXPECT(!map.take("baz"_string).has_value());
+
+    map.set("foo"_string, 1);
+    map.set("bar"_string, 2);
+    map.set("baz"_string, 3);
+
+    auto foo = map.take("foo"sv);
+    EXPECT_EQ(foo, 1);
+
+    foo = map.take("foo"sv);
+    EXPECT(!foo.has_value());
+
+    auto bar = map.take("bar"sv);
+    EXPECT_EQ(bar, 2);
+
+    bar = map.take("bar"sv);
+    EXPECT(!bar.has_value());
+
+    auto baz = map.take("baz"_string);
+    EXPECT_EQ(baz, 3);
+
+    baz = map.take("baz"_string);
+    EXPECT(!baz.has_value());
+}
+
+TEST_CASE(clone_same_template_args)
+{
+    HashMap<int, int> orig;
+    orig.set(1, 10);
+    orig.set(2, 20);
+    orig.set(3, 30);
+    EXPECT_EQ(orig.size(), static_cast<size_t>(3));
+    EXPECT_EQ(orig.get(2), Optional<int>(20));
+
+    auto second = TRY_OR_FAIL(orig.clone());
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(3));
+    EXPECT_EQ(orig.get(2), Optional<int>(20));
+    EXPECT_EQ(second.size(), static_cast<size_t>(3));
+    EXPECT_EQ(second.get(2), Optional<int>(20));
+}
+
+TEST_CASE(clone_different_traits)
+{
+    HashMap<StringView, StringView> orig;
+    orig.set("Well"sv, "hello friends!"sv);
+    orig.set("Thank"sv, "you, very cool!"sv);
+    EXPECT_EQ(orig.size(), static_cast<size_t>(2));
+    EXPECT_EQ(orig.get("Well"sv), Optional<StringView>("hello friends!"sv));
+    EXPECT_EQ(orig.get("weLL"sv), Optional<StringView>());
+
+    auto second = TRY_OR_FAIL(orig.clone<CaseInsensitiveASCIIStringViewTraits>());
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(2));
+    EXPECT_EQ(orig.get("Well"sv), Optional<StringView>("hello friends!"sv));
+    EXPECT_EQ(orig.get("weLL"sv), Optional<StringView>());
+    EXPECT_EQ(second.size(), static_cast<size_t>(2));
+    EXPECT_EQ(second.get("Well"sv), Optional<StringView>("hello friends!"sv));
+    EXPECT_EQ(second.get("weLL"sv), Optional<StringView>("hello friends!"sv));
+}
+
+TEST_CASE(move_construct)
+{
+    HashMap<int, int> orig;
+    orig.set(1, 10);
+    orig.set(2, 20);
+    orig.set(3, 30);
+    EXPECT_EQ(orig.size(), static_cast<size_t>(3));
+    EXPECT_EQ(orig.get(2), Optional<int>(20));
+
+    HashMap<int, int> second = move(orig);
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(0));
+    EXPECT_EQ(orig.get(2), Optional<int>());
+    EXPECT_EQ(second.size(), static_cast<size_t>(3));
+    EXPECT_EQ(second.get(2), Optional<int>(20));
+}
+
+TEST_CASE(move_assign)
+{
+    HashMap<int, int> orig;
+    HashMap<int, int> second;
+    orig.set(1, 10);
+    orig.set(2, 20);
+    orig.set(3, 30);
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(3));
+    EXPECT_EQ(orig.get(2), Optional<int>(20));
+    EXPECT_EQ(second.size(), static_cast<size_t>(0));
+    EXPECT_EQ(second.get(2), Optional<int>());
+
+    // 'Hashtable::operator=(Hashtable&&)' allocates temporarily an empty table,
+    // so we can't use NoAllocationGuard here. :(
+    second = move(orig);
+
+    EXPECT_EQ(orig.size(), static_cast<size_t>(0));
+    EXPECT_EQ(orig.get(2), Optional<int>());
+    EXPECT_EQ(second.size(), static_cast<size_t>(3));
+    EXPECT_EQ(second.get(2), Optional<int>(20));
 }

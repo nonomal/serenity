@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "AK/ReverseIterator.h"
 #include <LibTest/TestCase.h>
 
-#include <AK/NonnullOwnPtrVector.h>
+#include <AK/ByteString.h>
 #include <AK/OwnPtr.h>
+#include <AK/ReverseIterator.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
 
@@ -38,20 +38,18 @@ TEST_CASE(ints)
 
 TEST_CASE(strings)
 {
-    Vector<String> strings;
+    Vector<ByteString> strings;
     strings.append("ABC");
     strings.append("DEF");
 
     int loop_counter = 0;
-    for (String const& string : strings) {
-        EXPECT(!string.is_null());
+    for (ByteString const& string : strings) {
         EXPECT(!string.is_empty());
         ++loop_counter;
     }
 
     loop_counter = 0;
-    for (auto& string : (const_cast<Vector<String> const&>(strings))) {
-        EXPECT(!string.is_null());
+    for (auto& string : (const_cast<Vector<ByteString> const&>(strings))) {
         EXPECT(!string.is_empty());
         ++loop_counter;
     }
@@ -60,7 +58,7 @@ TEST_CASE(strings)
 
 TEST_CASE(strings_insert_ordered)
 {
-    Vector<String> strings;
+    Vector<ByteString> strings;
     strings.append("abc");
     strings.append("def");
     strings.append("ghi");
@@ -163,12 +161,12 @@ TEST_CASE(vector_compare)
     EXPECT_EQ(ints.size(), 1000u);
     EXPECT_EQ(ints, same_ints);
 
-    Vector<String> strings;
-    Vector<String> same_strings;
+    Vector<ByteString> strings;
+    Vector<ByteString> same_strings;
 
     for (int i = 0; i < 1000; ++i) {
-        strings.append(String::number(i));
-        same_strings.append(String::number(i));
+        strings.append(ByteString::number(i));
+        same_strings.append(ByteString::number(i));
     }
 
     EXPECT_EQ(strings.size(), 1000u);
@@ -178,9 +176,9 @@ TEST_CASE(vector_compare)
 TEST_CASE(grow_past_inline_capacity)
 {
     auto make_vector = [] {
-        Vector<String, 16> strings;
+        Vector<ByteString, 16> strings;
         for (int i = 0; i < 32; ++i) {
-            strings.append(String::number(i));
+            strings.append(ByteString::number(i));
         }
         return strings;
     };
@@ -286,9 +284,9 @@ TEST_CASE(remove_all_matching)
 TEST_CASE(nonnullownptrvector)
 {
     struct Object {
-        String string;
+        ByteString string;
     };
-    NonnullOwnPtrVector<Object> objects;
+    Vector<NonnullOwnPtr<Object>> objects;
 
     objects.append(make<Object>());
     EXPECT_EQ(objects.size(), 1u);
@@ -422,6 +420,21 @@ TEST_CASE(should_find_index)
 
     EXPECT_EQ(4u, v.find_first_index(0).value());
     EXPECT(!v.find_first_index(42).has_value());
+}
+
+TEST_CASE(should_find_predicate_index)
+{
+    Vector<int> v { 1, 2, 3, 4, 0, 6, 7, 8, 0, 0 };
+
+    EXPECT_EQ(4u, v.find_first_index_if([](auto const v) { return v == 0; }).value());
+    EXPECT(!v.find_first_index_if([](auto const v) { return v == 123; }).has_value());
+}
+
+TEST_CASE(should_find_using_a_hashcompatible_value)
+{
+    // Tests whether a hash-compatible value can be used to compare (Strings cannot be impliticly constructed from a StringView.)
+    Vector v { "hello!"_string };
+    EXPECT(v.contains_slow("hello!"sv));
 }
 
 TEST_CASE(should_contain_start)
@@ -571,4 +584,49 @@ TEST_CASE(reverse_range_for_loop)
     index = 9;
     for (auto item : v.in_reverse())
         EXPECT_EQ(item, index--);
+}
+
+static bool is_inline_element(auto& el, auto& vector)
+{
+    uintptr_t vector_ptr = (uintptr_t)&vector;
+    uintptr_t element_ptr = (uintptr_t)&el;
+    return (element_ptr >= vector_ptr && element_ptr < (vector_ptr + sizeof(vector)));
+}
+
+TEST_CASE(uses_inline_capacity_when_appended_to)
+{
+    Vector<int, 10> v;
+    v.unchecked_append(1);
+    v.unchecked_append(123);
+    v.unchecked_append(50);
+    v.unchecked_append(43);
+
+    for (auto& el : v)
+        EXPECT(is_inline_element(el, v));
+}
+
+TEST_CASE(uses_inline_capacity_when_constructed_from_initializer_list)
+{
+    Vector<int, 10> v { 10, 9, 3, 1, 3 };
+
+    for (auto& el : v)
+        EXPECT(is_inline_element(el, v));
+}
+
+TEST_CASE(uses_inline_capacity_when_constructed_from_other_vector)
+{
+    Vector other { 4, 3, 2, 1 };
+    Vector<int, 10> v(other);
+
+    for (auto& el : v)
+        EXPECT(is_inline_element(el, v));
+}
+
+TEST_CASE(uses_inline_capacity_when_constructed_from_span)
+{
+    Array array { "f00", "bar", "baz" };
+    Vector<char const*, 10> v(array.span());
+
+    for (auto& el : v)
+        EXPECT(is_inline_element(el, v));
 }

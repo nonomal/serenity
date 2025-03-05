@@ -12,7 +12,7 @@ describe("correct behavior", () => {
     test("custom time zone", () => {
         const timeZone = {
             getOffsetNanosecondsFor() {
-                return 86400000000000;
+                return 86399999999999;
             },
         };
         const plainDate = Temporal.Now.plainDateISO("UTC");
@@ -32,12 +32,26 @@ describe("correct behavior", () => {
             }
         }
     });
+
+    test("cannot have a time zone with more than a day", () => {
+        [86400000000000, -86400000000000, 86400000000001, 86400000000002].forEach(offset => {
+            const timeZone = {
+                getOffsetNanosecondsFor() {
+                    return offset;
+                },
+            };
+            expect(() => Temporal.Now.plainDateISO(timeZone)).toThrowWithMessage(
+                RangeError,
+                "Invalid offset nanoseconds value, must be in range -86400 * 10^9 + 1 to 86400 * 10^9 - 1"
+            );
+        });
+    });
 });
 
 describe("errors", () => {
     test("custom time zone doesn't have a getOffsetNanosecondsFor function", () => {
         expect(() => {
             Temporal.Now.plainDateISO({});
-        }).toThrowWithMessage(TypeError, "null is not a function");
+        }).toThrowWithMessage(TypeError, "getOffsetNanosecondsFor is undefined");
     });
 });

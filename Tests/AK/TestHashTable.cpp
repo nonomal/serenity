@@ -1,14 +1,16 @@
 /*
  * Copyright (c) 2021, thislooksfun <tlf@thislooks.fun>
+ * Copyright (c) 2023, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibTest/TestCase.h>
 
+#include <AK/ByteString.h>
 #include <AK/HashTable.h>
 #include <AK/NonnullOwnPtr.h>
-#include <AK/String.h>
+#include <AK/Vector.h>
 
 TEST_CASE(construct)
 {
@@ -44,7 +46,7 @@ TEST_CASE(move_is_not_swap)
 
 TEST_CASE(populate)
 {
-    HashTable<String> strings;
+    HashTable<ByteString> strings;
     strings.set("One");
     strings.set("Two");
     strings.set("Three");
@@ -55,22 +57,40 @@ TEST_CASE(populate)
 
 TEST_CASE(range_loop)
 {
-    HashTable<String> strings;
+    HashTable<ByteString> strings;
     EXPECT_EQ(strings.set("One"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(strings.set("Two"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(strings.set("Three"), AK::HashSetResult::InsertedNewEntry);
 
     int loop_counter = 0;
     for (auto& it : strings) {
-        EXPECT_EQ(it.is_null(), false);
+        EXPECT_EQ(it.is_empty(), false);
         ++loop_counter;
+    }
+    EXPECT_EQ(loop_counter, 3);
+}
+
+TEST_CASE(range_loop_reverse)
+{
+    Array strings = { "One"sv, "Two"sv, "Three"sv };
+    OrderedHashTable<ByteString> table;
+    EXPECT_EQ(table.set(strings[0]), AK::HashSetResult::InsertedNewEntry);
+    EXPECT_EQ(table.set(strings[1]), AK::HashSetResult::InsertedNewEntry);
+    EXPECT_EQ(table.set(strings[2]), AK::HashSetResult::InsertedNewEntry);
+
+    int loop_counter = 0;
+    int index = strings.size() - 1;
+    for (auto& it : table.in_reverse()) {
+        EXPECT_EQ(it, strings[index]);
+        ++loop_counter;
+        --index;
     }
     EXPECT_EQ(loop_counter, 3);
 }
 
 TEST_CASE(table_remove)
 {
-    HashTable<String> strings;
+    HashTable<ByteString> strings;
     EXPECT_EQ(strings.set("One"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(strings.set("Two"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(strings.set("Three"), AK::HashSetResult::InsertedNewEntry);
@@ -113,8 +133,8 @@ TEST_CASE(remove_all_matching)
 
 TEST_CASE(case_insensitive)
 {
-    HashTable<String, CaseInsensitiveStringTraits> casetable;
-    EXPECT_EQ(String("nickserv").to_lowercase(), String("NickServ").to_lowercase());
+    HashTable<ByteString, CaseInsensitiveStringTraits> casetable;
+    EXPECT_EQ(ByteString("nickserv").to_lowercase(), ByteString("NickServ").to_lowercase());
     EXPECT_EQ(casetable.set("nickserv"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(casetable.set("NickServ"), AK::HashSetResult::ReplacedExistingEntry);
     EXPECT_EQ(casetable.size(), 1u);
@@ -122,59 +142,58 @@ TEST_CASE(case_insensitive)
 
 TEST_CASE(many_strings)
 {
-    HashTable<String> strings;
+    HashTable<ByteString> strings;
     for (int i = 0; i < 999; ++i) {
-        EXPECT_EQ(strings.set(String::number(i)), AK::HashSetResult::InsertedNewEntry);
+        EXPECT_EQ(strings.set(ByteString::number(i)), AK::HashSetResult::InsertedNewEntry);
     }
     EXPECT_EQ(strings.size(), 999u);
     for (int i = 0; i < 999; ++i) {
-        EXPECT_EQ(strings.remove(String::number(i)), true);
+        EXPECT_EQ(strings.remove(ByteString::number(i)), true);
     }
     EXPECT_EQ(strings.is_empty(), true);
 }
 
 TEST_CASE(many_collisions)
 {
-    struct StringCollisionTraits : public GenericTraits<String> {
-        static unsigned hash(String const&) { return 0; }
+    struct StringCollisionTraits : public DefaultTraits<ByteString> {
+        static unsigned hash(ByteString const&) { return 0; }
     };
 
-    HashTable<String, StringCollisionTraits> strings;
+    HashTable<ByteString, StringCollisionTraits> strings;
     for (int i = 0; i < 999; ++i) {
-        EXPECT_EQ(strings.set(String::number(i)), AK::HashSetResult::InsertedNewEntry);
+        EXPECT_EQ(strings.set(ByteString::number(i)), AK::HashSetResult::InsertedNewEntry);
     }
 
     EXPECT_EQ(strings.set("foo"), AK::HashSetResult::InsertedNewEntry);
     EXPECT_EQ(strings.size(), 1000u);
 
     for (int i = 0; i < 999; ++i) {
-        EXPECT_EQ(strings.remove(String::number(i)), true);
+        EXPECT_EQ(strings.remove(ByteString::number(i)), true);
     }
 
-    // FIXME: Doing this with an "EXPECT_NOT_EQ" would be cleaner.
-    EXPECT_EQ(strings.find("foo") == strings.end(), false);
+    EXPECT(strings.find("foo") != strings.end());
 }
 
 TEST_CASE(space_reuse)
 {
-    struct StringCollisionTraits : public GenericTraits<String> {
-        static unsigned hash(String const&) { return 0; }
+    struct StringCollisionTraits : public DefaultTraits<ByteString> {
+        static unsigned hash(ByteString const&) { return 0; }
     };
 
-    HashTable<String, StringCollisionTraits> strings;
+    HashTable<ByteString, StringCollisionTraits> strings;
 
     // Add a few items to allow it to do initial resizing.
     EXPECT_EQ(strings.set("0"), AK::HashSetResult::InsertedNewEntry);
     for (int i = 1; i < 5; ++i) {
-        EXPECT_EQ(strings.set(String::number(i)), AK::HashSetResult::InsertedNewEntry);
-        EXPECT_EQ(strings.remove(String::number(i - 1)), true);
+        EXPECT_EQ(strings.set(ByteString::number(i)), AK::HashSetResult::InsertedNewEntry);
+        EXPECT_EQ(strings.remove(ByteString::number(i - 1)), true);
     }
 
     auto capacity = strings.capacity();
 
     for (int i = 5; i < 999; ++i) {
-        EXPECT_EQ(strings.set(String::number(i)), AK::HashSetResult::InsertedNewEntry);
-        EXPECT_EQ(strings.remove(String::number(i - 1)), true);
+        EXPECT_EQ(strings.set(ByteString::number(i)), AK::HashSetResult::InsertedNewEntry);
+        EXPECT_EQ(strings.remove(ByteString::number(i - 1)), true);
     }
 
     EXPECT_EQ(strings.capacity(), capacity);
@@ -268,8 +287,6 @@ TEST_CASE(floats)
     EXPECT(table.contains(2.0f));
 }
 
-// FIXME: Enable this test once it doesn't trigger UBSAN.
-#if 0
 TEST_CASE(doubles)
 {
     HashTable<double> table;
@@ -281,31 +298,186 @@ TEST_CASE(doubles)
     EXPECT(table.contains(1.0));
     EXPECT(table.contains(2.0));
 }
-#endif
-
-// Inserting and removing a bunch of elements will "thrash" the table, leading to a lot of "deleted" markers.
-BENCHMARK_CASE(benchmark_thrashing)
-{
-    HashTable<int> table;
-    // Ensure that there needs to be some copying when rehashing.
-    table.set(3);
-    table.set(7);
-    table.set(11);
-    table.set(13);
-    for (int i = 0; i < 10'000; ++i) {
-        table.set(-i);
-    }
-    for (int i = 0; i < 10'000'000; ++i) {
-        table.set(i);
-        table.remove(i);
-    }
-}
 
 TEST_CASE(reinsertion)
 {
-    OrderedHashTable<String> map;
+    OrderedHashTable<ByteString> map;
     map.set("ytidb::LAST_RESULT_ENTRY_KEY");
     map.set("__sak");
     map.remove("__sak");
     map.set("__sak");
+}
+
+TEST_CASE(clear_with_capacity_when_empty)
+{
+    HashTable<int> map;
+    map.clear_with_capacity();
+    map.set(0);
+    map.set(1);
+    VERIFY(map.size() == 2);
+}
+
+TEST_CASE(iterator_removal)
+{
+    HashTable<int> map;
+    map.set(0);
+    map.set(1);
+
+    auto it = map.begin();
+    map.remove(it);
+    EXPECT_EQ(it, map.end());
+    EXPECT_EQ(map.size(), 1u);
+}
+
+TEST_CASE(ordered_insertion_and_deletion)
+{
+    OrderedHashTable<int> table;
+    EXPECT_EQ(table.set(0), HashSetResult::InsertedNewEntry);
+    EXPECT_EQ(table.set(1), HashSetResult::InsertedNewEntry);
+    EXPECT_EQ(table.set(2), HashSetResult::InsertedNewEntry);
+    EXPECT_EQ(table.set(3), HashSetResult::InsertedNewEntry);
+    EXPECT_EQ(table.size(), 4u);
+
+    auto expect_table = [](OrderedHashTable<int>& table, Span<int> values) {
+        auto index = 0u;
+        for (auto it = table.begin(); it != table.end(); ++it, ++index) {
+            EXPECT_EQ(*it, values[index]);
+            EXPECT(table.contains(values[index]));
+        }
+
+        index = table.size() - 1;
+        for (auto it = table.rbegin(); it != table.rend(); ++it, --index) {
+            EXPECT_EQ(*it, values[index]);
+            EXPECT(table.contains(values[index]));
+        }
+    };
+
+    expect_table(table, Array<int, 4> { 0, 1, 2, 3 });
+
+    EXPECT(table.remove(0));
+    EXPECT(table.remove(2));
+    EXPECT(!table.remove(4));
+    EXPECT_EQ(table.size(), 2u);
+
+    expect_table(table, Array<int, 2> { 1, 3 });
+}
+
+TEST_CASE(ordered_deletion_and_reinsertion)
+{
+    OrderedHashTable<int> table;
+    table.set(1);
+    table.set(3);
+    table.remove(1);
+    EXPECT_EQ(table.size(), 1u);
+
+    // By adding 1 again but this time in a different position, we
+    // test whether the bucket's neighbors are reset properly.
+    table.set(1);
+    EXPECT_EQ(table.size(), 2u);
+
+    auto it = table.begin();
+    EXPECT_EQ(*it, 3);
+    ++it;
+    EXPECT_EQ(*it, 1);
+    ++it;
+    EXPECT_EQ(it, table.end());
+
+    auto rit = table.rbegin();
+    EXPECT_EQ(*rit, 1);
+    ++rit;
+    EXPECT_EQ(*rit, 3);
+    ++rit;
+    EXPECT_EQ(rit, table.rend());
+}
+
+TEST_CASE(ordered_take_last)
+{
+    OrderedHashTable<int> table;
+    table.set(1);
+    table.set(2);
+    table.set(3);
+
+    EXPECT_EQ(table.take_last(), 3);
+    EXPECT_EQ(table.take_last(), 2);
+    EXPECT_EQ(table.take_last(), 1);
+    EXPECT(table.is_empty());
+}
+
+TEST_CASE(ordered_iterator_removal)
+{
+    OrderedHashTable<int> map;
+    map.set(0);
+    map.set(1);
+
+    auto it = map.begin();
+    map.remove(it);
+    EXPECT_EQ(it, map.end());
+    EXPECT_EQ(map.size(), 1u);
+}
+
+TEST_CASE(ordered_remove_from_head)
+{
+    OrderedHashTable<int> map;
+    map.set(1);
+    map.set(2);
+    map.set(3);
+    map.set(4);
+    map.set(5);
+    map.set(6);
+
+    EXPECT_EQ(map.size(), 6u);
+
+    auto it = map.begin();
+    map.remove(it);
+    it = map.begin();
+    map.remove(it);
+    it = map.begin();
+    map.remove(it);
+    it = map.begin();
+    map.remove(it);
+    it = map.begin();
+    map.remove(it);
+    it = map.begin();
+    map.remove(it);
+
+    EXPECT_EQ(map.size(), 0u);
+}
+
+TEST_CASE(ordered_infinite_loop_clang_regression)
+{
+    OrderedHashTable<ByteString> map;
+    map.set("");
+    map.set("1");
+    map.set("_cb");
+    map.set("2");
+    map.set("3");
+    map.set("_cb_svref");
+    map.set("_cb_svref_expires");
+    map.remove("_cb_svref");
+    map.remove("_cb_svref_expires");
+    map.set("_cb_svref");
+
+    size_t iterations = 0;
+    auto size = map.size();
+    for (auto it = map.begin(); it != map.end(); ++it) {
+        if (++iterations > size) {
+            VERIFY(false);
+            break;
+        }
+    }
+}
+
+TEST_CASE(values)
+{
+    OrderedHashTable<int> table;
+    table.set(10);
+    table.set(30);
+    table.set(20);
+
+    Vector<int> values = table.values();
+
+    EXPECT_EQ(values.size(), table.size());
+    EXPECT_EQ(values[0], 10);
+    EXPECT_EQ(values[1], 30);
+    EXPECT_EQ(values[2], 20);
 }

@@ -5,19 +5,21 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Interpreter.h>
+#include <AK/TypeCasts.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/FunctionObject.h>
+#include <LibJS/Runtime/NativeFunction.h>
+#include <LibJS/Runtime/VM.h>
 
 namespace JS {
 
-FunctionObject::FunctionObject(GlobalObject& global_object, Object* prototype)
-    : Object(global_object, prototype)
+FunctionObject::FunctionObject(Realm& realm, Object* prototype, MayInterfereWithIndexedPropertyAccess may_interfere_with_indexed_property_access)
+    : Object(realm, prototype, may_interfere_with_indexed_property_access)
 {
 }
 
-FunctionObject::FunctionObject(Object& prototype)
-    : Object(prototype)
+FunctionObject::FunctionObject(Object& prototype, MayInterfereWithIndexedPropertyAccess may_interfere_with_indexed_property_access)
+    : Object(ConstructWithPrototypeTag::Tag, prototype, may_interfere_with_indexed_property_access)
 {
 }
 
@@ -30,19 +32,19 @@ void FunctionObject::set_function_name(Variant<PropertyKey, PrivateName> const& 
     VERIFY(m_is_extensible);
     VERIFY(!storage_has(vm.names.name));
 
-    String name;
+    ByteString name;
 
     // 2. If Type(name) is Symbol, then
     if (auto const* property_key = name_arg.get_pointer<PropertyKey>(); property_key && property_key->is_symbol()) {
         // a. Let description be name's [[Description]] value.
-        auto const& description = property_key->as_symbol()->raw_description();
+        auto const& description = property_key->as_symbol()->description();
 
         // b. If description is undefined, set name to the empty String.
         if (!description.has_value())
-            name = String::empty();
+            name = ByteString::empty();
         // c. Else, set name to the string-concatenation of "[", description, and "]".
         else
-            name = String::formatted("[{}]", *description);
+            name = ByteString::formatted("[{}]", *description);
     }
     // 3. Else if name is a Private Name, then
     else if (auto const* private_name = name_arg.get_pointer<PrivateName>()) {
@@ -63,7 +65,7 @@ void FunctionObject::set_function_name(Variant<PropertyKey, PrivateName> const& 
     // 5. If prefix is present, then
     if (prefix.has_value()) {
         // a. Set name to the string-concatenation of prefix, the code unit 0x0020 (SPACE), and name.
-        name = String::formatted("{} {}", *prefix, name);
+        name = ByteString::formatted("{} {}", *prefix, name);
 
         // b. If F has an [[InitialName]] internal slot, then
         if (is<NativeFunction>(this)) {
@@ -73,7 +75,7 @@ void FunctionObject::set_function_name(Variant<PropertyKey, PrivateName> const& 
     }
 
     // 6. Perform ! DefinePropertyOrThrow(F, "name", PropertyDescriptor { [[Value]]: name, [[Writable]]: false, [[Enumerable]]: false, [[Configurable]]: true }).
-    MUST(define_property_or_throw(vm.names.name, PropertyDescriptor { .value = js_string(vm, move(name)), .writable = false, .enumerable = false, .configurable = true }));
+    MUST(define_property_or_throw(vm.names.name, PropertyDescriptor { .value = PrimitiveString::create(vm, move(name)), .writable = false, .enumerable = false, .configurable = true }));
 
     // 7. Return unused.
 }

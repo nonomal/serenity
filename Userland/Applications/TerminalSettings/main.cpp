@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "TerminalSettingsWidget.h"
+#include "MainWidget.h"
+#include "ViewWidget.h"
+#include <LibConfig/Client.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
 #include <LibGUI/Application.h>
@@ -12,13 +14,10 @@
 #include <LibGUI/SettingsWindow.h>
 #include <LibMain/Main.h>
 
-// Including this after to avoid LibIPC errors
-#include <LibConfig/Client.h>
-
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio rpath recvfd sendfd unix"));
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
     Config::pledge_domain("Terminal");
 
     StringView selected_tab;
@@ -34,8 +33,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto window = TRY(GUI::SettingsWindow::create("Terminal Settings"));
     window->set_icon(app_icon.bitmap_for_size(16));
-    (void)TRY(window->add_tab<TerminalSettingsMainWidget>("Terminal"sv, "terminal"sv));
-    (void)TRY(window->add_tab<TerminalSettingsViewWidget>("View"sv, "view"sv));
+    (void)TRY(window->add_tab(TRY(TerminalSettings::ViewWidget::create()), "View"_string, "view"sv));
+    (void)TRY(window->add_tab(TRY(TerminalSettings::MainWidget::create()), "Terminal"_string, "terminal"sv));
     window->set_active_tab(selected_tab);
 
     window->show();

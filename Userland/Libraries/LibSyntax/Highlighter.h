@@ -8,29 +8,12 @@
 
 #include <AK/Noncopyable.h>
 #include <AK/WeakPtr.h>
-#include <LibGUI/TextDocument.h>
 #include <LibGfx/Palette.h>
+#include <LibSyntax/Document.h>
 #include <LibSyntax/HighlighterClient.h>
+#include <LibSyntax/Language.h>
 
 namespace Syntax {
-
-enum class Language {
-    Cpp,
-    CSS,
-    GitCommit,
-    GML,
-    HTML,
-    INI,
-    JavaScript,
-    PlainText,
-    SQL,
-    Shell,
-};
-
-struct TextStyle {
-    const Gfx::Color color;
-    bool const bold { false };
-};
 
 class Highlighter {
     AK_MAKE_NONCOPYABLE(Highlighter);
@@ -40,12 +23,13 @@ public:
     virtual ~Highlighter() = default;
 
     virtual Language language() const = 0;
-    StringView language_string(Language) const;
+    virtual Optional<StringView> comment_prefix() const = 0;
+    virtual Optional<StringView> comment_suffix() const = 0;
     virtual void rehighlight(Palette const&) = 0;
     virtual void highlight_matching_token_pair();
 
-    virtual bool is_identifier(u64) const { return false; };
-    virtual bool is_navigatable(u64) const { return false; };
+    virtual bool is_identifier(u64) const { return false; }
+    virtual bool is_navigatable(u64) const { return false; }
 
     void attach(HighlighterClient&);
     void detach();
@@ -77,7 +61,7 @@ protected:
 
     struct BuddySpan {
         int index { -1 };
-        GUI::TextDocumentSpan span_backup;
+        TextDocumentSpan span_backup;
     };
 
     bool m_has_brace_buddies { false };
@@ -87,7 +71,7 @@ protected:
 
 class ProxyHighlighterClient final : public Syntax::HighlighterClient {
 public:
-    ProxyHighlighterClient(Syntax::HighlighterClient& client, GUI::TextPosition start, u64 nested_kind_start_value, StringView source)
+    ProxyHighlighterClient(Syntax::HighlighterClient& client, TextPosition start, u64 nested_kind_start_value, StringView source)
         : m_document(client.get_document())
         , m_text(source)
         , m_start(start)
@@ -95,9 +79,9 @@ public:
     {
     }
 
-    Vector<GUI::TextDocumentSpan> corrected_spans() const
+    Vector<TextDocumentSpan> corrected_spans() const
     {
-        Vector<GUI::TextDocumentSpan> spans { m_spans };
+        Vector<TextDocumentSpan> spans { m_spans };
         for (auto& entry : spans) {
             entry.range.start() = {
                 entry.range.start().line() + m_start.line(),
@@ -114,6 +98,23 @@ public:
         return spans;
     }
 
+    Vector<TextDocumentFoldingRegion> corrected_folding_regions() const
+    {
+        Vector<TextDocumentFoldingRegion> folding_regions { m_folding_regions };
+        for (auto& entry : folding_regions) {
+            entry.range.start() = {
+                entry.range.start().line() + m_start.line(),
+                entry.range.start().line() == 0 ? entry.range.start().column() + m_start.column() : entry.range.start().column(),
+            };
+            entry.range.end() = {
+                entry.range.end().line() + m_start.line(),
+                entry.range.end().line() == 0 ? entry.range.end().column() + m_start.column() : entry.range.end().column(),
+            };
+        }
+
+        return folding_regions;
+    }
+
     Vector<Syntax::Highlighter::MatchingTokenPair> corrected_token_pairs(Vector<Syntax::Highlighter::MatchingTokenPair> pairs) const
     {
         for (auto& pair : pairs) {
@@ -124,27 +125,31 @@ public:
     }
 
 private:
-    virtual Vector<GUI::TextDocumentSpan>& spans() override { return m_spans; }
-    virtual Vector<GUI::TextDocumentSpan> const& spans() const override { return m_spans; }
-    virtual void set_span_at_index(size_t index, GUI::TextDocumentSpan span) override { m_spans.at(index) = move(span); }
+    virtual Vector<TextDocumentSpan> const& spans() const override { return m_spans; }
+    virtual void set_span_at_index(size_t index, TextDocumentSpan span) override { m_spans.at(index) = move(span); }
 
-    virtual String highlighter_did_request_text() const override { return m_text; }
+    virtual Vector<TextDocumentFoldingRegion>& folding_regions() override { return m_folding_regions; }
+    virtual Vector<TextDocumentFoldingRegion> const& folding_regions() const override { return m_folding_regions; }
+
+    virtual ByteString highlighter_did_request_text() const override { return m_text; }
     virtual void highlighter_did_request_update() override { }
-    virtual GUI::TextDocument& highlighter_did_request_document() override { return m_document; }
-    virtual GUI::TextPosition highlighter_did_request_cursor() const override { return {}; }
-    virtual void highlighter_did_set_spans(Vector<GUI::TextDocumentSpan> spans) override { m_spans = move(spans); }
+    virtual Document& highlighter_did_request_document() override { return m_document; }
+    virtual TextPosition highlighter_did_request_cursor() const override { return {}; }
+    virtual void highlighter_did_set_spans(Vector<TextDocumentSpan> spans) override { m_spans = move(spans); }
+    virtual void highlighter_did_set_folding_regions(Vector<TextDocumentFoldingRegion> folding_regions) override { m_folding_regions = folding_regions; }
 
-    Vector<GUI::TextDocumentSpan> m_spans;
-    GUI::TextDocument& m_document;
+    Vector<TextDocumentSpan> m_spans;
+    Vector<TextDocumentFoldingRegion> m_folding_regions;
+    Document& m_document;
     StringView m_text;
-    GUI::TextPosition m_start;
+    TextPosition m_start;
     u64 m_nested_kind_start_value { 0 };
 };
 
 }
 
 template<>
-struct AK::Traits<Syntax::Highlighter::MatchingTokenPair> : public AK::GenericTraits<Syntax::Highlighter::MatchingTokenPair> {
+struct AK::Traits<Syntax::Highlighter::MatchingTokenPair> : public AK::DefaultTraits<Syntax::Highlighter::MatchingTokenPair> {
     static unsigned hash(Syntax::Highlighter::MatchingTokenPair const& pair)
     {
         return pair_int_hash(u64_hash(pair.open), u64_hash(pair.close));

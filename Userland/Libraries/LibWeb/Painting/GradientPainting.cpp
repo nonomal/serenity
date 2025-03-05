@@ -1,95 +1,88 @@
 /*
- * Copyright (c) 2022, MacDue <macdue@dueutil.tech>
+ * Copyright (c) 2022-2023, MacDue <macdue@dueutil.tech>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Checked.h>
 #include <AK/Math.h>
-#include <LibGfx/Gamma.h>
-#include <LibGfx/Line.h>
+#include <LibGfx/Gradients.h>
+#include <LibWeb/CSS/StyleValues/ConicGradientStyleValue.h>
+#include <LibWeb/CSS/StyleValues/LinearGradientStyleValue.h>
+#include <LibWeb/CSS/StyleValues/PositionStyleValue.h>
+#include <LibWeb/CSS/StyleValues/RadialGradientStyleValue.h>
+#include <LibWeb/Layout/Node.h>
 #include <LibWeb/Painting/GradientPainting.h>
 
 namespace Web::Painting {
 
-static float normalized_gradient_angle_radians(float gradient_angle)
+static ColorStopData resolve_color_stop_positions(Layout::NodeWithStyleAndBoxModelMetrics const& node, auto const& color_stop_list, auto resolve_position_to_float, bool repeating)
 {
-    // Adjust angle so 0 degrees is bottom
-    float real_angle = 90 - gradient_angle;
-    return real_angle * (AK::Pi<float> / 180);
-}
-
-static float calulate_gradient_length(Gfx::IntRect const& gradient_rect, float sin_angle, float cos_angle)
-{
-    return AK::fabs(gradient_rect.height() * sin_angle) + AK::fabs(gradient_rect.width() * cos_angle);
-}
-
-static float calulate_gradient_length(Gfx::IntRect const& gradient_rect, float gradient_angle)
-{
-    float angle = normalized_gradient_angle_radians(gradient_angle);
-    float sin_angle, cos_angle;
-    AK::sincos(angle, sin_angle, cos_angle);
-    return calulate_gradient_length(gradient_rect, sin_angle, cos_angle);
-}
-
-LinearGradientData resolve_linear_gradient_data(Layout::Node const& node, Gfx::FloatRect const& gradient_rect, CSS::LinearGradientStyleValue const& linear_gradient)
-{
-    auto& color_stop_list = linear_gradient.color_stop_list();
-
     VERIFY(color_stop_list.size() >= 2);
     ColorStopList resolved_color_stops;
-    resolved_color_stops.ensure_capacity(color_stop_list.size());
-    for (auto& stop : color_stop_list)
-        resolved_color_stops.append(ColorStop { .color = stop.color_stop.color });
 
-    auto gradient_angle = linear_gradient.angle_degrees(gradient_rect);
-    auto gradient_length_px = calulate_gradient_length(gradient_rect.to_rounded<int>(), gradient_angle);
-    auto gradient_length = CSS::Length::make_px(gradient_length_px);
+    auto color_stop_length = [&](auto& stop) {
+        return stop.color_stop.second_position.has_value() ? 2 : 1;
+    };
+
+    size_t expanded_size = 0;
+    for (auto& stop : color_stop_list)
+        expanded_size += color_stop_length(stop);
+
+    resolved_color_stops.ensure_capacity(expanded_size);
+    for (auto& stop : color_stop_list) {
+        auto resolved_stop = Gfx::ColorStop { .color = stop.color_stop.color->to_color(node) };
+        for (int i = 0; i < color_stop_length(stop); i++)
+            resolved_color_stops.append(resolved_stop);
+    }
 
     // 1. If the first color stop does not have a position, set its position to 0%.
-    auto& first_stop = color_stop_list.first().color_stop;
-    resolved_color_stops.first().position = first_stop.length.has_value()
-        ? first_stop.length->resolved(node, gradient_length).to_px(node)
-        : 0;
+    resolved_color_stops.first().position = 0;
     //    If the last color stop does not have a position, set its position to 100%
-    auto& last_stop = color_stop_list.last().color_stop;
-    resolved_color_stops.last().position = last_stop.length.has_value()
-        ? last_stop.length->resolved(node, gradient_length).to_px(node)
-        : gradient_length_px;
+    resolved_color_stops.last().position = 1.0f;
 
-    // FIXME: Handle transition hints
     // 2. If a color stop or transition hint has a position that is less than the
     //    specified position of any color stop or transition hint before it in the list,
     //    set its position to be equal to the largest specified position of any color stop
     //    or transition hint before it.
-    auto max_previous_color_stop = resolved_color_stops[0].position;
-    for (size_t i = 1; i < color_stop_list.size(); i++) {
-        auto& stop = color_stop_list[i];
-        if (stop.color_stop.length.has_value()) {
-            float value = stop.color_stop.length->resolved(node, gradient_length).to_px(node);
-            value = max(value, max_previous_color_stop);
-            resolved_color_stops[i].position = value;
-            max_previous_color_stop = value;
-        }
+    auto max_previous_color_stop_or_hint = resolved_color_stops[0].position;
+    auto resolve_stop_position = [&](auto& position) {
+        float value = resolve_position_to_float(position);
+        value = max(value, max_previous_color_stop_or_hint);
+        max_previous_color_stop_or_hint = value;
+        return value;
+    };
+    size_t resolved_index = 0;
+    for (auto& stop : color_stop_list) {
+        if (stop.transition_hint.has_value())
+            resolved_color_stops[resolved_index].transition_hint = resolve_stop_position(stop.transition_hint->value);
+        if (stop.color_stop.position.has_value())
+            resolved_color_stops[resolved_index].position = resolve_stop_position(*stop.color_stop.position);
+        if (stop.color_stop.second_position.has_value())
+            resolved_color_stops[++resolved_index].position = resolve_stop_position(*stop.color_stop.second_position);
+        ++resolved_index;
     }
 
     // 3. If any color stop still does not have a position, then, for each run of adjacent color stops
     //    without positions, set their positions so that they are evenly spaced between the preceding
     //    and following color stops with positions.
+    // Note: Though not mentioned anywhere in the specification transition hints are counted as "color stops with positions".
     size_t i = 1;
     auto find_run_end = [&] {
-        while (i < color_stop_list.size() - 1 && !color_stop_list[i].color_stop.length.has_value()) {
+        auto color_stop_has_position = [](auto& color_stop) {
+            return color_stop.transition_hint.has_value() || isfinite(color_stop.position);
+        };
+        while (i < color_stop_list.size() - 1 && !color_stop_has_position(resolved_color_stops[i])) {
             i++;
         }
         return i;
     };
-    while (i < color_stop_list.size() - 1) {
-        auto& stop = color_stop_list[i];
-        if (!stop.color_stop.length.has_value()) {
+    while (i < resolved_color_stops.size() - 1) {
+        auto& stop = resolved_color_stops[i];
+        if (!isfinite(stop.position)) {
             auto run_start = i - 1;
+            auto start_position = resolved_color_stops[i++].transition_hint.value_or(resolved_color_stops[run_start].position);
             auto run_end = find_run_end();
-            auto start_position = resolved_color_stops[run_start].position;
-            auto end_position = resolved_color_stops[run_end].position;
+            auto end_position = resolved_color_stops[run_end].transition_hint.value_or(resolved_color_stops[run_end].position);
             auto spacing = (end_position - start_position) / (run_end - run_start);
             for (auto j = run_start + 1; j < run_end; j++) {
                 resolved_color_stops[j].position = start_position + (j - run_start) * spacing;
@@ -98,101 +91,59 @@ LinearGradientData resolve_linear_gradient_data(Layout::Node const& node, Gfx::F
         i++;
     }
 
+    // Determine the location of the transition hint as a percentage of the distance between the two color stops,
+    // denoted as a number between 0 and 1, where 0 indicates the hint is placed right on the first color stop,
+    // and 1 indicates the hint is placed right on the second color stop.
+    for (size_t i = 1; i < resolved_color_stops.size(); i++) {
+        auto& color_stop = resolved_color_stops[i];
+        auto& previous_color_stop = resolved_color_stops[i - 1];
+        if (color_stop.transition_hint.has_value()) {
+            auto stop_length = color_stop.position - previous_color_stop.position;
+            color_stop.transition_hint = stop_length > 0 ? (*color_stop.transition_hint - previous_color_stop.position) / stop_length : 0;
+        }
+    }
+
+    Optional<float> repeat_length = {};
+    if (repeating)
+        repeat_length = resolved_color_stops.last().position - resolved_color_stops.first().position;
+
+    return { resolved_color_stops, repeat_length };
+}
+
+LinearGradientData resolve_linear_gradient_data(Layout::NodeWithStyleAndBoxModelMetrics const& node, CSSPixelSize gradient_size, CSS::LinearGradientStyleValue const& linear_gradient)
+{
+    auto gradient_angle = linear_gradient.angle_degrees(gradient_size);
+    auto gradient_length_px = Gfx::calculate_gradient_length(gradient_size.to_type<float>(), gradient_angle);
+
+    auto resolved_color_stops = resolve_color_stop_positions(
+        node, linear_gradient.color_stop_list(), [&](auto const& length_percentage) {
+            return length_percentage.to_px(node, CSSPixels::nearest_value_for(gradient_length_px)).to_float() / static_cast<float>(gradient_length_px);
+        },
+        linear_gradient.is_repeating());
+
     return { gradient_angle, resolved_color_stops };
 }
 
-static float mix(float x, float y, float a)
+ConicGradientData resolve_conic_gradient_data(Layout::NodeWithStyleAndBoxModelMetrics const& node, CSS::ConicGradientStyleValue const& conic_gradient)
 {
-    return x * (1 - a) + y * a;
+    CSS::Angle one_turn(360.0f, CSS::Angle::Type::Deg);
+    auto resolved_color_stops = resolve_color_stop_positions(
+        node, conic_gradient.color_stop_list(), [&](auto const& angle_percentage) {
+            return angle_percentage.resolved(node, one_turn).to_degrees() / one_turn.to_degrees();
+        },
+        conic_gradient.is_repeating());
+    return { conic_gradient.angle_degrees(), resolved_color_stops };
 }
 
-// Note: Gfx::gamma_accurate_blend() is NOT correct for linear gradients!
-static Gfx::Color color_mix(Gfx::Color x, Gfx::Color y, float a)
+RadialGradientData resolve_radial_gradient_data(Layout::NodeWithStyleAndBoxModelMetrics const& node, CSSPixelSize gradient_size, CSS::RadialGradientStyleValue const& radial_gradient)
 {
-    if (x.alpha() == y.alpha() || x.with_alpha(0) == y.with_alpha(0)) {
-        return Gfx::Color {
-            round_to<u8>(mix(x.red(), y.red(), a)),
-            round_to<u8>(mix(x.green(), y.green(), a)),
-            round_to<u8>(mix(x.blue(), y.blue(), a)),
-            round_to<u8>(mix(x.alpha(), y.alpha(), a)),
-        };
-    }
-    // Use slower but more visually pleasing premultiplied alpha mixing if both the color and alpha differ.
-    // https://drafts.csswg.org/css-images/#coloring-gradient-line
-    auto mixed_alpha = mix(x.alpha(), y.alpha(), a);
-    auto premultiplied_mix_channel = [&](float channel_x, float channel_y, float a) {
-        return round_to<u8>(mix(channel_x * (x.alpha() / 255.0f), channel_y * (y.alpha() / 255.0f), a) / (mixed_alpha / 255.0f));
-    };
-    return Gfx::Color {
-        premultiplied_mix_channel(x.red(), y.red(), a),
-        premultiplied_mix_channel(x.green(), y.green(), a),
-        premultiplied_mix_channel(x.blue(), y.blue(), a),
-        round_to<u8>(mixed_alpha),
-    };
-}
-
-void paint_linear_gradient(PaintContext& context, Gfx::IntRect const& gradient_rect, LinearGradientData const& data)
-{
-    float angle = normalized_gradient_angle_radians(data.gradient_angle);
-    float sin_angle, cos_angle;
-    AK::sincos(angle, sin_angle, cos_angle);
-
-    auto length = calulate_gradient_length(gradient_rect, sin_angle, cos_angle);
-
-    Gfx::FloatPoint offset { cos_angle * (length / 2), sin_angle * (length / 2) };
-
-    auto center = gradient_rect.translated(-gradient_rect.location()).center();
-    auto start_point = center.to_type<float>() - offset;
-
-    // Rotate gradient line to be horizontal
-    auto rotated_start_point_x = start_point.x() * cos_angle - start_point.y() * -sin_angle;
-
-    // FIXME: Handle transition hint interpolation
-    auto linear_step = [](float min, float max, float value) -> float {
-        if (value < min)
-            return 0.;
-        if (value > max)
-            return 1.;
-        return (value - min) / (max - min);
-    };
-
-    Vector<Gfx::Color, 1024> gradient_line_colors;
-    auto int_length = round_to<int>(length);
-    gradient_line_colors.resize(int_length);
-    auto& color_stops = data.color_stops;
-    for (int loc = 0; loc < int_length; loc++) {
-        Gfx::Color gradient_color = color_mix(
-            color_stops[0].color,
-            color_stops[1].color,
-            linear_step(
-                color_stops[0].position,
-                color_stops[1].position,
-                loc));
-        for (size_t i = 1; i < color_stops.size() - 1; i++) {
-            gradient_color = color_mix(
-                gradient_color,
-                color_stops[i + 1].color,
-                linear_step(
-                    color_stops[i].position,
-                    color_stops[i + 1].position,
-                    loc));
-        }
-        gradient_line_colors[loc] = gradient_color;
-    }
-
-    auto lookup_color = [&](int loc) {
-        return gradient_line_colors[clamp(loc, 0, int_length - 1)];
-    };
-
-    for (int y = 0; y < gradient_rect.height(); y++) {
-        for (int x = 0; x < gradient_rect.width(); x++) {
-            auto loc = (x * cos_angle - (gradient_rect.height() - y) * -sin_angle) - rotated_start_point_x;
-            // Blend between the two neighbouring colors (this fixes some nasty aliasing issues at small angles)
-            auto blend = loc - static_cast<int>(loc);
-            auto gradient_color = color_mix(lookup_color(loc - 1), lookup_color(loc), blend);
-            context.painter().set_pixel(gradient_rect.x() + x, gradient_rect.y() + y, gradient_color, gradient_color.alpha() < 255);
-        }
-    }
+    // Start center, goes right to ending point, where the gradient line intersects the ending shape
+    auto resolved_color_stops = resolve_color_stop_positions(
+        node, radial_gradient.color_stop_list(), [&](auto const& length_percentage) {
+            return length_percentage.to_px(node, gradient_size.width()).to_float() / gradient_size.width().to_float();
+        },
+        radial_gradient.is_repeating());
+    return { resolved_color_stops };
 }
 
 }

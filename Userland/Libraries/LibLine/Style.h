@@ -6,10 +6,10 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/Types.h>
+#include <AK/Utf8View.h>
 #include <AK/Vector.h>
-#include <stdlib.h>
 
 namespace Line {
 
@@ -71,7 +71,7 @@ public:
             : Color(r, g, b)
         {
         }
-        String to_vt_escape() const;
+        ByteString to_vt_escape() const;
     };
 
     struct Foreground : public Color {
@@ -84,7 +84,7 @@ public:
         {
         }
 
-        String to_vt_escape() const;
+        ByteString to_vt_escape() const;
     };
 
     struct Hyperlink {
@@ -98,11 +98,11 @@ public:
 
         Hyperlink() = default;
 
-        String to_vt_escape(bool starting) const;
+        ByteString to_vt_escape(bool starting) const;
 
         bool is_empty() const { return !m_has_link; }
 
-        String m_link;
+        ByteString m_link;
         bool m_has_link { false };
     };
 
@@ -123,7 +123,7 @@ public:
         {
         }
 
-        String replacement;
+        ByteString replacement;
         mutable Utf8View replacement_view;
         Mode mode;
     };
@@ -179,7 +179,7 @@ public:
     bool is_anchored() const { return m_is_anchored; }
     bool is_empty() const { return m_is_empty; }
 
-    String to_string() const;
+    ByteString to_byte_string() const;
 
 private:
     bool m_underline { false };

@@ -16,25 +16,27 @@ class WeakRef final
     : public Object
     , public WeakContainer {
     JS_OBJECT(WeakRef, Object);
+    JS_DECLARE_ALLOCATOR(WeakRef);
 
 public:
-    static WeakRef* create(GlobalObject&, Object&);
-    static WeakRef* create(GlobalObject&, Symbol&);
+    static NonnullGCPtr<WeakRef> create(Realm&, Object&);
+    static NonnullGCPtr<WeakRef> create(Realm&, Symbol&);
 
-    explicit WeakRef(Object&, Object& prototype);
-    explicit WeakRef(Symbol&, Object& prototype);
     virtual ~WeakRef() override = default;
 
-    auto const& value() const { return m_value; };
+    auto const& value() const { return m_value; }
 
-    void update_execution_generation() { m_last_execution_generation = vm().execution_generation(); };
+    void update_execution_generation() { m_last_execution_generation = vm().execution_generation(); }
 
     virtual void remove_dead_cells(Badge<Heap>) override;
 
 private:
+    explicit WeakRef(Object&, Object& prototype);
+    explicit WeakRef(Symbol&, Object& prototype);
+
     virtual void visit_edges(Visitor&) override;
 
-    Variant<Object*, Symbol*, Empty> m_value;
+    Variant<GCPtr<Object>, GCPtr<Symbol>, Empty> m_value;
     u32 m_last_execution_generation { 0 };
 };
 

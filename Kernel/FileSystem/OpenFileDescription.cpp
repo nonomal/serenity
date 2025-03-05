@@ -8,16 +8,18 @@
 #include <AK/MemoryStream.h>
 #include <Kernel/API/POSIX/errno.h>
 #include <Kernel/Devices/BlockDevice.h>
+#include <Kernel/Devices/TTY/MasterPTY.h>
+#include <Kernel/Devices/TTY/TTY.h>
 #include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/FIFO.h>
 #include <Kernel/FileSystem/InodeFile.h>
 #include <Kernel/FileSystem/InodeWatcher.h>
+#include <Kernel/FileSystem/MountFile.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
+#include <Kernel/FileSystem/VirtualFileSystem.h>
 #include <Kernel/Memory/MemoryManager.h>
 #include <Kernel/Net/Socket.h>
-#include <Kernel/Process.h>
-#include <Kernel/TTY/MasterPTY.h>
-#include <Kernel/TTY/TTY.h>
+#include <Kernel/Tasks/Process.h>
 #include <Kernel/UnixTypes.h>
 
 namespace Kernel {
@@ -27,7 +29,7 @@ ErrorOr<NonnullRefPtr<OpenFileDescription>> OpenFileDescription::try_create(Cust
     auto inode_file = TRY(InodeFile::create(custody.inode()));
     auto description = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) OpenFileDescription(move(inode_file))));
 
-    description->m_custody = custody;
+    description->m_state.with([&](auto& state) { state.custody = custody; });
     TRY(description->attach());
     return description;
 }
@@ -52,15 +54,12 @@ OpenFileDescription::OpenFileDescription(File& file)
 OpenFileDescription::~OpenFileDescription()
 {
     m_file->detach(*this);
-    if (is_fifo())
-        static_cast<FIFO*>(m_file.ptr())->detach(fifo_direction());
     // FIXME: Should this error path be observed somehow?
     (void)m_file->close();
-    if (m_inode)
+    if (m_inode) {
         m_inode->detach(*this);
-
-    if (m_inode)
         m_inode->remove_flocks_for_description(*this);
+    }
 }
 
 ErrorOr<void> OpenFileDescription::attach()
@@ -70,9 +69,9 @@ ErrorOr<void> OpenFileDescription::attach()
     return m_file->attach(*this);
 }
 
-void OpenFileDescription::set_original_custody(Badge<VirtualFileSystem>, Custody& custody)
+void OpenFileDescription::set_original_custody(Custody& custody)
 {
-    m_custody = custody;
+    m_state.with([&](auto& state) { state.custody = custody; });
 }
 
 Thread::FileBlocker::BlockFlags OpenFileDescription::should_unblock(Thread::FileBlocker::BlockFlags block_flags) const
@@ -201,14 +200,6 @@ bool OpenFileDescription::can_read() const
     return m_file->can_read(*this, offset());
 }
 
-ErrorOr<NonnullOwnPtr<KBuffer>> OpenFileDescription::read_entire_file()
-{
-    // HACK ALERT: (This entire function)
-    VERIFY(m_file->is_inode());
-    VERIFY(m_inode);
-    return m_inode->read_entire(this);
-}
-
 ErrorOr<size_t> OpenFileDescription::get_dir_entries(UserOrKernelBuffer& output_buffer, size_t size)
 {
     if (!is_directory())
@@ -219,43 +210,38 @@ ErrorOr<size_t> OpenFileDescription::get_dir_entries(UserOrKernelBuffer& output_
         return EIO;
 
     size_t remaining = size;
-    ErrorOr<void> error;
     u8 stack_buffer[PAGE_SIZE];
     Bytes temp_buffer(stack_buffer, sizeof(stack_buffer));
-    OutputMemoryStream stream { temp_buffer };
+    FixedMemoryStream stream { temp_buffer };
 
-    auto flush_stream_to_output_buffer = [&error, &stream, &remaining, &output_buffer]() -> bool {
-        if (error.is_error())
-            return false;
-        if (stream.size() == 0)
-            return true;
-        if (remaining < stream.size()) {
-            error = EINVAL;
-            return false;
-        }
-        if (auto result = output_buffer.write(stream.bytes()); result.is_error()) {
-            error = result.release_error();
-            return false;
-        }
-        output_buffer = output_buffer.offset(stream.size());
-        remaining -= stream.size();
-        stream.reset();
-        return true;
+    auto flush_stream_to_output_buffer = [&stream, &remaining, &temp_buffer, &output_buffer]() -> ErrorOr<void> {
+        auto buffered_size = TRY(stream.tell());
+
+        if (buffered_size == 0)
+            return {};
+
+        if (remaining < buffered_size)
+            return Error::from_errno(EINVAL);
+
+        TRY(output_buffer.write(temp_buffer.trim(buffered_size)));
+        output_buffer = output_buffer.offset(buffered_size);
+        remaining -= buffered_size;
+        TRY(stream.seek(0));
+        return {};
     };
 
-    ErrorOr<void> result = VirtualFileSystem::the().traverse_directory_inode(*m_inode, [&flush_stream_to_output_buffer, &error, &stream, this](auto& entry) -> ErrorOr<void> {
+    ErrorOr<void> result = m_inode->traverse_as_directory([&flush_stream_to_output_buffer, &stream, this](auto& entry) -> ErrorOr<void> {
+        // FIXME: Double check the calculation, at least the type for the name length mismatches.
         size_t serialized_size = sizeof(ino_t) + sizeof(u8) + sizeof(size_t) + sizeof(char) * entry.name.length();
-        if (serialized_size > stream.remaining()) {
-            if (!flush_stream_to_output_buffer())
-                return error;
-        }
-        stream << (u64)entry.inode.index().value();
-        stream << m_inode->fs().internal_file_type_to_directory_entry_type(entry);
-        stream << (u32)entry.name.length();
-        stream << entry.name.bytes();
+        if (serialized_size > TRY(stream.size()) - TRY(stream.tell()))
+            TRY(flush_stream_to_output_buffer());
+
+        MUST(stream.write_value<u64>(entry.inode.index().value()));
+        MUST(stream.write_value(m_inode->fs().internal_file_type_to_directory_entry_type(entry)));
+        MUST(stream.write_value<u32>(entry.name.length()));
+        MUST(stream.write_until_depleted(entry.name.bytes()));
         return {};
     });
-    flush_stream_to_output_buffer();
 
     if (result.is_error()) {
         // We should only return EFAULT when the userspace buffer is too small,
@@ -265,8 +251,8 @@ ErrorOr<size_t> OpenFileDescription::get_dir_entries(UserOrKernelBuffer& output_
         return result.release_error();
     }
 
-    if (error.is_error())
-        return error.release_error();
+    TRY(flush_stream_to_output_buffer());
+
     return size - remaining;
 }
 
@@ -294,11 +280,11 @@ bool OpenFileDescription::is_tty() const
     return m_file->is_tty();
 }
 
-const TTY* OpenFileDescription::tty() const
+TTY const* OpenFileDescription::tty() const
 {
     if (!is_tty())
         return nullptr;
-    return static_cast<const TTY*>(m_file.ptr());
+    return static_cast<TTY const*>(m_file.ptr());
 }
 
 TTY* OpenFileDescription::tty()
@@ -325,6 +311,25 @@ InodeWatcher* OpenFileDescription::inode_watcher()
     if (!is_inode_watcher())
         return nullptr;
     return static_cast<InodeWatcher*>(m_file.ptr());
+}
+
+bool OpenFileDescription::is_mount_file() const
+{
+    return m_file->is_mount_file();
+}
+
+MountFile const* OpenFileDescription::mount_file() const
+{
+    if (!is_mount_file())
+        return nullptr;
+    return static_cast<MountFile const*>(m_file.ptr());
+}
+
+MountFile* OpenFileDescription::mount_file()
+{
+    if (!is_mount_file())
+        return nullptr;
+    return static_cast<MountFile*>(m_file.ptr());
 }
 
 bool OpenFileDescription::is_master_pty() const
@@ -355,15 +360,15 @@ ErrorOr<void> OpenFileDescription::close()
 
 ErrorOr<NonnullOwnPtr<KString>> OpenFileDescription::original_absolute_path() const
 {
-    if (!m_custody)
-        return ENOENT;
-    return m_custody->try_serialize_absolute_path();
+    if (auto custody = this->custody())
+        return custody->try_serialize_absolute_path();
+    return ENOENT;
 }
 
 ErrorOr<NonnullOwnPtr<KString>> OpenFileDescription::pseudo_path() const
 {
-    if (m_custody)
-        return m_custody->try_serialize_absolute_path();
+    if (auto custody = this->custody())
+        return custody->try_serialize_absolute_path();
     return m_file->pseudo_path(*this);
 }
 
@@ -374,9 +379,9 @@ InodeMetadata OpenFileDescription::metadata() const
     return {};
 }
 
-ErrorOr<Memory::Region*> OpenFileDescription::mmap(Process& process, Memory::VirtualRange const& range, u64 offset, int prot, bool shared)
+ErrorOr<File::VMObjectAndMemoryType> OpenFileDescription::vmobject_for_mmap(Process& process, Memory::VirtualRange const& range, u64& offset, bool shared)
 {
-    return m_file->mmap(process, *this, range, offset, prot, shared);
+    return m_file->vmobject_and_memory_type_for_mmap(process, range, offset, shared);
 }
 
 ErrorOr<void> OpenFileDescription::truncate(u64 length)
@@ -430,14 +435,14 @@ void OpenFileDescription::set_file_flags(u32 flags)
     });
 }
 
-ErrorOr<void> OpenFileDescription::chmod(mode_t mode)
+ErrorOr<void> OpenFileDescription::chmod(Credentials const& credentials, mode_t mode)
 {
-    return m_file->chmod(*this, mode);
+    return m_file->chmod(credentials, *this, mode);
 }
 
-ErrorOr<void> OpenFileDescription::chown(UserID uid, GroupID gid)
+ErrorOr<void> OpenFileDescription::chown(Credentials const& credentials, UserID uid, GroupID gid)
 {
-    return m_file->chown(*this, uid, gid);
+    return m_file->chown(credentials, *this, uid, gid);
 }
 
 FileBlockerSet& OpenFileDescription::blocker_set()
@@ -445,12 +450,12 @@ FileBlockerSet& OpenFileDescription::blocker_set()
     return m_file->blocker_set();
 }
 
-ErrorOr<void> OpenFileDescription::apply_flock(Process const& process, Userspace<flock const*> lock)
+ErrorOr<void> OpenFileDescription::apply_flock(Process const& process, Userspace<flock const*> lock, ShouldBlock should_block)
 {
     if (!m_inode)
         return EBADF;
 
-    return m_inode->apply_flock(process, *this, lock);
+    return m_inode->apply_flock(process, *this, lock, should_block);
 }
 
 ErrorOr<void> OpenFileDescription::get_flock(Userspace<flock*> lock) const
@@ -536,6 +541,16 @@ OwnPtr<OpenFileDescriptionData>& OpenFileDescription::data()
 off_t OpenFileDescription::offset() const
 {
     return m_state.with([](auto& state) { return state.current_offset; });
+}
+
+RefPtr<Custody const> OpenFileDescription::custody() const
+{
+    return m_state.with([](auto& state) { return state.custody; });
+}
+
+RefPtr<Custody> OpenFileDescription::custody()
+{
+    return m_state.with([](auto& state) { return state.custody; });
 }
 
 }

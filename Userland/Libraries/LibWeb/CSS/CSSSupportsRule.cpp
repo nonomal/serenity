@@ -1,29 +1,38 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/CSSSupportsRulePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSSupportsRule.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 
 namespace Web::CSS {
 
-CSSSupportsRule::CSSSupportsRule(NonnullRefPtr<Supports>&& supports, NonnullRefPtrVector<CSSRule>&& rules)
-    : CSSConditionRule(move(rules))
+JS_DEFINE_ALLOCATOR(CSSSupportsRule);
+
+JS::NonnullGCPtr<CSSSupportsRule> CSSSupportsRule::create(JS::Realm& realm, NonnullRefPtr<Supports>&& supports, CSSRuleList& rules)
+{
+    return realm.heap().allocate<CSSSupportsRule>(realm, realm, move(supports), rules);
+}
+
+CSSSupportsRule::CSSSupportsRule(JS::Realm& realm, NonnullRefPtr<Supports>&& supports, CSSRuleList& rules)
+    : CSSConditionRule(realm, rules)
     , m_supports(move(supports))
 {
+}
+
+void CSSSupportsRule::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSSupportsRule);
 }
 
 String CSSSupportsRule::condition_text() const
 {
     return m_supports->to_string();
-}
-
-void CSSSupportsRule::set_condition_text(String text)
-{
-    if (auto new_supports = parse_css_supports({}, text))
-        m_supports = new_supports.release_nonnull();
 }
 
 // https://www.w3.org/TR/cssom-1/#serialize-a-css-rule
@@ -46,7 +55,7 @@ String CSSSupportsRule::serialized() const
     }
     builder.append("\n}"sv);
 
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 }

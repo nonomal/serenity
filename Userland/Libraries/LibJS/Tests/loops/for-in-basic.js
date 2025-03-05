@@ -86,7 +86,7 @@ describe("special left hand sides", () => {
         expect(b.a).toBe("2");
     });
 
-    test("call function is allowed in parsing but fails in runtime", () => {
+    test.xfail("call function is allowed in parsing but fails in runtime", () => {
         function f() {
             expect().fail();
         }
@@ -97,6 +97,16 @@ describe("special left hand sides", () => {
         expect(() => {
             eval("for (f() in [0]) { expect().fail() }");
         }).toThrowWithMessage(ReferenceError, "Invalid left-hand side in assignment");
+    });
+
+    test("Cannot change constant declaration in body", () => {
+        const vals = [];
+        for (const v in [1, 2]) {
+            expect(() => v++).toThrowWithMessage(TypeError, "Invalid assignment to const variable");
+            vals.push(v);
+        }
+
+        expect(vals).toEqual(["0", "1"]);
     });
 });
 

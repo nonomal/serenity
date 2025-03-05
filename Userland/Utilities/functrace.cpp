@@ -9,9 +9,7 @@
 #include <AK/NonnullOwnPtr.h>
 #include <AK/StringBuilder.h>
 #include <Kernel/API/SyscallString.h>
-#include <LibC/sys/arch/i386/regs.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibDebug/DebugSession.h>
 #include <LibELF/Image.h>
@@ -21,6 +19,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/arch/regs.h>
 #include <syscall.h>
 #include <unistd.h>
 
@@ -35,7 +34,7 @@ static void handle_sigint(int)
     g_debug_session = nullptr;
 }
 
-static void print_function_call(String function_name, size_t depth)
+static void print_function_call(ByteString function_name, size_t depth)
 {
     for (size_t i = 0; i < depth; ++i) {
         out("  ");
@@ -50,15 +49,7 @@ static void print_syscall(PtraceRegisters& regs, size_t depth)
     }
     StringView begin_color = g_should_output_color ? "\033[34;1m"sv : ""sv;
     StringView end_color = g_should_output_color ? "\033[0m"sv : ""sv;
-#if ARCH(I386)
-    outln("=> {}SC_{}({:#x}, {:#x}, {:#x}){}",
-        begin_color,
-        Syscall::to_string((Syscall::Function)regs.eax),
-        regs.edx,
-        regs.ecx,
-        regs.ebx,
-        end_color);
-#else
+#if ARCH(X86_64)
     outln("=> {}SC_{}({:#x}, {:#x}, {:#x}){}",
         begin_color,
         Syscall::to_string((Syscall::Function)regs.rax),
@@ -66,6 +57,21 @@ static void print_syscall(PtraceRegisters& regs, size_t depth)
         regs.rcx,
         regs.rbx,
         end_color);
+#elif ARCH(AARCH64)
+    (void)regs;
+    (void)begin_color;
+    (void)end_color;
+    TODO_AARCH64();
+#elif ARCH(RISCV64)
+    outln("=> {}SC_{}({:#x}, {:#x}, {:#x}){}",
+        begin_color,
+        Syscall::to_string((Syscall::Function)regs.x[16]),
+        regs.x[9],
+        regs.x[10],
+        regs.x[11],
+        end_color);
+#else
+#    error Unknown architecture
 #endif
 }
 
@@ -77,7 +83,7 @@ static NonnullOwnPtr<HashMap<FlatPtr, X86::Instruction>> instrument_code()
             if (section.name() != ".text")
                 return IterationDecision::Continue;
 
-            X86::SimpleInstructionStream stream((const u8*)((uintptr_t)lib.file->data() + section.offset()), section.size());
+            X86::SimpleInstructionStream stream((u8 const*)((uintptr_t)lib.file->data() + section.offset()), section.size());
             X86::Disassembler disassembler(stream);
             for (;;) {
                 auto offset = stream.offset();
@@ -139,10 +145,15 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             return Debug::DebugSession::DebugDecision::ContinueBreakAtSyscall;
         }
 
-#if ARCH(I386)
-        const FlatPtr ip = regs.value().eip;
+#if ARCH(X86_64)
+        FlatPtr const ip = regs.value().rip;
+#elif ARCH(AARCH64)
+        FlatPtr const ip = 0; // FIXME
+        TODO_AARCH64();
+#elif ARCH(RISCV64)
+        FlatPtr const ip = regs.value().pc;
 #else
-        const FlatPtr ip = regs.value().rip;
+#    error Unknown architecture
 #endif
 
         if (new_function) {

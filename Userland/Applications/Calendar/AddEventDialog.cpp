@@ -1,16 +1,20 @@
 /*
  * Copyright (c) 2019-2020, Ryan Grieb <ryan.m.grieb@gmail.com>
- * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2022-2023, the SerenityOS developers.
+ * Copyright (c) 2023, David Ganz <david.g.ganz@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "AddEventDialog.h"
+#include "AddEventWidget.h"
 #include <LibCore/DateTime.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/ComboBox.h>
+#include <LibGUI/DatePicker.h>
 #include <LibGUI/Label.h>
+#include <LibGUI/MessageBox.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/SpinBox.h>
 #include <LibGUI/TextBox.h>
@@ -19,153 +23,39 @@
 #include <LibGfx/Color.h>
 #include <LibGfx/Font/FontDatabase.h>
 
-AddEventDialog::AddEventDialog(Core::DateTime date_time, Window* parent_window)
+namespace Calendar {
+
+AddEventDialog::AddEventDialog(Core::DateTime date_time, EventManager& event_manager, Window* parent_window)
     : Dialog(parent_window)
-    , m_date_time(date_time)
+    , m_event_manager(event_manager)
 {
-    resize(158, 130);
+    resize(360, 140);
     set_title("Add Event");
     set_resizable(false);
     set_icon(parent_window->icon());
 
-    auto& widget = set_main_widget<GUI::Widget>();
-    widget.set_fill_with_background_color(true);
-    widget.set_layout<GUI::VerticalBoxLayout>();
+    auto start_date_time = Core::DateTime::create(date_time.year(), date_time.month(), date_time.day(), 12, 0);
+    auto main_widget = MUST(AddEventWidget::create(this,
+        start_date_time, Core::DateTime::from_timestamp(start_date_time.timestamp() + (15 * 60))));
 
-    auto& top_container = widget.add<GUI::Widget>();
-    top_container.set_layout<GUI::VerticalBoxLayout>();
-    top_container.set_fixed_height(45);
-    top_container.layout()->set_margins(4);
-
-    auto& add_label = top_container.add<GUI::Label>("Add title & date:");
-    add_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
-    add_label.set_fixed_height(14);
-    add_label.set_font(Gfx::FontDatabase::default_font().bold_variant());
-
-    auto& event_title_textbox = top_container.add<GUI::TextBox>();
-    event_title_textbox.set_fixed_height(20);
-
-    auto& middle_container = widget.add<GUI::Widget>();
-    middle_container.set_layout<GUI::HorizontalBoxLayout>();
-    middle_container.set_fixed_height(25);
-    middle_container.layout()->set_margins(4);
-
-    auto& time_container = widget.add<GUI::Widget>();
-    time_container.set_layout<GUI::HorizontalBoxLayout>();
-    time_container.set_fixed_height(25);
-    time_container.layout()->set_margins(4);
-
-    auto& starting_month_combo = middle_container.add<GUI::ComboBox>();
-    starting_month_combo.set_only_allow_values_from_model(true);
-    starting_month_combo.set_fixed_size(50, 20);
-    starting_month_combo.set_model(MonthListModel::create());
-    starting_month_combo.set_selected_index(m_date_time.month() - 1);
-
-    auto& starting_day_combo = middle_container.add<GUI::SpinBox>();
-    starting_day_combo.set_fixed_size(40, 20);
-    starting_day_combo.set_value(m_date_time.day());
-    starting_day_combo.set_min(1);
-
-    auto& starting_year_combo = middle_container.add<GUI::SpinBox>();
-    starting_year_combo.set_fixed_size(55, 20);
-    starting_year_combo.set_range(0, 9999);
-    starting_year_combo.set_value(m_date_time.year());
-
-    auto& starting_hour_combo = time_container.add<GUI::SpinBox>();
-    starting_hour_combo.set_fixed_size(50, 20);
-    starting_hour_combo.set_range(1, 12);
-    starting_hour_combo.set_value(12);
-
-    auto& starting_minute_combo = time_container.add<GUI::SpinBox>();
-    starting_minute_combo.set_fixed_size(40, 20);
-    starting_minute_combo.set_range(0, 59);
-    starting_minute_combo.set_value(0);
-
-    auto& starting_meridiem_combo = time_container.add<GUI::ComboBox>();
-    starting_meridiem_combo.set_only_allow_values_from_model(true);
-    starting_meridiem_combo.set_fixed_size(55, 20);
-    starting_meridiem_combo.set_model(MeridiemListModel::create());
-    starting_meridiem_combo.set_selected_index(0);
-
-    widget.layout()->add_spacer();
-
-    auto& button_container = widget.add<GUI::Widget>();
-    button_container.set_fixed_height(20);
-    button_container.set_layout<GUI::HorizontalBoxLayout>();
-    button_container.layout()->add_spacer();
-    auto& ok_button = button_container.add<GUI::Button>("OK");
-    ok_button.set_fixed_size(80, 20);
-    ok_button.on_click = [this](auto) {
-        dbgln("TODO: Add event icon on specific tile");
-        done(ExecResult::OK);
-    };
-
-    event_title_textbox.set_focus(true);
+    set_main_widget(main_widget);
 }
 
-int AddEventDialog::MonthListModel::row_count(const GUI::ModelIndex&) const
+ErrorOr<bool> AddEventDialog::add_event_to_calendar(Core::DateTime start_date_time, Core::DateTime end_date_time)
 {
-    return 12;
-}
-
-int AddEventDialog::MeridiemListModel::row_count(const GUI::ModelIndex&) const
-{
-    return 2;
-}
-
-String AddEventDialog::MonthListModel::column_name(int column) const
-{
-    switch (column) {
-    case Column::Month:
-        return "Month";
-    default:
-        VERIFY_NOT_REACHED();
+    if (end_date_time < start_date_time) {
+        GUI::MessageBox::show_error(this, "The end date has to be after the start date."sv);
+        return false;
     }
+
+    auto summary = find_descendant_of_type_named<GUI::TextBox>("event_title_textbox")->get_text();
+    m_event_manager.add_event(Event {
+        .summary = TRY(String::from_byte_string(summary)),
+        .start = start_date_time,
+        .end = end_date_time,
+    });
+
+    return true;
 }
 
-String AddEventDialog::MeridiemListModel::column_name(int column) const
-{
-    switch (column) {
-    case Column::Meridiem:
-        return "Meridiem";
-    default:
-        VERIFY_NOT_REACHED();
-    }
-}
-
-GUI::Variant AddEventDialog::MonthListModel::data(const GUI::ModelIndex& index, GUI::ModelRole role) const
-{
-    constexpr Array short_month_names = {
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-    };
-
-    auto& month = short_month_names[index.row()];
-    if (role == GUI::ModelRole::Display) {
-        switch (index.column()) {
-        case Column::Month:
-            return month;
-        default:
-            VERIFY_NOT_REACHED();
-        }
-    }
-    return {};
-}
-
-GUI::Variant AddEventDialog::MeridiemListModel::data(const GUI::ModelIndex& index, GUI::ModelRole role) const
-{
-    constexpr Array meridiem_names = {
-        "AM", "PM"
-    };
-
-    auto& meridiem = meridiem_names[index.row()];
-    if (role == GUI::ModelRole::Display) {
-        switch (index.column()) {
-        case Column::Meridiem:
-            return meridiem;
-        default:
-            VERIFY_NOT_REACHED();
-        }
-    }
-    return {};
 }

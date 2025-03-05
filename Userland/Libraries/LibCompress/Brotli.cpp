@@ -11,7 +11,7 @@
 
 namespace Compress {
 
-ErrorOr<size_t> BrotliDecompressionStream::CanonicalCode::read_symbol(LittleEndianInputBitStream& input_stream)
+ErrorOr<size_t> Brotli::CanonicalCode::read_symbol(LittleEndianInputBitStream& input_stream) const
 {
     size_t code_bits = 1;
 
@@ -28,8 +28,8 @@ ErrorOr<size_t> BrotliDecompressionStream::CanonicalCode::read_symbol(LittleEndi
     return Error::from_string_literal("no matching code found");
 }
 
-BrotliDecompressionStream::BrotliDecompressionStream(Stream& stream)
-    : m_input_stream(stream)
+BrotliDecompressionStream::BrotliDecompressionStream(MaybeOwned<Stream> stream)
+    : m_input_stream(move(stream))
 {
 }
 
@@ -137,7 +137,7 @@ ErrorOr<size_t> BrotliDecompressionStream::read_variable_length()
     }
 }
 
-ErrorOr<size_t> BrotliDecompressionStream::read_complex_prefix_code_length()
+ErrorOr<size_t> Brotli::CanonicalCode::read_complex_prefix_code_length(LittleEndianInputBitStream& stream)
 {
     // Symbol   Code
     // ------   ----
@@ -148,7 +148,7 @@ ErrorOr<size_t> BrotliDecompressionStream::read_complex_prefix_code_length()
     // 4          01
     // 5        1111
 
-    switch (TRY(m_input_stream.read_bits(2))) {
+    switch (TRY(stream.read_bits(2))) {
     case 0:
         return 0;
     case 1:
@@ -156,10 +156,10 @@ ErrorOr<size_t> BrotliDecompressionStream::read_complex_prefix_code_length()
     case 2:
         return 3;
     case 3: {
-        if (TRY(m_input_stream.read_bit()) == 0) {
+        if (TRY(stream.read_bit()) == 0) {
             return 2;
         } else {
-            if (TRY(m_input_stream.read_bit()) == 0) {
+            if (TRY(stream.read_bit()) == 0) {
                 return 1;
             } else {
                 return 5;
@@ -171,25 +171,21 @@ ErrorOr<size_t> BrotliDecompressionStream::read_complex_prefix_code_length()
     }
 }
 
-ErrorOr<void> BrotliDecompressionStream::read_prefix_code(CanonicalCode& code, size_t alphabet_size)
+ErrorOr<Brotli::CanonicalCode> Brotli::CanonicalCode::read_prefix_code(LittleEndianInputBitStream& stream, size_t alphabet_size)
 {
-    size_t hskip = TRY(m_input_stream.read_bits(2));
+    size_t hskip = TRY(stream.read_bits(2));
 
-    if (hskip == 1) {
-        TRY(read_simple_prefix_code(code, alphabet_size));
-    } else {
-        TRY(read_complex_prefix_code(code, alphabet_size, hskip));
-    }
+    if (hskip == 1)
+        return TRY(read_simple_prefix_code(stream, alphabet_size));
 
-    return {};
+    return TRY(read_complex_prefix_code(stream, alphabet_size, hskip));
 }
 
-ErrorOr<void> BrotliDecompressionStream::read_simple_prefix_code(CanonicalCode& code, size_t alphabet_size)
+ErrorOr<Brotli::CanonicalCode> Brotli::CanonicalCode::read_simple_prefix_code(LittleEndianInputBitStream& stream, size_t alphabet_size)
 {
-    VERIFY(code.m_symbol_codes.is_empty());
-    VERIFY(code.m_symbol_values.is_empty());
+    CanonicalCode code {};
 
-    size_t number_of_symbols = 1 + TRY(m_input_stream.read_bits(2));
+    size_t number_of_symbols = 1 + TRY(stream.read_bits(2));
 
     size_t symbol_size = 0;
     while ((1u << symbol_size) < alphabet_size)
@@ -197,7 +193,7 @@ ErrorOr<void> BrotliDecompressionStream::read_simple_prefix_code(CanonicalCode& 
 
     Vector<size_t> symbols;
     for (size_t i = 0; i < number_of_symbols; i++) {
-        size_t symbol = TRY(m_input_stream.read_bits(symbol_size));
+        size_t symbol = TRY(stream.read_bits(symbol_size));
         symbols.append(symbol);
 
         if (symbol >= alphabet_size)
@@ -218,7 +214,7 @@ ErrorOr<void> BrotliDecompressionStream::read_simple_prefix_code(CanonicalCode& 
             swap(symbols[1], symbols[2]);
         code.m_symbol_values = move(symbols);
     } else if (number_of_symbols == 4) {
-        bool tree_select = TRY(m_input_stream.read_bit());
+        bool tree_select = TRY(stream.read_bit());
         if (tree_select) {
             code.m_symbol_codes.extend({ 0b10, 0b110, 0b1110, 0b1111 });
             if (symbols[2] > symbols[3])
@@ -231,10 +227,10 @@ ErrorOr<void> BrotliDecompressionStream::read_simple_prefix_code(CanonicalCode& 
         }
     }
 
-    return {};
+    return code;
 }
 
-ErrorOr<void> BrotliDecompressionStream::read_complex_prefix_code(CanonicalCode& code, size_t alphabet_size, size_t hskip)
+ErrorOr<Brotli::CanonicalCode> Brotli::CanonicalCode::read_complex_prefix_code(LittleEndianInputBitStream& stream, size_t alphabet_size, size_t hskip)
 {
     // hskip should only be 0, 2 or 3
     VERIFY(hskip != 1);
@@ -248,7 +244,7 @@ ErrorOr<void> BrotliDecompressionStream::read_complex_prefix_code(CanonicalCode&
     size_t sum = 0;
     size_t number_of_non_zero_symbols = 0;
     for (size_t i = hskip; i < 18; i++) {
-        size_t len = TRY(read_complex_prefix_code_length());
+        size_t len = TRY(read_complex_prefix_code_length(stream));
         code_length[symbol_mapping[i]] = len;
 
         if (len != 0) {
@@ -263,7 +259,7 @@ ErrorOr<void> BrotliDecompressionStream::read_complex_prefix_code(CanonicalCode&
             return Error::from_string_literal("invalid prefix code");
     }
 
-    BrotliDecompressionStream::CanonicalCode temp_code;
+    CanonicalCode temp_code;
     if (number_of_non_zero_symbols > 1) {
         size_t code_value = 0;
         for (size_t bits = 1; bits <= 5; bits++) {
@@ -302,7 +298,7 @@ ErrorOr<void> BrotliDecompressionStream::read_complex_prefix_code(CanonicalCode&
     Vector<size_t> result_lengths;
     size_t result_lengths_count[16] { 0 };
     while (i < alphabet_size) {
-        auto symbol = TRY(temp_code.read_symbol(m_input_stream));
+        auto symbol = TRY(temp_code.read_symbol(stream));
 
         if (symbol < 16) {
             result_symbols.append(i);
@@ -327,7 +323,7 @@ ErrorOr<void> BrotliDecompressionStream::read_complex_prefix_code(CanonicalCode&
             } else {
                 last_repeat = 0;
             }
-            repeat_count += 3 + TRY(m_input_stream.read_bits(2));
+            repeat_count += 3 + TRY(stream.read_bits(2));
 
             for (size_t rep = 0; rep < (repeat_count - last_repeat); rep++) {
                 result_symbols.append(i);
@@ -358,7 +354,7 @@ ErrorOr<void> BrotliDecompressionStream::read_complex_prefix_code(CanonicalCode&
             } else {
                 last_repeat = 0;
             }
-            repeat_count += 3 + TRY(m_input_stream.read_bits(3));
+            repeat_count += 3 + TRY(stream.read_bits(3));
 
             i += (repeat_count - last_repeat);
             last_repeat = repeat_count;
@@ -368,6 +364,8 @@ ErrorOr<void> BrotliDecompressionStream::read_complex_prefix_code(CanonicalCode&
     }
     result_lengths_count[0] = 0;
 
+    CanonicalCode final_code;
+
     size_t code_value = 0;
     for (size_t bits = 1; bits < 16; bits++) {
         code_value = (code_value + result_lengths_count[bits - 1]) << 1;
@@ -376,14 +374,14 @@ ErrorOr<void> BrotliDecompressionStream::read_complex_prefix_code(CanonicalCode&
         for (size_t n = 0; n < result_symbols.size(); n++) {
             size_t len = result_lengths[n];
             if (len == bits) {
-                code.m_symbol_codes.append((1 << bits) | current_code_value);
-                code.m_symbol_values.append(result_symbols[n]);
+                final_code.m_symbol_codes.append((1 << bits) | current_code_value);
+                final_code.m_symbol_values.append(result_symbols[n]);
                 current_code_value++;
             }
         }
     }
 
-    return {};
+    return final_code;
 }
 
 static void inverse_move_to_front_transform(Span<u8> v)
@@ -412,8 +410,7 @@ ErrorOr<void> BrotliDecompressionStream::read_context_map(size_t number_of_codes
         run_length_encoding_max = 1 + TRY(m_input_stream.read_bits(4));
     }
 
-    BrotliDecompressionStream::CanonicalCode code;
-    TRY(read_prefix_code(code, number_of_codes + run_length_encoding_max));
+    auto const code = TRY(CanonicalCode::read_prefix_code(m_input_stream, number_of_codes + run_length_encoding_max));
 
     size_t i = 0;
     while (i < context_map_size) {
@@ -449,14 +446,13 @@ ErrorOr<void> BrotliDecompressionStream::read_block_configuration(Block& block)
     block.type_previous = 1;
     block.number_of_types = blocks_of_type;
 
-    block.type_code.clear();
-    block.length_code.clear();
-
     if (blocks_of_type == 1) {
         block.length = 16 * MiB;
+        block.type_code = {};
+        block.length_code = {};
     } else {
-        TRY(read_prefix_code(block.type_code, 2 + blocks_of_type));
-        TRY(read_prefix_code(block.length_code, 26));
+        block.type_code = TRY(CanonicalCode::read_prefix_code(m_input_stream, 2 + blocks_of_type));
+        block.length_code = TRY(CanonicalCode::read_prefix_code(m_input_stream, 26));
         TRY(block_update_length(block));
     }
 
@@ -573,7 +569,7 @@ size_t BrotliDecompressionStream::literal_code_index_from_context()
     return literal_code_index;
 }
 
-ErrorOr<Bytes> BrotliDecompressionStream::read(Bytes output_buffer)
+ErrorOr<Bytes> BrotliDecompressionStream::read_some(Bytes output_buffer)
 {
     size_t bytes_read = 0;
     while (bytes_read < output_buffer.size()) {
@@ -589,23 +585,60 @@ ErrorOr<Bytes> BrotliDecompressionStream::read(Bytes output_buffer)
             if (m_read_final_block)
                 break;
 
+            // RFC 7932 section 9.1
+            //
+            // 1 bit:  ISLAST, set to 1 if this is the last meta-block
             m_read_final_block = TRY(m_input_stream.read_bit());
             if (m_read_final_block) {
+                // 1 bit:  ISLASTEMPTY, if set to 1, the meta-block is empty; this
+                //       field is only present if ISLAST bit is set -- if it is 1,
+                //       then the meta-block and the brotli stream ends at that
+                //       bit, with any remaining bits in the last byte of the
+                //       compressed stream filled with zeros (if the fill bits are
+                //       not zero, then the stream should be rejected as invalid)
                 bool is_last_block_empty = TRY(m_input_stream.read_bit());
                 // If the last block is empty we are done decompressing
                 if (is_last_block_empty)
                     break;
             }
 
+            // 2 bits: MNIBBLES, number of nibbles to represent the uncompressed
+            //         length
             size_t size_number_of_nibbles = TRY(read_size_number_of_nibbles());
+
+            // If MNIBBLES is 0, the meta-block is empty, i.e., it does
+            // not generate any uncompressed data.  In this case, the
+            // rest of the meta-block has the following format:
             if (size_number_of_nibbles == 0) {
-                // This block only contains meta-data
+
+                // 1 bit:  reserved, must be zero
                 bool reserved = TRY(m_input_stream.read_bit());
                 if (reserved)
                     return Error::from_string_literal("invalid reserved bit");
 
+                // 2 bits: MSKIPBYTES, number of bytes to represent
+                //         metadata length
+                //
+                // MSKIPBYTES * 8 bits: MSKIPLEN - 1, where MSKIPLEN is
+                //    the number of metadata bytes; this field is
+                //    only present if MSKIPBYTES is positive;
+                //    otherwise, MSKIPLEN is 0 (if MSKIPBYTES is
+                //    greater than 1, and the last byte is all
+                //    zeros, then the stream should be rejected as
+                //    invalid)
                 size_t skip_bytes = TRY(m_input_stream.read_bits(2));
-                size_t skip_length = TRY(m_input_stream.read_bits(8 * skip_bytes));
+                if (skip_bytes == 0) {
+                    // 0..7 bits: fill bits until the next byte boundary,
+                    //         must be all zeros
+                    u8 remainder = m_input_stream.align_to_byte_boundary();
+                    if (remainder != 0)
+                        return Error::from_string_literal("remainder bits are non-zero");
+                    continue;
+                }
+
+                // MSKIPLEN bytes of metadata, not part of the
+                //         uncompressed data or the sliding window
+                size_t skip_length = 1 + TRY(m_input_stream.read_bits(8 * skip_bytes));
 
                 u8 remainder = m_input_stream.align_to_byte_boundary();
                 if (remainder != 0)
@@ -616,9 +649,11 @@ ErrorOr<Bytes> BrotliDecompressionStream::read(Bytes output_buffer)
                 Bytes temp_bytes { temp_buffer, 4096 };
                 while (skip_length > 0) {
                     Bytes temp_bytes_slice = temp_bytes.slice(0, min(4096, skip_length));
-                    auto metadata_bytes = TRY(m_input_stream.read(temp_bytes_slice));
+                    auto metadata_bytes = TRY(m_input_stream.read_some(temp_bytes_slice));
                     if (metadata_bytes.is_empty())
                         return Error::from_string_literal("eof");
+                    if (metadata_bytes.last() == 0)
+                        return Error::from_string_literal("invalid stream");
                     skip_length -= metadata_bytes.size();
                 }
 
@@ -626,6 +661,13 @@ ErrorOr<Bytes> BrotliDecompressionStream::read(Bytes output_buffer)
             }
 
             size_t uncompressed_size = 1 + TRY(m_input_stream.read_bits(4 * size_number_of_nibbles));
+
+            // 1 bit:  ISUNCOMPRESSED, if set to 1, any bits of compressed data
+            //       up to the next byte boundary are ignored, and the rest of
+            //       the meta-block contains MLEN bytes of literal data; this
+            //       field is only present if the ISLAST bit is not set (if the
+            //       ignored bits are not all zeros, the stream should be
+            //       rejected as invalid)
             bool is_uncompressed = false;
             if (!m_read_final_block)
                 is_uncompressed = TRY(m_input_stream.read_bit());
@@ -670,23 +712,17 @@ ErrorOr<Bytes> BrotliDecompressionStream::read(Bytes output_buffer)
 
                 m_literal_codes.clear();
                 for (size_t i = 0; i < number_of_literal_codes; i++) {
-                    CanonicalCode code;
-                    TRY(read_prefix_code(code, 256));
-                    m_literal_codes.append(move(code));
+                    m_literal_codes.append(TRY(CanonicalCode::read_prefix_code(m_input_stream, 256)));
                 }
 
                 m_insert_and_copy_codes.clear();
                 for (size_t i = 0; i < m_insert_and_copy_block.number_of_types; i++) {
-                    CanonicalCode code;
-                    TRY(read_prefix_code(code, 704));
-                    m_insert_and_copy_codes.append(move(code));
+                    m_insert_and_copy_codes.append(TRY(CanonicalCode::read_prefix_code(m_input_stream, 704)));
                 }
 
                 m_distance_codes.clear();
                 for (size_t i = 0; i < number_of_distance_codes; i++) {
-                    CanonicalCode code;
-                    TRY(read_prefix_code(code, 16 + m_direct_distances + (48 << m_postfix_bits)));
-                    m_distance_codes.append(move(code));
+                    m_distance_codes.append(TRY(CanonicalCode::read_prefix_code(m_input_stream, 16 + m_direct_distances + (48 << m_postfix_bits))));
                 }
 
                 m_current_state = State::CompressedCommand;
@@ -695,9 +731,13 @@ ErrorOr<Bytes> BrotliDecompressionStream::read(Bytes output_buffer)
             size_t number_of_fitting_bytes = min(output_buffer.size() - bytes_read, m_bytes_left);
             VERIFY(number_of_fitting_bytes > 0);
 
-            auto uncompressed_bytes = TRY(m_input_stream.read(output_buffer.slice(bytes_read, number_of_fitting_bytes)));
+            auto uncompressed_bytes = TRY(m_input_stream.read_some(output_buffer.slice(bytes_read, number_of_fitting_bytes)));
             if (uncompressed_bytes.is_empty())
                 return Error::from_string_literal("eof");
+
+            // TODO: Replace the home-grown LookbackBuffer with AK::CircularBuffer.
+            for (auto c : uncompressed_bytes)
+                m_lookback_buffer.value().write(c);
 
             m_bytes_left -= uncompressed_bytes.size();
             bytes_read += uncompressed_bytes.size();

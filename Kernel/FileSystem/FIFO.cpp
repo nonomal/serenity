@@ -9,8 +9,8 @@
 #include <Kernel/FileSystem/FIFO.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/Locking/Mutex.h>
-#include <Kernel/Process.h>
-#include <Kernel/Thread.h>
+#include <Kernel/Tasks/Process.h>
+#include <Kernel/Tasks/Thread.h>
 
 namespace Kernel {
 
@@ -25,7 +25,12 @@ ErrorOr<NonnullRefPtr<FIFO>> FIFO::try_create(UserID uid)
 ErrorOr<NonnullRefPtr<OpenFileDescription>> FIFO::open_direction(FIFO::Direction direction)
 {
     auto description = TRY(OpenFileDescription::try_create(*this));
-    attach(direction);
+    if (direction == Direction::Reader) {
+        ++m_readers;
+    } else if (direction == Direction::Writer) {
+        ++m_writers;
+    }
+    evaluate_block_conditions();
     description->set_fifo_direction({}, direction);
     return description;
 }
@@ -73,19 +78,11 @@ FIFO::FIFO(UserID uid, NonnullOwnPtr<DoubleBuffer> buffer)
 
 FIFO::~FIFO() = default;
 
-void FIFO::attach(Direction direction)
+void FIFO::detach(OpenFileDescription& description)
 {
-    if (direction == Direction::Reader) {
-        ++m_readers;
-    } else if (direction == Direction::Writer) {
-        ++m_writers;
-    }
+    File::detach(description);
 
-    evaluate_block_conditions();
-}
-
-void FIFO::detach(Direction direction)
-{
+    auto direction = description.fifo_direction();
     if (direction == Direction::Reader) {
         VERIFY(m_readers);
         --m_readers;
@@ -120,10 +117,8 @@ ErrorOr<size_t> FIFO::read(OpenFileDescription& fd, u64, UserOrKernelBuffer& buf
 
 ErrorOr<size_t> FIFO::write(OpenFileDescription& fd, u64, UserOrKernelBuffer const& buffer, size_t size)
 {
-    if (!m_readers) {
-        Thread::current()->send_signal(SIGPIPE, &Process::current());
+    if (!m_readers)
         return EPIPE;
-    }
     if (!fd.is_blocking() && m_buffer->space_for_writing() == 0)
         return EAGAIN;
 

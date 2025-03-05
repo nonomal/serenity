@@ -7,225 +7,130 @@
  */
 
 #include "InspectorWidget.h"
-#include "ElementSizePreviewWidget.h"
+#include <LibGUI/Action.h>
 #include <LibGUI/BoxLayout.h>
-#include <LibGUI/Splitter.h>
-#include <LibGUI/TabWidget.h>
-#include <LibGUI/TableView.h>
-#include <LibGUI/TreeView.h>
-#include <LibWeb/DOM/Document.h>
-#include <LibWeb/DOM/Element.h>
-#include <LibWebView/DOMTreeModel.h>
+#include <LibGUI/Menu.h>
+#include <LibWebView/Attribute.h>
+#include <LibWebView/InspectorClient.h>
 #include <LibWebView/OutOfProcessWebView.h>
-#include <LibWebView/StylePropertiesModel.h>
 
 namespace Browser {
 
-void InspectorWidget::set_selection(Selection selection)
+NonnullRefPtr<InspectorWidget> InspectorWidget::create(WebView::OutOfProcessWebView& content_view)
 {
-    if (!m_dom_json.has_value()) {
-        // DOM Tree hasn't been loaded yet, so make a note to inspect it later.
-        m_pending_selection = move(selection);
-        return;
-    }
-
-    auto* model = verify_cast<WebView::DOMTreeModel>(m_dom_tree_view->model());
-    auto index = model->index_for_node(selection.dom_node_id, selection.pseudo_element);
-    if (!index.is_valid()) {
-        dbgln("InspectorWidget told to inspect non-existent node: {}", selection.to_string());
-        return;
-    }
-
-    m_dom_tree_view->expand_all_parents_of(index);
-    m_dom_tree_view->set_cursor(index, GUI::AbstractView::SelectionUpdate::Set);
-    set_selection(index);
+    return adopt_ref(*new (nothrow) InspectorWidget(content_view));
 }
 
-void InspectorWidget::set_selection(GUI::ModelIndex const index)
+InspectorWidget::InspectorWidget(WebView::OutOfProcessWebView& content_view)
 {
-    if (!index.is_valid())
-        return;
-
-    auto* json = static_cast<JsonObject const*>(index.internal_data());
-    VERIFY(json);
-
-    Selection selection {};
-    if (json->has_u32("pseudo-element"sv)) {
-        selection.dom_node_id = json->get("parent-id"sv).to_i32();
-        selection.pseudo_element = static_cast<Web::CSS::Selector::PseudoElement>(json->get("pseudo-element"sv).to_u32());
-    } else {
-        selection.dom_node_id = json->get("id"sv).to_i32();
-    }
-
-    if (selection == m_selection)
-        return;
-    m_selection = move(selection);
-
-    auto maybe_inspected_node_properties = m_web_view->inspect_dom_node(m_selection.dom_node_id, m_selection.pseudo_element);
-    if (maybe_inspected_node_properties.has_value()) {
-        auto inspected_node_properties = maybe_inspected_node_properties.value();
-        load_style_json(inspected_node_properties.specified_values_json, inspected_node_properties.computed_values_json, inspected_node_properties.custom_properties_json);
-        update_node_box_model(inspected_node_properties.node_box_sizing_json);
-    } else {
-        clear_style_json();
-        clear_node_box_model();
-    }
-}
-
-InspectorWidget::InspectorWidget()
-{
+    set_layout<GUI::VerticalBoxLayout>(4);
     set_fill_with_background_color(true);
 
-    auto& layout = set_layout<GUI::VerticalBoxLayout>();
-    layout.set_margins({ 4, 4, 4, 4 });
-    auto& splitter = add<GUI::VerticalSplitter>();
+    m_inspector_view = add<WebView::OutOfProcessWebView>();
+    m_inspector_client = make<WebView::InspectorClient>(content_view, *m_inspector_view);
 
-    auto& top_tab_widget = splitter.add<GUI::TabWidget>();
+    m_edit_node_action = GUI::Action::create("&Edit node"sv, [this](auto&) { m_inspector_client->context_menu_edit_dom_node(); });
+    m_copy_node_action = GUI::Action::create("&Copy HTML"sv, [this](auto&) { m_inspector_client->context_menu_copy_dom_node(); });
+    m_screenshot_node_action = GUI::Action::create("Take node &screenshot"sv, [this](auto&) { m_inspector_client->context_menu_screenshot_dom_node(); });
+    m_create_child_element_action = GUI::Action::create("Create child &element"sv, [this](auto&) { m_inspector_client->context_menu_create_child_element(); });
+    m_create_child_text_node_action = GUI::Action::create("Create child &text node"sv, [this](auto&) { m_inspector_client->context_menu_create_child_text_node(); });
+    m_clone_node_action = GUI::Action::create("C&lone node"sv, [this](auto&) { m_inspector_client->context_menu_clone_dom_node(); });
+    m_delete_node_action = GUI::Action::create("&Delete node"sv, [this](auto&) { m_inspector_client->context_menu_remove_dom_node(); });
+    m_add_attribute_action = GUI::Action::create("&Add attribute"sv, [this](auto&) { m_inspector_client->context_menu_add_dom_node_attribute(); });
+    m_remove_attribute_action = GUI::Action::create("&Remove attribute"sv, [this](auto&) { m_inspector_client->context_menu_remove_dom_node_attribute(); });
+    m_copy_attribute_value_action = GUI::Action::create("Copy attribute &value"sv, [this](auto&) { m_inspector_client->context_menu_copy_dom_node_attribute_value(); });
 
-    auto& dom_tree_container = top_tab_widget.add_tab<GUI::Widget>("DOM");
-    dom_tree_container.set_layout<GUI::VerticalBoxLayout>();
-    dom_tree_container.layout()->set_margins({ 4, 4, 4, 4 });
-    m_dom_tree_view = dom_tree_container.add<GUI::TreeView>();
-    m_dom_tree_view->on_selection_change = [this] {
-        const auto& index = m_dom_tree_view->selection().first();
-        set_selection(index);
+    auto add_create_child_menu = [&](auto& menu) {
+        auto create_child_menu = menu.add_submenu("Create child"_string);
+        create_child_menu->add_action(*m_create_child_element_action);
+        create_child_menu->add_action(*m_create_child_text_node_action);
     };
 
-    auto& bottom_tab_widget = splitter.add<GUI::TabWidget>();
+    m_dom_node_text_context_menu = GUI::Menu::construct();
+    m_dom_node_text_context_menu->add_action(*m_edit_node_action);
+    m_dom_node_text_context_menu->add_action(*m_copy_node_action);
+    m_dom_node_text_context_menu->add_separator();
+    m_dom_node_text_context_menu->add_action(*m_delete_node_action);
 
-    auto& computed_style_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Computed");
-    computed_style_table_container.set_layout<GUI::VerticalBoxLayout>();
-    computed_style_table_container.layout()->set_margins({ 4, 4, 4, 4 });
-    m_computed_style_table_view = computed_style_table_container.add<GUI::TableView>();
+    m_dom_node_tag_context_menu = GUI::Menu::construct();
+    m_dom_node_tag_context_menu->add_action(*m_edit_node_action);
+    m_dom_node_tag_context_menu->add_separator();
+    m_dom_node_tag_context_menu->add_action(*m_add_attribute_action);
+    add_create_child_menu(*m_dom_node_tag_context_menu);
+    m_dom_node_tag_context_menu->add_action(*m_clone_node_action);
+    m_dom_node_tag_context_menu->add_action(*m_delete_node_action);
+    m_dom_node_tag_context_menu->add_separator();
+    m_dom_node_tag_context_menu->add_action(*m_copy_node_action);
+    m_dom_node_tag_context_menu->add_action(*m_screenshot_node_action);
 
-    auto& resolved_style_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Resolved");
-    resolved_style_table_container.set_layout<GUI::VerticalBoxLayout>();
-    resolved_style_table_container.layout()->set_margins({ 4, 4, 4, 4 });
-    m_resolved_style_table_view = resolved_style_table_container.add<GUI::TableView>();
+    m_dom_node_attribute_context_menu = GUI::Menu::construct();
+    m_dom_node_attribute_context_menu->add_action(*m_edit_node_action);
+    m_dom_node_attribute_context_menu->add_action(*m_copy_attribute_value_action);
+    m_dom_node_attribute_context_menu->add_action(*m_remove_attribute_action);
+    m_dom_node_attribute_context_menu->add_separator();
+    m_dom_node_attribute_context_menu->add_action(*m_add_attribute_action);
+    add_create_child_menu(*m_dom_node_attribute_context_menu);
+    m_dom_node_attribute_context_menu->add_action(*m_clone_node_action);
+    m_dom_node_attribute_context_menu->add_action(*m_delete_node_action);
+    m_dom_node_attribute_context_menu->add_separator();
+    m_dom_node_attribute_context_menu->add_action(*m_copy_node_action);
+    m_dom_node_attribute_context_menu->add_action(*m_screenshot_node_action);
 
-    auto& custom_properties_table_container = bottom_tab_widget.add_tab<GUI::Widget>("Variables");
-    custom_properties_table_container.set_layout<GUI::VerticalBoxLayout>();
-    custom_properties_table_container.layout()->set_margins({ 4, 4, 4, 4 });
-    m_custom_properties_table_view = custom_properties_table_container.add<GUI::TableView>();
+    m_inspector_client->on_requested_dom_node_text_context_menu = [this](auto position) {
+        m_edit_node_action->set_text("&Edit text");
+        m_copy_node_action->set_text("&Copy text");
 
-    auto& box_model_widget = bottom_tab_widget.add_tab<GUI::Widget>("Box Model");
-    box_model_widget.set_layout<GUI::VerticalBoxLayout>();
-    box_model_widget.layout()->set_margins({ 4, 4, 4, 4 });
-    m_element_size_view = box_model_widget.add<ElementSizePreviewWidget>();
-    m_element_size_view->set_should_hide_unnecessary_scrollbars(true);
+        m_dom_node_text_context_menu->popup(to_widget_position(position));
+    };
 
-    m_dom_tree_view->set_focus(true);
+    m_inspector_client->on_requested_dom_node_tag_context_menu = [this](auto position, auto const& tag) {
+        m_edit_node_action->set_text(ByteString::formatted("&Edit \"{}\"", tag));
+        m_copy_node_action->set_text("&Copy HTML");
+
+        m_dom_node_tag_context_menu->popup(to_widget_position(position));
+    };
+
+    m_inspector_client->on_requested_dom_node_attribute_context_menu = [this](auto position, auto const&, auto const& attribute) {
+        static constexpr size_t MAX_ATTRIBUTE_VALUE_LENGTH = 32;
+
+        m_copy_node_action->set_text("&Copy HTML");
+        m_edit_node_action->set_text(ByteString::formatted("&Edit attribute \"{}\"", attribute.name));
+        m_remove_attribute_action->set_text(ByteString::formatted("&Remove attribute \"{}\"", attribute.name));
+        m_copy_attribute_value_action->set_text(ByteString::formatted("Copy attribute &value \"{:.{}}{}\"",
+            attribute.value, MAX_ATTRIBUTE_VALUE_LENGTH,
+            attribute.value.bytes_as_string_view().length() > MAX_ATTRIBUTE_VALUE_LENGTH ? "..."sv : ""sv));
+
+        m_dom_node_attribute_context_menu->popup(to_widget_position(position));
+    };
+
+    m_inspector_view->set_focus(true);
+}
+
+InspectorWidget::~InspectorWidget() = default;
+
+void InspectorWidget::inspect()
+{
+    m_inspector_client->inspect();
+}
+
+void InspectorWidget::reset()
+{
+    m_inspector_client->reset();
 }
 
 void InspectorWidget::select_default_node()
 {
-    clear_style_json();
-
-    // FIXME: Select the <body> element, or else the root node.
-    m_dom_tree_view->collapse_tree();
-    m_dom_tree_view->set_cursor({}, GUI::AbstractView::SelectionUpdate::ClearIfNotSelected);
+    m_inspector_client->select_default_node();
 }
 
-void InspectorWidget::set_dom_json(String json)
+void InspectorWidget::select_hovered_node()
 {
-    if (m_dom_json.has_value() && m_dom_json.value() == json)
-        return;
-
-    m_dom_json = json;
-    m_dom_tree_view->set_model(WebView::DOMTreeModel::create(m_dom_json->view(), *m_dom_tree_view));
-
-    if (m_pending_selection.has_value()) {
-        set_selection(m_pending_selection.release_value());
-    } else {
-        select_default_node();
-    }
+    m_inspector_client->select_hovered_node();
 }
 
-void InspectorWidget::clear_dom_json()
+Gfx::IntPoint InspectorWidget::to_widget_position(Gfx::IntPoint position) const
 {
-    m_dom_json.clear();
-    m_dom_tree_view->set_model(nullptr);
-    clear_style_json();
-}
-
-void InspectorWidget::set_dom_node_properties_json(Selection selection, String specified_values_json, String computed_values_json, String custom_properties_json, String node_box_sizing_json)
-{
-    if (selection != m_selection) {
-        dbgln("Got data for the wrong node id! Wanted ({}), got ({})", m_selection.to_string(), selection.to_string());
-        return;
-    }
-
-    load_style_json(specified_values_json, computed_values_json, custom_properties_json);
-    update_node_box_model(node_box_sizing_json);
-}
-
-void InspectorWidget::load_style_json(String specified_values_json, String computed_values_json, String custom_properties_json)
-{
-    m_selection_specified_values_json = specified_values_json;
-    m_computed_style_table_view->set_model(WebView::StylePropertiesModel::create(m_selection_specified_values_json.value().view()));
-    m_computed_style_table_view->set_searchable(true);
-
-    m_selection_computed_values_json = computed_values_json;
-    m_resolved_style_table_view->set_model(WebView::StylePropertiesModel::create(m_selection_computed_values_json.value().view()));
-    m_resolved_style_table_view->set_searchable(true);
-
-    m_selection_custom_properties_json = custom_properties_json;
-    m_custom_properties_table_view->set_model(WebView::StylePropertiesModel::create(m_selection_custom_properties_json.value().view()));
-    m_custom_properties_table_view->set_searchable(true);
-}
-
-void InspectorWidget::update_node_box_model(Optional<String> node_box_sizing_json)
-{
-    if (!node_box_sizing_json.has_value()) {
-        return;
-    }
-    auto json_or_error = JsonValue::from_string(node_box_sizing_json.value());
-    if (json_or_error.is_error() || !json_or_error.value().is_object()) {
-        return;
-    }
-    auto json_value = json_or_error.release_value();
-    auto const& json_object = json_value.as_object();
-
-    m_node_box_sizing.margin.top = json_object.get("margin_top"sv).to_float();
-    m_node_box_sizing.margin.right = json_object.get("margin_right"sv).to_float();
-    m_node_box_sizing.margin.bottom = json_object.get("margin_bottom"sv).to_float();
-    m_node_box_sizing.margin.left = json_object.get("margin_left"sv).to_float();
-    m_node_box_sizing.padding.top = json_object.get("padding_top"sv).to_float();
-    m_node_box_sizing.padding.right = json_object.get("padding_right"sv).to_float();
-    m_node_box_sizing.padding.bottom = json_object.get("padding_bottom"sv).to_float();
-    m_node_box_sizing.padding.left = json_object.get("padding_left"sv).to_float();
-    m_node_box_sizing.border.top = json_object.get("border_top"sv).to_float();
-    m_node_box_sizing.border.right = json_object.get("border_right"sv).to_float();
-    m_node_box_sizing.border.bottom = json_object.get("border_bottom"sv).to_float();
-    m_node_box_sizing.border.left = json_object.get("border_left"sv).to_float();
-
-    m_element_size_view->set_node_content_width(json_object.get("content_width"sv).to_float());
-    m_element_size_view->set_node_content_height(json_object.get("content_height"sv).to_float());
-    m_element_size_view->set_box_model(m_node_box_sizing);
-}
-
-void InspectorWidget::clear_node_box_model()
-{
-    m_node_box_sizing = Web::Layout::BoxModelMetrics {};
-    m_element_size_view->set_node_content_width(0);
-    m_element_size_view->set_node_content_height(0);
-    m_element_size_view->set_box_model(m_node_box_sizing);
-}
-
-void InspectorWidget::clear_style_json()
-{
-    m_selection_specified_values_json.clear();
-    m_computed_style_table_view->set_model(nullptr);
-
-    m_selection_computed_values_json.clear();
-    m_resolved_style_table_view->set_model(nullptr);
-
-    m_selection_custom_properties_json.clear();
-    m_custom_properties_table_view->set_model(nullptr);
-
-    m_element_size_view->set_box_model({});
-    m_element_size_view->set_node_content_width(0);
-    m_element_size_view->set_node_content_height(0);
+    return m_inspector_view->screen_relative_rect().location().translated(position);
 }
 
 }

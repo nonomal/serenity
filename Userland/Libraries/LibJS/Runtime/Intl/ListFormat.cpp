@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,13 +8,15 @@
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Intl/ListFormat.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 
 namespace JS::Intl {
 
+JS_DEFINE_ALLOCATOR(ListFormat);
+
 // 13 ListFormat Objects, https://tc39.es/ecma402/#listformat-objects
 ListFormat::ListFormat(Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
 {
 }
 
@@ -75,10 +77,8 @@ Vector<PatternPartition> deconstruct_pattern(StringView pattern, Placeables plac
                 // iii. If Type(subst) is List, then
                 [&](Vector<PatternPartition>& partition) {
                     // 1. For each element s of subst, do
-                    for (auto& element : partition) {
-                        // a. Append s to result.
-                        result.append(move(element));
-                    }
+                    //     a. Append s to result.
+                    result.extend(move(partition));
                 },
                 // iv. Else,
                 [&](PatternPartition& partition) {
@@ -95,7 +95,7 @@ Vector<PatternPartition> deconstruct_pattern(StringView pattern, Placeables plac
 // 13.5.2 CreatePartsFromList ( listFormat, list ), https://tc39.es/ecma402/#sec-createpartsfromlist
 Vector<PatternPartition> create_parts_from_list(ListFormat const& list_format, Vector<String> const& list)
 {
-    auto list_patterns = Unicode::get_locale_list_patterns(list_format.locale(), list_format.type_string(), list_format.style());
+    auto list_patterns = ::Locale::get_locale_list_patterns(list_format.locale(), list_format.type_string(), list_format.style());
     if (!list_patterns.has_value())
         return {};
 
@@ -193,23 +193,23 @@ String format_list(ListFormat const& list_format, Vector<String> const& list)
     // 3. For each Record { [[Type]], [[Value]] } part in parts, do
     for (auto& part : parts) {
         // a. Set result to the string-concatenation of result and part.[[Value]].
-        result.append(move(part.value));
+        result.append(part.value);
     }
 
     // 4. Return result.
-    return result.build();
+    return MUST(result.to_string());
 }
 
 // 13.5.4 FormatListToParts ( listFormat, list ), https://tc39.es/ecma402/#sec-formatlisttoparts
-Array* format_list_to_parts(GlobalObject& global_object, ListFormat const& list_format, Vector<String> const& list)
+NonnullGCPtr<Array> format_list_to_parts(VM& vm, ListFormat const& list_format, Vector<String> const& list)
 {
-    auto& vm = global_object.vm();
+    auto& realm = *vm.current_realm();
 
     // 1. Let parts be ! CreatePartsFromList(listFormat, list).
     auto parts = create_parts_from_list(list_format, list);
 
     // 2. Let result be ! ArrayCreate(0).
-    auto* result = MUST(Array::create(global_object, 0));
+    auto result = MUST(Array::create(realm, 0));
 
     // 3. Let n be 0.
     size_t n = 0;
@@ -217,13 +217,13 @@ Array* format_list_to_parts(GlobalObject& global_object, ListFormat const& list_
     // 4. For each Record { [[Type]], [[Value]] } part in parts, do
     for (auto& part : parts) {
         // a. Let O be OrdinaryObjectCreate(%Object.prototype%).
-        auto* object = Object::create(global_object, global_object.object_prototype());
+        auto object = Object::create(realm, realm.intrinsics().object_prototype());
 
         // b. Perform ! CreateDataPropertyOrThrow(O, "type", part.[[Type]]).
-        MUST(object->create_data_property_or_throw(vm.names.type, js_string(vm, part.type)));
+        MUST(object->create_data_property_or_throw(vm.names.type, PrimitiveString::create(vm, part.type)));
 
         // c. Perform ! CreateDataPropertyOrThrow(O, "value", part.[[Value]]).
-        MUST(object->create_data_property_or_throw(vm.names.value, js_string(vm, move(part.value))));
+        MUST(object->create_data_property_or_throw(vm.names.value, PrimitiveString::create(vm, move(part.value))));
 
         // d. Perform ! CreateDataPropertyOrThrow(result, ! ToString(n), O).
         MUST(result->create_data_property_or_throw(n, object));
@@ -237,51 +237,43 @@ Array* format_list_to_parts(GlobalObject& global_object, ListFormat const& list_
 }
 
 // 13.5.5 StringListFromIterable ( iterable ), https://tc39.es/ecma402/#sec-createstringlistfromiterable
-ThrowCompletionOr<Vector<String>> string_list_from_iterable(GlobalObject& global_object, Value iterable)
+ThrowCompletionOr<Vector<String>> string_list_from_iterable(VM& vm, Value iterable)
 {
-    auto& vm = global_object.vm();
-
     // 1. If iterable is undefined, then
     if (iterable.is_undefined()) {
         // a. Return a new empty List.
         return Vector<String> {};
     }
 
-    // 2. Let iteratorRecord be ? GetIterator(iterable).
-    auto iterator_record = TRY(get_iterator(global_object, iterable));
+    // 2. Let iteratorRecord be ? GetIterator(iterable, sync).
+    auto iterator_record = TRY(get_iterator(vm, iterable, IteratorHint::Sync));
 
     // 3. Let list be a new empty List.
     Vector<String> list;
 
-    // 4. Let next be true.
-    Object* next = nullptr;
+    // 4. Repeat,
+    while (true) {
+        // a. Let next be ? IteratorStepValue(iteratorRecord).
+        auto next = TRY(iterator_step_value(vm, iterator_record));
 
-    // 5. Repeat, while next is not false,
-    do {
-        // a. Set next to ? IteratorStep(iteratorRecord).
-        next = TRY(iterator_step(global_object, iterator_record));
-
-        // b. If next is not false, then
-        if (next != nullptr) {
-            // i. Let nextValue be ? IteratorValue(next).
-            auto next_value = TRY(iterator_value(global_object, *next));
-
-            // ii. If Type(nextValue) is not String, then
-            if (!next_value.is_string()) {
-                // 1. Let error be ThrowCompletion(a newly created TypeError object).
-                auto error = vm.throw_completion<TypeError>(global_object, ErrorType::NotAString, next_value);
-
-                // 2. Return ? IteratorClose(iteratorRecord, error).
-                return iterator_close(global_object, iterator_record, move(error));
-            }
-
-            // iii. Append nextValue to the end of the List list.
-            list.append(next_value.as_string().string());
+        // b. If next is DONE, then
+        if (!next.has_value()) {
+            // a. Return list.
+            return list;
         }
-    } while (next != nullptr);
 
-    // 6. Return list.
-    return list;
+        // c. If Type(next) is not String, then
+        if (!next->is_string()) {
+            // 1. Let error be ThrowCompletion(a newly created TypeError object).
+            auto error = vm.throw_completion<TypeError>(ErrorType::NotAString, *next);
+
+            // 2. Return ? IteratorClose(iteratorRecord, error).
+            return iterator_close(vm, iterator_record, move(error));
+        }
+
+        // iii. Append next to list.
+        list.append(next->as_string().utf8_string());
+    }
 }
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2021-2023, Liav A. <liavalb@hotmail.co.il>
  * Copyright (c) 2021, Edwin Hoksberg <mail@edwinhoksberg.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -8,19 +8,23 @@
 #pragma once
 
 #include <AK/CircularQueue.h>
-#include <AK/DoublyLinkedList.h>
 #include <AK/Types.h>
 #include <Kernel/API/KeyCode.h>
 #include <Kernel/Devices/CharacterDevice.h>
-#include <Kernel/Devices/HID/HIDDevice.h>
+#include <Kernel/Devices/HID/Device.h>
+#include <Kernel/Devices/HID/ScanCodeEvent.h>
 #include <Kernel/Interrupts/IRQHandler.h>
-#include <Kernel/Random.h>
+#include <Kernel/Security/Random.h>
 
 namespace Kernel {
 
 class KeyboardDevice : public HIDDevice {
+    friend class Device;
+
 public:
     using Event = KeyEvent;
+
+    static ErrorOr<NonnullRefPtr<KeyboardDevice>> try_to_initialize();
 
     virtual ~KeyboardDevice() override;
 
@@ -29,9 +33,6 @@ public:
     virtual bool can_read(OpenFileDescription const&, u64) const override;
     virtual ErrorOr<size_t> write(OpenFileDescription&, u64, UserOrKernelBuffer const&, size_t) override { return EINVAL; }
     virtual bool can_write(OpenFileDescription const&, u64) const override { return true; }
-
-    // ^HIDDevice
-    virtual Type instrument_type() const override { return Type::Keyboard; }
 
     // ^File
     virtual ErrorOr<void> ioctl(OpenFileDescription&, unsigned request, Userspace<void*> arg) override;
@@ -44,9 +45,14 @@ public:
             m_modifiers &= ~modifier;
     }
 
+    u8 modifiers() const { return m_modifiers; }
+
+    void handle_input_event(KeyEvent);
+    bool num_lock_on() const { return m_num_lock_on; }
+
 protected:
     KeyboardDevice();
-    mutable Spinlock m_queue_lock;
+    mutable Spinlock<LockRank::None> m_queue_lock {};
     CircularQueue<Event, 16> m_queue;
     // ^CharacterDevice
     virtual StringView class_name() const override { return "KeyboardDevice"sv; }
@@ -55,11 +61,6 @@ protected:
     bool m_caps_lock_to_ctrl_pressed { false };
     bool m_caps_lock_on { false };
     bool m_num_lock_on { false };
-    bool m_has_e0_prefix { false };
-    bool m_left_shift_pressed { false };
-    bool m_right_shift_pressed { false };
-    bool m_left_super_pressed { false };
-    bool m_right_super_pressed { false };
 
     void key_state_changed(u8 raw, bool pressed);
 };

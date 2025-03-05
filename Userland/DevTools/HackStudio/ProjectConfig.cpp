@@ -15,17 +15,16 @@ ProjectConfig::ProjectConfig(JsonObject config)
 {
 }
 
-ErrorOr<NonnullOwnPtr<ProjectConfig>> ProjectConfig::try_load_project_config(String path)
+ErrorOr<NonnullOwnPtr<ProjectConfig>> ProjectConfig::try_load_project_config(ByteString path)
 {
-    auto file = TRY(Core::File::open(path, Core::OpenMode::ReadOnly));
-    auto file_contents = file->read_all();
-    file->close();
+    auto file = TRY(Core::File::open(path, Core::File::OpenMode::Read));
+    auto file_contents = TRY(file->read_until_eof());
 
-    auto json = TRY(JsonValue::from_string(StringView { file_contents }));
+    auto json = TRY(JsonValue::from_string(file_contents));
     if (!json.is_object())
         return Error::from_string_literal("The topmost JSON element is not an object");
 
-    return adopt_own(*new ProjectConfig(json.as_object()));
+    return try_make<ProjectConfig>(json.as_object());
 }
 
 NonnullOwnPtr<ProjectConfig> ProjectConfig::create_empty()
@@ -34,13 +33,9 @@ NonnullOwnPtr<ProjectConfig> ProjectConfig::create_empty()
     return adopt_own(*new ProjectConfig(empty));
 }
 
-Optional<String> ProjectConfig::read_key(String key_name) const
+Optional<ByteString> ProjectConfig::read_key(ByteString key_name) const
 {
-    auto const& value = m_config.get(key_name);
-    if (!value.is_string())
-        return {};
-
-    return { value.as_string() };
+    return m_config.get_byte_string(key_name);
 }
 
 }

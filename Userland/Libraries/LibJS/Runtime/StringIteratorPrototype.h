@@ -14,13 +14,15 @@ namespace JS {
 
 class StringIteratorPrototype final : public PrototypeObject<StringIteratorPrototype, StringIterator> {
     JS_PROTOTYPE_OBJECT(StringIteratorPrototype, StringIterator, StringIterator);
+    JS_DECLARE_ALLOCATOR(StringIteratorPrototype);
 
 public:
-    StringIteratorPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~StringIteratorPrototype() override = default;
 
 private:
+    explicit StringIteratorPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(next);
 };
 

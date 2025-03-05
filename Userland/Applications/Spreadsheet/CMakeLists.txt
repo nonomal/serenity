@@ -4,11 +4,11 @@ serenity_component(
     DEPENDS WebContent
 )
 
-compile_gml(CondFormatting.gml CondFormattingGML.h cond_fmt_gml)
-compile_gml(CondView.gml CondFormattingViewGML.h cond_fmt_view_gml)
-compile_gml(csv_import.gml CSVImportGML.h csv_import_gml)
-compile_gml(csv_export.gml CSVExportGML.h csv_export_gml)
-compile_gml(select_format_page.gml FormatSelectionPageGML.h select_format_page_gml)
+stringify_gml(CondFormatting.gml CondFormattingGML.h cond_fmt_gml)
+stringify_gml(CondView.gml CondFormattingViewGML.h cond_fmt_view_gml)
+stringify_gml(csv_import.gml CSVImportGML.h csv_import_gml)
+stringify_gml(csv_export.gml CSVExportGML.h csv_export_gml)
+stringify_gml(select_format_page.gml FormatSelectionPageGML.h select_format_page_gml)
 
 set(SOURCES
     Cell.cpp
@@ -20,8 +20,6 @@ set(SOURCES
     CellType/String.cpp
     CellType/Type.cpp
     CellTypeDialog.cpp
-    CondFormattingGML.h
-    CondFormattingViewGML.h
     ExportDialog.cpp
     HelpWindow.cpp
     ImportDialog.cpp
@@ -38,12 +36,13 @@ set(SOURCES
 set(GENERATED_SOURCES
     CSVExportGML.h
     CSVImportGML.h
+    CondFormattingGML.h
+    CondFormattingViewGML.h
     FormatSelectionPageGML.h
 )
 
 serenity_app(Spreadsheet ICON app-spreadsheet)
-target_link_libraries(Spreadsheet LibFileSystemAccessClient LibGUI LibJS LibMain LibWebView LibWeb)
-link_with_unicode_data(Spreadsheet)
+target_link_libraries(Spreadsheet PRIVATE LibConfig LibCore LibFileSystem LibFileSystemAccessClient LibGfx LibGUI LibJS LibMain LibMarkdown LibSyntax LibWebView LibWeb LibURL)
 
 serenity_test(Writers/Test/TestXSVWriter.cpp Spreadsheet)
 

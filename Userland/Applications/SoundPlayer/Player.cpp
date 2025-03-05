@@ -6,6 +6,8 @@
  */
 
 #include "Player.h"
+#include <LibAudio/FlacLoader.h>
+#include <LibFileSystem/FileSystem.h>
 
 Player::Player(Audio::ConnectionToServer& audio_client_connection)
     : m_audio_client_connection(audio_client_connection)
@@ -14,13 +16,11 @@ Player::Player(Audio::ConnectionToServer& audio_client_connection)
     m_playback_manager.on_update = [&]() {
         auto samples_played = m_playback_manager.loader()->loaded_samples();
         auto sample_rate = m_playback_manager.loader()->sample_rate();
-        float source_to_dest_ratio = static_cast<float>(sample_rate) / m_playback_manager.device_sample_rate();
-        samples_played *= source_to_dest_ratio;
-        samples_played += m_playback_manager.last_seek();
 
         auto played_seconds = samples_played / sample_rate;
         time_elapsed(played_seconds);
-        sound_buffer_played(m_playback_manager.current_buffer(), m_playback_manager.device_sample_rate(), samples_played);
+        if (play_state() == PlayState::Playing)
+            sound_buffer_played(m_playback_manager.current_buffer(), sample_rate, samples_played);
     };
     m_playback_manager.on_finished_playing = [&]() {
         set_play_state(PlayState::Stopped);
@@ -38,12 +38,9 @@ Player::Player(Audio::ConnectionToServer& audio_client_connection)
     };
 }
 
-void Player::play_file_path(String const& path)
+void Player::play_file_path(ByteString const& path)
 {
-    if (path.is_null())
-        return;
-
-    if (!Core::File::exists(path)) {
+    if (!FileSystem::exists(path)) {
         audio_load_error(path, "File does not exist"sv);
         return;
     }
@@ -62,14 +59,14 @@ void Player::play_file_path(String const& path)
 
     m_loaded_filename = path;
 
-    file_name_changed(path);
     total_samples_changed(loader->total_samples());
     m_playback_manager.set_loader(move(loader));
+    file_name_changed(path);
 
     play();
 }
 
-bool Player::is_playlist(String const& path)
+bool Player::is_playlist(ByteString const& path)
 {
     return (path.ends_with(".m3u"sv, AK::CaseSensitivity::CaseInsensitive)
         || path.ends_with(".m3u8"sv, AK::CaseSensitivity::CaseInsensitive));
@@ -154,4 +151,9 @@ void Player::toggle_mute()
 void Player::seek(int sample)
 {
     m_playback_manager.seek(sample);
+}
+
+Vector<Audio::PictureData> const& Player::pictures() const
+{
+    return m_playback_manager.loader()->pictures();
 }

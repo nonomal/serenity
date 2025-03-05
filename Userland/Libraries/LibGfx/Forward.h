@@ -8,19 +8,27 @@
 
 namespace Gfx {
 
+class AffineTransform;
 class Bitmap;
+class CMYKBitmap;
+class ImmutableBitmap;
 class CharacterBitmap;
 class Color;
+
+template<typename T>
 class DisjointRectSet;
+
 class Emoji;
 class Font;
 class GlyphBitmap;
 class ImageDecoder;
 struct FontPixelMetrics;
+class ScaledFont;
 
 template<typename T>
 class Line;
 
+class AntiAliasingPainter;
 class Painter;
 class Palette;
 class PaletteImpl;
@@ -43,6 +51,9 @@ class Rect;
 
 template<typename T>
 class Quad;
+
+using DisjointIntRectSet = DisjointRectSet<int>;
+using DisjointFloatRectSet = DisjointRectSet<float>;
 
 using IntLine = Line<int>;
 using FloatLine = Line<float>;

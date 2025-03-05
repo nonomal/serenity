@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Alexander Narsudinov <a.narsudinov@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,7 +8,6 @@
 #include "FileOperationProgressWidget.h"
 #include "FileUtils.h"
 #include <Applications/FileManager/FileOperationProgressGML.h>
-#include <LibCore/File.h>
 #include <LibCore/Notifier.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/ImageWidget.h>
@@ -18,11 +18,11 @@
 
 namespace FileManager {
 
-FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation, NonnullOwnPtr<Core::Stream::BufferedFile> helper_pipe, int helper_pipe_fd)
+FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation, NonnullOwnPtr<Core::InputBufferedFile> helper_pipe, int helper_pipe_fd)
     : m_operation(operation)
     , m_helper_pipe(move(helper_pipe))
 {
-    load_from_gml(file_operation_progress_gml);
+    load_from_gml(file_operation_progress_gml).release_value_but_fixme_should_propagate_errors();
 
     auto& button = *find_descendant_of_type_named<GUI::Button>("button");
 
@@ -54,24 +54,29 @@ FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation
 
     switch (m_operation) {
     case FileOperation::Copy:
-        files_copied_label.set_text("Copying files...");
-        current_file_action_label.set_text("Copying: ");
+        files_copied_label.set_text("Copying files..."_string);
+        current_file_action_label.set_text("Copying: "_string);
         break;
     case FileOperation::Move:
-        files_copied_label.set_text("Moving files...");
-        current_file_action_label.set_text("Moving: ");
+        files_copied_label.set_text("Moving files..."_string);
+        current_file_action_label.set_text("Moving: "_string);
         break;
     case FileOperation::Delete:
-        files_copied_label.set_text("Deleting files...");
-        current_file_action_label.set_text("Deleting: ");
+        files_copied_label.set_text("Deleting files..."_string);
+        current_file_action_label.set_text("Deleting: "_string);
         break;
     default:
         VERIFY_NOT_REACHED();
     }
 
-    m_notifier = Core::Notifier::construct(helper_pipe_fd, Core::Notifier::Read);
-    m_notifier->on_ready_to_read = [this] {
-        auto line_buffer = ByteBuffer::create_zeroed(1 * KiB).release_value_but_fixme_should_propagate_errors();
+    m_notifier = Core::Notifier::construct(helper_pipe_fd, Core::Notifier::Type::Read);
+    m_notifier->on_activation = [this] {
+        auto line_buffer_or_error = ByteBuffer::create_zeroed(1 * KiB);
+        if (line_buffer_or_error.is_error()) {
+            did_error("Failed to allocate ByteBuffer for reading data."sv);
+            return;
+        }
+        auto line_buffer = line_buffer_or_error.release_value();
         auto line_or_error = m_helper_pipe->read_line(line_buffer.bytes());
         if (line_or_error.is_error() || line_or_error.value().is_empty()) {
             did_error("Read from pipe returned null."sv);
@@ -101,12 +106,12 @@ FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation
         if (parts[0] == "PROGRESS"sv) {
             VERIFY(parts.size() >= 8);
             did_progress(
-                parts[3].to_uint().value_or(0),
-                parts[4].to_uint().value_or(0),
-                parts[1].to_uint().value_or(0),
-                parts[2].to_uint().value_or(0),
-                parts[5].to_uint().value_or(0),
-                parts[6].to_uint().value_or(0),
+                parts[3].to_number<unsigned>().value_or(0),
+                parts[4].to_number<unsigned>().value_or(0),
+                parts[1].to_number<unsigned>().value_or(0),
+                parts[2].to_number<unsigned>().value_or(0),
+                parts[5].to_number<unsigned>().value_or(0),
+                parts[6].to_number<unsigned>().value_or(0),
                 parts[7]);
         }
     };
@@ -129,22 +134,22 @@ void FileOperationProgressWidget::did_error(StringView message)
 {
     // FIXME: Communicate more with the user about errors.
     close_pipe();
-    GUI::MessageBox::show(window(), String::formatted("An error occurred: {}", message), "Error"sv, GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK);
+    GUI::MessageBox::show(window(), ByteString::formatted("An error occurred: {}", message), "Error"sv, GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK);
     window()->close();
 }
 
-String FileOperationProgressWidget::estimate_time(off_t bytes_done, off_t total_byte_count)
+ByteString FileOperationProgressWidget::estimate_time(off_t bytes_done, off_t total_byte_count)
 {
-    int elapsed = m_elapsed_timer.elapsed() / 1000;
+    i64 const elapsed_seconds = m_elapsed_timer.elapsed_time().to_seconds();
 
-    if (bytes_done == 0 || elapsed < 3)
+    if (bytes_done == 0 || elapsed_seconds < 3)
         return "Estimating...";
 
     off_t bytes_left = total_byte_count - bytes_done;
-    int seconds_remaining = (bytes_left * elapsed) / bytes_done;
+    int seconds_remaining = (bytes_left * elapsed_seconds) / bytes_done;
 
     if (seconds_remaining < 30)
-        return String::formatted("{} seconds", 5 + seconds_remaining - seconds_remaining % 5);
+        return ByteString::formatted("{} seconds", 5 + seconds_remaining - seconds_remaining % 5);
     if (seconds_remaining < 60)
         return "About a minute";
     if (seconds_remaining < 90)
@@ -157,14 +162,14 @@ String FileOperationProgressWidget::estimate_time(off_t bytes_done, off_t total_
 
     if (minutes_remaining < 60) {
         if (seconds_remaining < 30)
-            return String::formatted("About {} minutes", minutes_remaining);
-        return String::formatted("Over {} minutes", minutes_remaining);
+            return ByteString::formatted("About {} minutes", minutes_remaining);
+        return ByteString::formatted("Over {} minutes", minutes_remaining);
     }
 
     time_t hours_remaining = minutes_remaining / 60;
     minutes_remaining %= 60;
 
-    return String::formatted("{} hours and {} minutes", hours_remaining, minutes_remaining);
+    return ByteString::formatted("{} hours and {} minutes", hours_remaining, minutes_remaining);
 }
 
 void FileOperationProgressWidget::did_progress(off_t bytes_done, off_t total_byte_count, size_t files_done, size_t total_file_count, [[maybe_unused]] off_t current_file_done, [[maybe_unused]] off_t current_file_size, StringView current_filename)
@@ -174,23 +179,23 @@ void FileOperationProgressWidget::did_progress(off_t bytes_done, off_t total_byt
     auto& overall_progressbar = *find_descendant_of_type_named<GUI::Progressbar>("overall_progressbar");
     auto& estimated_time_label = *find_descendant_of_type_named<GUI::Label>("estimated_time_label");
 
-    current_file_label.set_text(current_filename);
+    current_file_label.set_text(String::from_utf8(current_filename).release_value_but_fixme_should_propagate_errors());
 
     switch (m_operation) {
     case FileOperation::Copy:
-        files_copied_label.set_text(String::formatted("Copying file {} of {}", files_done, total_file_count));
+        files_copied_label.set_text(String::formatted("Copying file {} of {}", files_done, total_file_count).release_value_but_fixme_should_propagate_errors());
         break;
     case FileOperation::Move:
-        files_copied_label.set_text(String::formatted("Moving file {} of {}", files_done, total_file_count));
+        files_copied_label.set_text(String::formatted("Moving file {} of {}", files_done, total_file_count).release_value_but_fixme_should_propagate_errors());
         break;
     case FileOperation::Delete:
-        files_copied_label.set_text(String::formatted("Deleting file {} of {}", files_done, total_file_count));
+        files_copied_label.set_text(String::formatted("Deleting file {} of {}", files_done, total_file_count).release_value_but_fixme_should_propagate_errors());
         break;
     default:
         VERIFY_NOT_REACHED();
     }
 
-    estimated_time_label.set_text(estimate_time(bytes_done, total_byte_count));
+    estimated_time_label.set_text(String::from_byte_string(estimate_time(bytes_done, total_byte_count)).release_value_but_fixme_should_propagate_errors());
 
     if (total_byte_count) {
         window()->set_progress(100.0f * bytes_done / total_byte_count);
@@ -206,7 +211,7 @@ void FileOperationProgressWidget::close_pipe()
     m_helper_pipe = nullptr;
     if (m_notifier) {
         m_notifier->set_enabled(false);
-        m_notifier->on_ready_to_read = nullptr;
+        m_notifier->on_activation = nullptr;
     }
     m_notifier = nullptr;
 }

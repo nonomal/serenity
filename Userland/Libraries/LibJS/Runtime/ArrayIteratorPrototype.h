@@ -13,13 +13,15 @@ namespace JS {
 
 class ArrayIteratorPrototype final : public PrototypeObject<ArrayIteratorPrototype, ArrayIterator> {
     JS_PROTOTYPE_OBJECT(ArrayIteratorPrototype, ArrayIterator, ArrayIterator);
+    JS_DECLARE_ALLOCATOR(ArrayIteratorPrototype);
 
 public:
-    ArrayIteratorPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~ArrayIteratorPrototype() override = default;
 
 private:
+    explicit ArrayIteratorPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(next);
 };
 

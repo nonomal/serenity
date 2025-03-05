@@ -6,21 +6,17 @@
 
 #pragma once
 
-#include <AK/RefCountForwarder.h>
-#include <AK/StdLibExtras.h>
-#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/HTML/Window.h>
 
 namespace Web::NavigationTiming {
 
-class PerformanceTiming final
-    : public RefCountForwarder<HTML::Window>
-    , public Bindings::Wrappable {
+class PerformanceTiming final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(PerformanceTiming, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(PerformanceTiming);
+
 public:
-    using WrapperType = Bindings::PerformanceTimingWrapper;
     using AllowOwnPtr = TrueType;
 
-    explicit PerformanceTiming(HTML::Window&);
     ~PerformanceTiming();
 
     u64 navigation_start() { return 0; }
@@ -44,6 +40,11 @@ public:
     u64 dom_complete() { return 0; }
     u64 load_event_start() { return 0; }
     u64 load_event_end() { return 0; }
+
+private:
+    explicit PerformanceTiming(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

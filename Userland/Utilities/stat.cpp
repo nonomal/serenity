@@ -1,11 +1,10 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Shannon Booth <shannon.ml.booth@gmail.com>
+ * Copyright (c) 2020, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/System.h>
@@ -19,6 +18,7 @@ static ErrorOr<int> stat(StringView file, bool should_follow_links)
 {
     auto st = TRY(should_follow_links ? Core::System::stat(file) : Core::System::lstat(file));
     outln("    File: {}", file);
+    outln("  Device: {}", st.st_dev);
     outln("   Inode: {}", st.st_ino);
     if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode))
         outln("  Device: {},{}", major(st.st_rdev), minor(st.st_rdev));
@@ -72,16 +72,16 @@ static ErrorOr<int> stat(StringView file, bool should_follow_links)
 
     outln(")");
 
-    auto print_time = [](time_t t) {
-        outln("{}", Core::DateTime::from_timestamp(t).to_string());
+    auto print_time = [](timespec t) {
+        outln("{}.{:09}", Core::DateTime::from_timestamp(t.tv_sec).to_byte_string(), t.tv_nsec);
     };
 
     out("Accessed: ");
-    print_time(st.st_atime);
+    print_time(st.st_atim);
     out("Modified: ");
-    print_time(st.st_mtime);
+    print_time(st.st_mtim);
     out(" Changed: ");
-    print_time(st.st_ctime);
+    print_time(st.st_ctim);
 
     return 0;
 }

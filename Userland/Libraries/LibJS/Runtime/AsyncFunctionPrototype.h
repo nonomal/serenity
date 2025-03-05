@@ -12,11 +12,14 @@ namespace JS {
 
 class AsyncFunctionPrototype final : public Object {
     JS_OBJECT(AsyncFunctionPrototype, Object);
+    JS_DECLARE_ALLOCATOR(AsyncFunctionPrototype);
 
 public:
-    explicit AsyncFunctionPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~AsyncFunctionPrototype() override = default;
+
+private:
+    explicit AsyncFunctionPrototype(Realm&);
 };
 
 }

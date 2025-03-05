@@ -24,7 +24,7 @@ boot_pdpt:
 .skip 4096
 .global boot_pd0
 boot_pd0:
-.skip 4096
+.skip (4096 * 4)
 .global boot_pd0_pts
 boot_pd0_pts:
 .skip 4096 * (MAX_KERNEL_SIZE >> 21)
@@ -65,10 +65,10 @@ pml4t:
 
 pdpt
 
-    0: boot_pd0 (0-1GB)
-    1: n/a      (1-2GB)
-    2: n/a      (2-3GB)
-    3: n/a      (3-4GB)
+    0: boot_pd0             (0-1GB)
+    1: boot_pd0 + 4096      (1-2GB)
+    2: boot_pd0 + 4096 * 2  (2-3GB)
+    3: boot_pd0 + 4096 * 3  (3-4GB)
 
 boot_pd0 : 512 PDEs
 
@@ -78,7 +78,6 @@ the page tables each contain 512 PTEs that map individual 4KB pages
 
 */
 
-#if ARCH(X86_64)
 gdt64:
     .quad 0
 gdt64code:
@@ -93,7 +92,6 @@ gdt64ptr:
 .global code64_sel
 code64_sel:
 .short code64_sel_value
-#endif
 
 start:
     jmp real_start
@@ -138,7 +136,7 @@ print_no_halt:
 
 
 
-/* 
+/*
     this function assumes that paging is disabled (or everything is mapped 1:1)
     param 1: pointer to string ended with null terminator (C string)
 */
@@ -224,15 +222,15 @@ print_and_halt:
 gdt_table_real_mode:
     .quad 0             /* Empty entry */
 
-	.short 0xffff
-	.short 0
+    .short 0xffff
+    .short 0
     .byte 0
     .byte 0b10011010
     .byte 0b00001111
     .byte 0x0
 
     .short 0xffff
-	.short 0
+    .short 0
     .byte 0
     .byte 0b10010010
     .byte 0b00001111
@@ -244,9 +242,6 @@ no_long_mode_string:
 
 no_pae_string:
     .asciz "Your computer does not support PAE. Halting!"
-
-pentium_m_forcepae_string:
-    .asciz "Intel Pentium M detected. Assuming present but unadvertised PAE support."
 
 kernel_image_too_big_string:
     .asciz "Error: Kernel Image too big for memory slot. Halting!"
@@ -333,7 +328,7 @@ real_start:
     mov $end_of_prekernel_image, %esi
     cmp $MAX_KERNEL_SIZE, %esi
     jbe kernel_not_too_large
-    
+
     movl $kernel_image_too_big_string, %esi
     pushl %esi
     call print_and_halt
@@ -351,18 +346,6 @@ kernel_not_too_large:
     testl $(1 << 6), %edx /* Test if the PAE-bit, which is bit 6, is set in the edx register. */
     jnz pae_supported     /* If the bit is not set, there is no PAE capability. */
 
-    /* We might have a Pentium M, which supports PAE but doesn't advertise it. */
-    call is_pentium_m_with_hidden_pae
-    test %eax, %eax
-    jz .Lskip_forcepae
-
-    /* Print a warning message, but continue. */
-    pushl $pentium_m_forcepae_string
-    call print_no_halt
-    subl $4, %esp
-    jmp pae_supported
-.Lskip_forcepae:
-
     /* Since there is no PAE capability, halt with an error message */
     movl $no_pae_string, %esi
     pushl %esi
@@ -370,8 +353,6 @@ kernel_not_too_large:
     /* We should not return, but just in case, halt */
     hlt
 
-
-#if ARCH(X86_64)
 pae_supported:
     movl $0x80000001, %eax
     cpuid
@@ -393,15 +374,6 @@ long_mode_supported:
     popl %ebx
     popl %edx
     popl %eax
-#else
-/* If PAE is supported, continue with booting the system */
-
-pae_supported:
-    /* restore the pushed registers and continue with booting */
-    popl %ebx
-    popl %edx
-    popl %eax
-#endif
 
     /* We don't know where the bootloader might have put the command line.
      * It might be at an inconvenient location that we're not about to map,
@@ -416,7 +388,6 @@ pae_supported:
     movl $kernel_cmdline, %edi
     rep movsl
 
-#if ARCH(X86_64)
     /* clear pml4t */
     movl $boot_pml4t, %edi
     movl $1024, %ecx
@@ -428,7 +399,6 @@ pae_supported:
     movl $boot_pdpt, 0(%edi)
     /* R/W + Present */
     orl $0x3, 0(%edi)
-#endif
 
     /* clear pdpt */
     movl $boot_pdpt, %edi
@@ -436,17 +406,16 @@ pae_supported:
     xorl %eax, %eax
     rep stosl
 
-    /* set up pdpt[0] and pdpt[3] */
+    /* set up pdpt[0]..pdpt[3] */
     movl $boot_pdpt, %edi
-#if ARCH(X86_64)
     movl $(boot_pd0 + 3), 0(%edi)
-#else
-    movl $(boot_pd0 + 1), 0(%edi)
-#endif
+    movl $(boot_pd0 + 4096 + 3), 8(%edi)
+    movl $(boot_pd0 + 4096 * 2 + 3), 16(%edi)
+    movl $(boot_pd0 + 4096 * 3 + 3), 24(%edi)
 
     /* clear pd0 */
     movl $boot_pd0, %edi
-    movl $1024, %ecx
+    movl $4096, %ecx
     xorl %eax, %eax
     rep stosl
 
@@ -482,13 +451,21 @@ pae_supported:
     addl $4096, %eax
     loop 1b
 
-#if ARCH(X86_64)
+    /* Map the rest with 2MiB pages */
+    /* add boot_pd0_pts to boot_pd0 */
+    movl $(2048 - (MAX_KERNEL_SIZE >> 21)), %ecx
+    movl $(boot_pd0 + (MAX_KERNEL_SIZE >> 21) * 8), %edi
+    /* R/W + Present + 2 MiB */
+    movl $(MAX_KERNEL_SIZE | 0x83), %eax
+
+1:
+    movl %eax, 0(%edi)
+    addl $8, %edi
+    addl $(1 << 21), %eax
+    loop 1b
+
     /* point CR3 to PML4T */
     movl $boot_pml4t, %eax
-#else
-    /* point CR3 to PDPT */
-    movl $boot_pdpt, %eax
-#endif
 
     movl %eax, %cr3
 
@@ -497,14 +474,12 @@ pae_supported:
     orl $0x60, %eax
     movl %eax, %cr4
 
-#if ARCH(X86_64)
 1:
     /* Enter Long-mode! ref(https://wiki.osdev.org/Setting_Up_Long_Mode)*/
     mov $0xC0000080, %ecx           /* Set the C-register to 0xC0000080, which is the EFER MSR.*/
     rdmsr                           /* Read from the model-specific register.*/
     or $(1 << 8), %eax              /* Set the LM-bit which is the 9th bit (bit 8).*/
     wrmsr                           /* Write to the model-specific register.*/
-#endif
 
     /* enable PG */
     movl %cr0, %eax
@@ -515,7 +490,6 @@ pae_supported:
     mov $stack_top, %esp
     and $-16, %esp
 
-#if ARCH(X86_64)
     /* Now we are in 32-bit compatibility mode, We still need to load a 64-bit GDT */
     mov $gdt64ptr, %eax
     lgdt (%eax)
@@ -532,9 +506,6 @@ pae_supported:
     mov %ax, %es
     mov %ax, %fs
     mov %ax, %gs
-#else
-    movl %ebx, multiboot_info_ptr
-#endif
 
     call reload_cr3
     call init
@@ -545,131 +516,8 @@ loop:
     jmp loop
 
 reload_cr3:
-#if ARCH(X86_64)
     pushq %rax
     mov %cr3, %rax
     mov %rax, %cr3
     popq %rax
-#else
-    pushl %eax
-    movl %cr3, %eax
-    movl %eax, %cr3
-    popl %eax
-#endif
-    ret
-
-
-.code32
-
-/* Determines if the CPU is made by Intel */
-is_intel_cpu:
-    pushl %ebp
-    movl %esp, %ebp
-
-    pushl %ebx
-
-    xorl %eax, %eax
-    cpuid
-
-    xorl %eax, %eax
-    cmpl $0x756e6547, %ebx /* "Genu" */
-    jnz .Lis_intel_cpu_end
-    cmpl $0x49656e69, %edx /* "ineI" */
-    jnz .Lis_intel_cpu_end
-    cmpl $0x6c65746e, %ecx /* "ntel" */
-    jnz .Lis_intel_cpu_end
-
-    movl $1, %eax
-
-.Lis_intel_cpu_end:
-    popl %ebx
-
-    movl %ebp, %esp
-    popl %ebp
-
-    ret
-
-/* Fetches the CPU family (eax) and model (edx) */
-get_cpu_model_family:
-    pushl %ebp
-    movl %esp, %ebp
-
-    pushl %ebx
-
-    movl $0x1, %eax
-    cpuid
-    movl %eax, %ebx
-    movl %eax, %ecx
-    movl %eax, %edx
-
-    /* Bit 8 - 11: Processor Family */
-    shrl $8, %eax
-    andl $0xf, %eax
-
-    /* Bit 4 - 7: Processor Model */
-    shrl $4, %edx
-    andl $0xf, %edx
-
-    /* Bit 16 - 19: Extended Model ID */
-    /* (only applies if Family is 6 or 15) */
-    cmpl $6, %eax
-    jz .Ldo_ext_model
-    cmpl $15, %eax
-    jz .Ldo_ext_model
-    jmp .Lskip_ext_model
-.Ldo_ext_model:
-    shrl $16, %ebx
-    andl $0xf, %ebx
-    shll $4, %ebx
-    addl %ebx, %edx
-.Lskip_ext_model:
-
-    /* Bit 20 - 27: Extended Family */
-    /* (only applies if Family is 15) */
-    cmpl $15, %eax
-    jnz .Lskip_ext_family
-    shrl $20, %ecx
-    andl $0xff, %ecx
-    addl %ecx, %eax
-.Lskip_ext_family:
-
-    popl %ebx
-
-    movl %ebp, %esp
-    popl %ebp
-
-    ret
-
-/* Determines if the CPU is an Intel Pentium M with hidden PAE flag. */
-is_pentium_m_with_hidden_pae:
-    pushl %ebp
-    movl %esp, %ebp
-
-    /* Check the manufacturer string. */
-    call is_intel_cpu
-    testl %eax, %eax
-    jz .Lis_pentium_m_end
-
-    /* Check the processor model. */
-    call get_cpu_model_family
-    movl %eax, %ecx       /* Free up eax for the return value. */
-    xorl %eax, %eax
-
-    cmpl $6, %ecx         /* Family 6: Big Cores */
-    jnz .Lis_pentium_m_end
-
-    cmpl $9, %edx         /* Model 9: Pentium M (Banias) */
-    jz .Lpass_model_check
-    cmpl $13, %edx        /* Model 13: Pentium M (Dothan) */
-    jz .Lpass_model_check
-    jmp .Lis_pentium_m_end
-.Lpass_model_check:
-
-    /* We are a Pentium M. */
-    movl $1, %eax
-
-.Lis_pentium_m_end:
-    movl %ebp, %esp
-    popl %ebp
-
     ret

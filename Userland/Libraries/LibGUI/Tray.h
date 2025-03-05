@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -18,11 +18,11 @@ class Tray : public GUI::Frame {
 public:
     virtual ~Tray() override = default;
 
-    size_t add_item(String text, RefPtr<Gfx::Bitmap>, String custom_data);
+    size_t add_item(ByteString text, RefPtr<Gfx::Bitmap const>, ByteString custom_data);
 
     void set_item_checked(size_t index, bool);
 
-    Function<void(String const&)> on_item_activation;
+    Function<void(ByteString const&)> on_item_activation;
 
 protected:
     virtual void paint_event(GUI::PaintEvent&) override;
@@ -38,14 +38,14 @@ private:
     Tray();
 
     struct Item {
-        String text;
-        RefPtr<Gfx::Bitmap> bitmap;
-        String custom_data;
+        ByteString text;
+        RefPtr<Gfx::Bitmap const> bitmap;
+        ByteString custom_data;
         size_t index { 0 };
         Gfx::IntRect rect(Tray const&) const;
     };
 
-    Item* item_at(Gfx::IntPoint const&);
+    Item* item_at(Gfx::IntPoint);
 
     Vector<Item> m_items;
 

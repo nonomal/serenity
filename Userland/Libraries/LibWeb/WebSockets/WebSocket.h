@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021-2022, Dex♪ <dexes.ttp@gmail.com>
+ * Copyright (c) 2023, Kenneth Myhra <kennethmyhra@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,15 +8,13 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
-#include <AK/RefCounted.h>
-#include <AK/URL.h>
-#include <AK/Weakable.h>
-#include <LibCore/Object.h>
-#include <LibWeb/Bindings/WindowObject.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibCore/EventReceiver.h>
+#include <LibURL/URL.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/DOM/ExceptionOr.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/HTML/Window.h>
+#include <LibWeb/WebIDL/ExceptionOr.h>
 
 #define ENUMERATE_WEBSOCKET_EVENT_HANDLERS(E) \
     E(onerror, HTML::EventNames::error)       \
@@ -28,11 +27,10 @@ namespace Web::WebSockets {
 class WebSocketClientSocket;
 class WebSocketClientManager;
 
-class WebSocket final
-    : public RefCounted<WebSocket>
-    , public Weakable<WebSocket>
-    , public DOM::EventTarget
-    , public Bindings::Wrappable {
+class WebSocket final : public DOM::EventTarget {
+    WEB_PLATFORM_OBJECT(WebSocket, DOM::EventTarget);
+    JS_DECLARE_ALLOCATOR(WebSocket);
+
 public:
     enum class ReadyState : u16 {
         Connecting = 0,
@@ -41,55 +39,44 @@ public:
         Closed = 3,
     };
 
-    using WrapperType = Bindings::WebSocketWrapper;
-
-    static NonnullRefPtr<WebSocket> create(HTML::Window& window, AK::URL& url)
-    {
-        return adopt_ref(*new WebSocket(window, url));
-    }
-
-    static DOM::ExceptionOr<NonnullRefPtr<WebSocket>> create_with_global_object(Bindings::WindowObject& window, String const& url);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<WebSocket>> construct_impl(JS::Realm&, String const& url, Optional<Variant<String, Vector<String>>> const& protocols);
 
     virtual ~WebSocket() override;
 
-    using RefCounted::ref;
-    using RefCounted::unref;
-
-    String url() const { return m_url.to_string(); }
+    WebIDL::ExceptionOr<String> url() const { return TRY_OR_THROW_OOM(vm(), m_url.to_string()); }
+    void set_url(URL::URL url) { m_url = move(url); }
 
 #undef __ENUMERATE
-#define __ENUMERATE(attribute_name, event_name)                  \
-    void set_##attribute_name(Optional<Bindings::CallbackType>); \
-    Bindings::CallbackType* attribute_name();
+#define __ENUMERATE(attribute_name, event_name)       \
+    void set_##attribute_name(WebIDL::CallbackType*); \
+    WebIDL::CallbackType* attribute_name();
     ENUMERATE_WEBSOCKET_EVENT_HANDLERS(__ENUMERATE)
 #undef __ENUMERATE
 
     ReadyState ready_state() const;
     String extensions() const;
-    String protocol() const;
+    WebIDL::ExceptionOr<String> protocol() const;
 
-    String const& binary_type() { return m_binary_type; };
-    void set_binary_type(String const& type) { m_binary_type = type; };
+    String const& binary_type() { return m_binary_type; }
+    void set_binary_type(String const& type) { m_binary_type = type; }
 
-    DOM::ExceptionOr<void> close(Optional<u16> code, Optional<String> reason);
-    DOM::ExceptionOr<void> send(String const& data);
+    WebIDL::ExceptionOr<void> close(Optional<u16> code, Optional<String> reason);
+    WebIDL::ExceptionOr<void> send(Variant<JS::Handle<WebIDL::BufferSource>, JS::Handle<FileAPI::Blob>, String> const& data);
 
 private:
-    virtual void ref_event_target() override { ref(); }
-    virtual void unref_event_target() override { unref(); }
-    virtual JS::Object* create_wrapper(JS::GlobalObject&) override;
-
     void on_open();
     void on_message(ByteBuffer message, bool is_text);
     void on_error();
     void on_close(u16 code, String reason, bool was_clean);
 
-    explicit WebSocket(HTML::Window&, AK::URL&);
+    WebSocket(JS::Realm&);
 
-    NonnullRefPtr<HTML::Window> m_window;
+    virtual void initialize(JS::Realm&) override;
 
-    AK::URL m_url;
-    String m_binary_type { "blob" };
+    ErrorOr<void> establish_web_socket_connection(URL::URL& url_record, Vector<String>& protocols, HTML::EnvironmentSettingsObject& client);
+
+    URL::URL m_url;
+    String m_binary_type { "blob"_string };
     RefPtr<WebSocketClientSocket> m_websocket;
 };
 
@@ -98,8 +85,8 @@ public:
     virtual ~WebSocketClientSocket();
 
     struct CertificateAndKey {
-        String certificate;
-        String key;
+        ByteString certificate;
+        ByteString key;
     };
 
     struct Message {
@@ -114,31 +101,20 @@ public:
     };
 
     virtual Web::WebSockets::WebSocket::ReadyState ready_state() = 0;
+    virtual ByteString subprotocol_in_use() = 0;
 
     virtual void send(ByteBuffer binary_or_text_message, bool is_text) = 0;
     virtual void send(StringView text_message) = 0;
-    virtual void close(u16 code = 1005, String reason = {}) = 0;
+    virtual void close(u16 code = 1005, ByteString reason = {}) = 0;
 
     Function<void()> on_open;
     Function<void(Message)> on_message;
     Function<void(Error)> on_error;
-    Function<void(u16 code, String reason, bool was_clean)> on_close;
+    Function<void(u16 code, ByteString reason, bool was_clean)> on_close;
     Function<CertificateAndKey()> on_certificate_requested;
 
 protected:
-    explicit WebSocketClientSocket();
-};
-
-class WebSocketClientManager : public Core::Object {
-    C_OBJECT_ABSTRACT(WebSocketClientManager)
-public:
-    static void initialize(RefPtr<WebSocketClientManager>);
-    static WebSocketClientManager& the();
-
-    virtual RefPtr<WebSocketClientSocket> connect(AK::URL const&, String const& origin) = 0;
-
-protected:
-    explicit WebSocketClientManager();
+    explicit WebSocketClientSocket() = default;
 };
 
 }

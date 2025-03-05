@@ -9,13 +9,15 @@
 
 namespace JS {
 
-MapIterator* MapIterator::create(GlobalObject& global_object, Map& map, Object::PropertyKind iteration_kind)
+JS_DEFINE_ALLOCATOR(MapIterator);
+
+NonnullGCPtr<MapIterator> MapIterator::create(Realm& realm, Map& map, Object::PropertyKind iteration_kind)
 {
-    return global_object.heap().allocate<MapIterator>(global_object, map, iteration_kind, *global_object.map_iterator_prototype());
+    return realm.heap().allocate<MapIterator>(realm, map, iteration_kind, realm.intrinsics().map_iterator_prototype());
 }
 
 MapIterator::MapIterator(Map& map, Object::PropertyKind iteration_kind, Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
     , m_map(map)
     , m_iteration_kind(iteration_kind)
     , m_iterator(static_cast<Map const&>(map).begin())
@@ -25,7 +27,7 @@ MapIterator::MapIterator(Map& map, Object::PropertyKind iteration_kind, Object& 
 void MapIterator::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_map);
+    visitor.visit(m_map);
 }
 
 }

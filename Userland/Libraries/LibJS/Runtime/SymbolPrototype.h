@@ -12,13 +12,15 @@ namespace JS {
 
 class SymbolPrototype final : public Object {
     JS_OBJECT(SymbolPrototype, Object);
+    JS_DECLARE_ALLOCATOR(SymbolPrototype);
 
 public:
-    explicit SymbolPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~SymbolPrototype() override = default;
 
 private:
+    explicit SymbolPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(description_getter);
 
     JS_DECLARE_NATIVE_FUNCTION(to_string);

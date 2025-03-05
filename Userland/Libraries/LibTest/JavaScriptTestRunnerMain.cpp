@@ -7,6 +7,7 @@
  */
 
 #include <LibCore/ArgsParser.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibTest/JavaScriptTestRunner.h>
 #include <signal.h>
 #include <stdio.h>
@@ -19,14 +20,12 @@ namespace JS {
 
 RefPtr<::JS::VM> g_vm;
 bool g_collect_on_every_allocation = false;
-bool g_run_bytecode = false;
-String g_currently_running_test;
-HashMap<String, FunctionWithLength> s_exposed_global_functions;
+ByteString g_currently_running_test;
+HashMap<ByteString, FunctionWithLength> s_exposed_global_functions;
 Function<void()> g_main_hook;
-Function<NonnullOwnPtr<JS::Interpreter>()> g_create_interpreter_hook;
-HashMap<bool*, Tuple<String, String, char>> g_extra_args;
-IntermediateRunFileResult (*g_run_file)(String const&, JS::Interpreter&, JS::ExecutionContext&) = nullptr;
-String g_test_root;
+HashMap<bool*, Tuple<ByteString, ByteString, char>> g_extra_args;
+IntermediateRunFileResult (*g_run_file)(ByteString const&, JS::Realm&, JS::ExecutionContext&) = nullptr;
+ByteString g_test_root;
 int g_test_argc;
 char** g_test_argv;
 
@@ -43,7 +42,7 @@ static void handle_sigabrt(int)
     Test::cleanup();
     struct sigaction act;
     memset(&act, 0, sizeof(act));
-    act.sa_flags = SA_NOCLDWAIT;
+    act.sa_flags = 0;
     act.sa_handler = SIG_DFL;
     int rc = sigaction(SIGABRT, &act, nullptr);
     if (rc < 0) {
@@ -55,6 +54,11 @@ static void handle_sigabrt(int)
 
 int main(int argc, char** argv)
 {
+    Vector<StringView> arguments;
+    arguments.ensure_capacity(argc);
+    for (auto i = 0; i < argc; ++i)
+        arguments.append({ argv[i], strlen(argv[i]) });
+
     g_test_argc = argc;
     g_test_argv = argv;
     auto program_name = LexicalPath::basename(argv[0]);
@@ -62,7 +66,7 @@ int main(int argc, char** argv)
 
     struct sigaction act;
     memset(&act, 0, sizeof(act));
-    act.sa_flags = SA_NOCLDWAIT;
+    act.sa_flags = 0;
     act.sa_handler = handle_sigabrt;
     int rc = sigaction(SIGABRT, &act, nullptr);
     if (rc < 0) {
@@ -81,16 +85,16 @@ int main(int argc, char** argv)
 
     bool print_times = false;
     bool print_progress =
-#ifdef __serenity__
+#ifdef AK_OS_SERENITY
         true; // Use OSC 9 to print progress
 #else
         false;
 #endif
     bool print_json = false;
     bool per_file = false;
-    char const* specified_test_root = nullptr;
-    String common_path;
-    String test_glob;
+    StringView specified_test_root;
+    ByteString common_path;
+    ByteString test_glob;
 
     Core::ArgsParser args_parser;
     args_parser.add_option(print_times, "Show duration of each test", "show-time", 't');
@@ -99,7 +103,7 @@ int main(int argc, char** argv)
         .help_string = "Show progress with OSC 9 (true, false)",
         .long_name = "show-progress",
         .short_name = 'p',
-        .accept_value = [&](auto* str) {
+        .accept_value = [&](StringView str) {
             if ("true"sv == str)
                 print_progress = true;
             else if ("false"sv == str)
@@ -109,56 +113,51 @@ int main(int argc, char** argv)
             return true;
         },
     });
+
     args_parser.add_option(print_json, "Show results as JSON", "json", 'j');
-    args_parser.add_option(per_file, "Show detailed per-file results as JSON (implies -j)", "per-file", 0);
+    args_parser.add_option(per_file, "Show detailed per-file results as JSON (implies -j)", "per-file");
     args_parser.add_option(g_collect_on_every_allocation, "Collect garbage after every allocation", "collect-often", 'g');
-    args_parser.add_option(g_run_bytecode, "Use the bytecode interpreter", "run-bytecode", 'b');
     args_parser.add_option(JS::Bytecode::g_dump_bytecode, "Dump the bytecode", "dump-bytecode", 'd');
     args_parser.add_option(test_glob, "Only run tests matching the given glob", "filter", 'f', "glob");
     for (auto& entry : g_extra_args)
         args_parser.add_option(*entry.key, entry.value.get<0>().characters(), entry.value.get<1>().characters(), entry.value.get<2>());
     args_parser.add_positional_argument(specified_test_root, "Tests root directory", "path", Core::ArgsParser::Required::No);
     args_parser.add_positional_argument(common_path, "Path to tests-common.js", "common-path", Core::ArgsParser::Required::No);
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     if (per_file)
         print_json = true;
 
-    test_glob = String::formatted("*{}*", test_glob);
+    test_glob = ByteString::formatted("*{}*", test_glob);
 
     if (getenv("DISABLE_DBG_OUTPUT")) {
         AK::set_debug_enabled(false);
     }
 
-    if (JS::Bytecode::g_dump_bytecode && !g_run_bytecode) {
-        warnln("--dump-bytecode can only be used when --run-bytecode is specified.");
-        return 1;
-    }
+    ByteString test_root;
 
-    String test_root;
-
-    if (specified_test_root) {
-        test_root = String { specified_test_root };
+    if (!specified_test_root.is_empty()) {
+        test_root = ByteString { specified_test_root };
     } else {
-#ifdef __serenity__
-        test_root = LexicalPath::join("/home/anon/Tests"sv, String::formatted("{}-tests", program_name.split_view('-').last())).string();
+#ifdef AK_OS_SERENITY
+        test_root = LexicalPath::join("/home/anon/Tests"sv, ByteString::formatted("{}-tests", program_name.split_view('-').last())).string();
 #else
         char* serenity_source_dir = getenv("SERENITY_SOURCE_DIR");
         if (!serenity_source_dir) {
             warnln("No test root given, {} requires the SERENITY_SOURCE_DIR environment variable to be set", g_program_name);
             return 1;
         }
-        test_root = String::formatted("{}/{}", serenity_source_dir, g_test_root_fragment);
-        common_path = String::formatted("{}/Userland/Libraries/LibJS/Tests/test-common.js", serenity_source_dir);
+        test_root = ByteString::formatted("{}/{}", serenity_source_dir, g_test_root_fragment);
+        common_path = ByteString::formatted("{}/Userland/Libraries/LibJS/Tests/test-common.js", serenity_source_dir);
 #endif
     }
-    if (!Core::File::is_directory(test_root)) {
+    if (!FileSystem::is_directory(test_root)) {
         warnln("Test root is not a directory: {}", test_root);
         return 1;
     }
 
     if (common_path.is_empty()) {
-#ifdef __serenity__
+#ifdef AK_OS_SERENITY
         common_path = "/home/anon/Tests/js-tests/test-common.js";
 #else
         char* serenity_source_dir = getenv("SERENITY_SOURCE_DIR");
@@ -166,12 +165,23 @@ int main(int argc, char** argv)
             warnln("No test root given, {} requires the SERENITY_SOURCE_DIR environment variable to be set", g_program_name);
             return 1;
         }
-        common_path = String::formatted("{}/Userland/Libraries/LibJS/Tests/test-common.js", serenity_source_dir);
+        common_path = ByteString::formatted("{}/Userland/Libraries/LibJS/Tests/test-common.js", serenity_source_dir);
 #endif
     }
 
-    test_root = Core::File::real_path_for(test_root);
-    common_path = Core::File::real_path_for(common_path);
+    auto test_root_or_error = FileSystem::real_path(test_root);
+    if (test_root_or_error.is_error()) {
+        warnln("Failed to resolve test root: {}", test_root_or_error.error());
+        return 1;
+    }
+    test_root = test_root_or_error.release_value();
+
+    auto common_path_or_error = FileSystem::real_path(common_path);
+    if (common_path_or_error.is_error()) {
+        warnln("Failed to resolve common path: {}", common_path_or_error.error());
+        return 1;
+    }
+    common_path = common_path_or_error.release_value();
 
     if (chdir(test_root.characters()) < 0) {
         auto saved_errno = errno;
@@ -183,8 +193,8 @@ int main(int argc, char** argv)
         g_main_hook();
 
     if (!g_vm) {
-        g_vm = JS::VM::create();
-        g_vm->enable_default_host_import_module_dynamically_hook();
+        g_vm = MUST(JS::VM::create());
+        g_vm->set_dynamic_imports_allowed(true);
     }
 
     Test::JS::TestRunner test_runner(test_root, common_path, print_times, print_progress, print_json, per_file);

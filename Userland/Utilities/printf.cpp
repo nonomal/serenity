@@ -5,8 +5,8 @@
  */
 
 #include <AK/Assertions.h>
+#include <AK/ByteString.h>
 #include <AK/PrintfImplementation.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Types.h>
 #include <LibMain/Main.h>
@@ -234,7 +234,7 @@ struct ArgvWithCount {
     int& argc;
 };
 
-static String handle_escapes(char const* string)
+static ByteString handle_escapes(char const* string)
 {
     StringBuilder builder;
     for (auto c = *string; c; c = *++string) {
@@ -252,7 +252,7 @@ static String handle_escapes(char const* string)
                     builder.append('\b');
                     break;
                 case 'c':
-                    return builder.build();
+                    return builder.to_byte_string();
                 case 'e':
                     builder.append('\e');
                     break;
@@ -288,7 +288,7 @@ static String handle_escapes(char const* string)
         }
     }
 
-    return builder.build();
+    return builder.to_byte_string();
 }
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
@@ -300,7 +300,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto argv = arguments.argv;
 
     ++argv;
-    String format = handle_escapes(*(argv++));
+    ByteString format = handle_escapes(*(argv++));
     auto format_string = format.characters();
 
     argc -= 2;

@@ -87,10 +87,26 @@ bool EditingEngine::on_key(KeyEvent const& event)
         bool const condition_for_up = direction == VerticalDirection::Up && m_editor->cursor().line() > 0;
         bool const condition_for_down = direction == VerticalDirection::Down && m_editor->cursor().line() < (m_editor->line_count() - 1);
 
+        bool const condition_for_up_to_beginning = direction == VerticalDirection::Up && m_editor->cursor().line() == 0;
+        bool const condition_for_down_to_end = direction == VerticalDirection::Down && m_editor->cursor().line() == (m_editor->line_count() - 1);
+
         if (condition_for_up || condition_for_down || m_editor->is_wrapping_enabled())
             m_editor->update_selection(event.shift());
 
+        // Shift + Up on the top line (or only line) selects from the cursor to the start of the line.
+        if (condition_for_up_to_beginning) {
+            m_editor->update_selection(event.shift());
+            move_to_line_beginning();
+        }
+
+        // Shift + Down on the bottom line (or only line) selects from the cursor to the end of the line.
+        if (condition_for_down_to_end) {
+            m_editor->update_selection(event.shift());
+            move_to_line_end();
+        }
+
         move_one_helper(event, direction);
+        return true;
     }
 
     if (event.key() == KeyCode::Key_Home) {
@@ -151,26 +167,28 @@ bool EditingEngine::on_key(KeyEvent const& event)
 void EditingEngine::move_one_left()
 {
     if (m_editor->cursor().column() > 0) {
-        int new_column = m_editor->cursor().column() - 1;
+        auto new_column = m_editor->document().get_previous_grapheme_cluster_boundary(m_editor->cursor());
         m_editor->set_cursor(m_editor->cursor().line(), new_column);
     } else if (m_editor->cursor().line() > 0) {
-        int new_line = m_editor->cursor().line() - 1;
-        int new_column = m_editor->lines()[new_line].length();
+        auto new_line = m_editor->cursor().line() - 1;
+        auto new_column = m_editor->lines()[new_line]->length();
         m_editor->set_cursor(new_line, new_column);
     }
 }
 
 void EditingEngine::move_one_right()
 {
-    int new_line = m_editor->cursor().line();
-    int new_column = m_editor->cursor().column();
+    auto new_line = m_editor->cursor().line();
+    auto new_column = m_editor->cursor().column();
+
     if (m_editor->cursor().column() < m_editor->current_line().length()) {
         new_line = m_editor->cursor().line();
-        new_column = m_editor->cursor().column() + 1;
+        new_column = m_editor->document().get_next_grapheme_cluster_boundary(m_editor->cursor());
     } else if (m_editor->cursor().line() != m_editor->line_count() - 1) {
         new_line = m_editor->cursor().line() + 1;
         new_column = 0;
     }
+
     m_editor->set_cursor(new_line, new_column);
 }
 
@@ -223,9 +241,29 @@ void EditingEngine::move_to_logical_line_beginning()
 void EditingEngine::move_to_line_beginning()
 {
     if (m_editor->is_wrapping_enabled()) {
-        // FIXME: Replicate the first_nonspace_column behavior in wrapping mode.
+        TextPosition new_cursor;
+
         auto home_position = m_editor->cursor_content_rect().location().translated(-m_editor->width(), 0);
-        m_editor->set_cursor(m_editor->text_position_at_content_position(home_position));
+        auto start_of_visual_line = m_editor->text_position_at_content_position(home_position);
+        auto first_non_space_column = m_editor->current_line().first_non_whitespace_column();
+
+        // Subsequent "move_to_line_beginning()" calls move us in the following way:
+        // 1. To the start of the current visual line
+        // 2. To the first non-whitespace character on the logical line
+        // 3. To the first character on the logical line
+        // ...and then repeat 2 and 3.
+        if (m_editor->cursor() == start_of_visual_line) {
+            // Already at 1 so go to 2
+            new_cursor = { m_editor->cursor().line(), first_non_space_column };
+        } else if (m_editor->cursor().column() == first_non_space_column) {
+            // At 2 so go to 3
+            new_cursor = { m_editor->cursor().line(), 0 };
+        } else {
+            // Anything else, so go to 1
+            new_cursor = start_of_visual_line;
+        }
+
+        m_editor->set_cursor(new_cursor);
     } else {
         move_to_logical_line_beginning();
     }
@@ -233,12 +271,10 @@ void EditingEngine::move_to_line_beginning()
 
 void EditingEngine::move_to_line_end()
 {
-    if (m_editor->is_wrapping_enabled()) {
-        auto end_position = m_editor->cursor_content_rect().location().translated(m_editor->width(), 0);
-        m_editor->set_cursor(m_editor->text_position_at_content_position(end_position));
-    } else {
+    if (m_editor->is_wrapping_enabled())
+        m_editor->set_cursor_to_end_of_visual_line();
+    else
         move_to_logical_line_end();
-    }
 }
 
 void EditingEngine::move_to_logical_line_end()
@@ -265,19 +301,12 @@ EditingEngine::DidMoveALine EditingEngine::move_one_up(KeyEvent const& event)
             }
             return DidMoveALine::No;
         }
-        TextPosition new_cursor;
-        if (m_editor->is_wrapping_enabled()) {
-            auto position_above = m_editor->cursor_content_rect().location().translated(0, -m_editor->line_height());
-            new_cursor = m_editor->text_position_at_content_position(position_above);
-        } else {
-            size_t new_line = m_editor->cursor().line() - 1;
-            size_t new_column = min(m_editor->cursor().column(), m_editor->line(new_line).length());
-            new_cursor = { new_line, new_column };
-        }
+        auto position_above = m_editor->cursor_content_rect().location().translated(0, -m_editor->line_height());
+        TextPosition new_cursor = m_editor->text_position_at_content_position(position_above);
         m_editor->set_cursor(new_cursor);
     }
     return DidMoveALine::No;
-};
+}
 
 EditingEngine::DidMoveALine EditingEngine::move_one_down(KeyEvent const& event)
 {
@@ -289,52 +318,29 @@ EditingEngine::DidMoveALine EditingEngine::move_one_down(KeyEvent const& event)
             }
             return DidMoveALine::No;
         }
-        TextPosition new_cursor;
-        if (m_editor->is_wrapping_enabled()) {
-            auto position_below = m_editor->cursor_content_rect().location().translated(0, m_editor->line_height());
-            new_cursor = m_editor->text_position_at_content_position(position_below);
-        } else {
-            size_t new_line = m_editor->cursor().line() + 1;
-            size_t new_column = min(m_editor->cursor().column(), m_editor->line(new_line).length());
-            new_cursor = { new_line, new_column };
-        }
+        auto position_below = m_editor->cursor_content_rect().location().translated(0, m_editor->line_height());
+        TextPosition new_cursor = m_editor->text_position_at_content_position(position_below);
         m_editor->set_cursor(new_cursor);
     }
     return DidMoveALine::No;
-};
+}
 
 void EditingEngine::move_up(double page_height_factor)
 {
     if (m_editor->cursor().line() > 0 || m_editor->is_wrapping_enabled()) {
         int pixels = (int)(m_editor->visible_content_rect().height() * page_height_factor);
-
-        TextPosition new_cursor;
-        if (m_editor->is_wrapping_enabled()) {
-            auto position_above = m_editor->cursor_content_rect().location().translated(0, -pixels);
-            new_cursor = m_editor->text_position_at_content_position(position_above);
-        } else {
-            size_t page_step = (size_t)pixels / (size_t)m_editor->line_height();
-            size_t new_line = m_editor->cursor().line() < page_step ? 0 : m_editor->cursor().line() - page_step;
-            size_t new_column = min(m_editor->cursor().column(), m_editor->line(new_line).length());
-            new_cursor = { new_line, new_column };
-        }
+        auto position_above = m_editor->cursor_content_rect().location().translated(0, -pixels);
+        TextPosition new_cursor = m_editor->text_position_at_content_position(position_above);
         m_editor->set_cursor(new_cursor);
     }
-};
+}
 
 void EditingEngine::move_down(double page_height_factor)
 {
     if (m_editor->cursor().line() < (m_editor->line_count() - 1) || m_editor->is_wrapping_enabled()) {
         int pixels = (int)(m_editor->visible_content_rect().height() * page_height_factor);
-        TextPosition new_cursor;
-        if (m_editor->is_wrapping_enabled()) {
-            auto position_below = m_editor->cursor_content_rect().location().translated(0, pixels);
-            new_cursor = m_editor->text_position_at_content_position(position_below);
-        } else {
-            size_t new_line = min(m_editor->line_count() - 1, m_editor->cursor().line() + pixels / m_editor->line_height());
-            size_t new_column = min(m_editor->cursor().column(), m_editor->lines()[new_line].length());
-            new_cursor = { new_line, new_column };
-        }
+        auto position_below = m_editor->cursor_content_rect().location().translated(0, pixels);
+        TextPosition new_cursor = m_editor->text_position_at_content_position(position_below);
         m_editor->set_cursor(new_cursor);
     };
 }
@@ -342,22 +348,22 @@ void EditingEngine::move_down(double page_height_factor)
 void EditingEngine::move_page_up()
 {
     move_up(1);
-};
+}
 
 void EditingEngine::move_page_down()
 {
     move_down(1);
-};
+}
 
 void EditingEngine::move_to_first_line()
 {
     m_editor->set_cursor(0, 0);
-};
+}
 
 void EditingEngine::move_to_last_line()
 {
-    m_editor->set_cursor(m_editor->line_count() - 1, m_editor->lines()[m_editor->line_count() - 1].length());
-};
+    m_editor->set_cursor(m_editor->line_count() - 1, m_editor->lines()[m_editor->line_count() - 1]->length());
+}
 
 void EditingEngine::get_selection_line_boundaries(Badge<MoveLineUpOrDownCommand>, size_t& first_line, size_t& last_line)
 {
@@ -383,14 +389,14 @@ void EditingEngine::delete_char()
     if (!m_editor->is_editable())
         return;
     m_editor->do_delete();
-};
+}
 
 void EditingEngine::delete_line()
 {
     if (!m_editor->is_editable())
         return;
     m_editor->delete_current_line();
-};
+}
 
 MoveLineUpOrDownCommand::MoveLineUpOrDownCommand(TextDocument& document, KeyEvent event, EditingEngine& engine)
     : TextDocumentUndoCommand(document)
@@ -417,7 +423,7 @@ bool MoveLineUpOrDownCommand::merge_with(GUI::Command const&)
     return false;
 }
 
-String MoveLineUpOrDownCommand::action_text() const
+ByteString MoveLineUpOrDownCommand::action_text() const
 {
     return "Move a line";
 }

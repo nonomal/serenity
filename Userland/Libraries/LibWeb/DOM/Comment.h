@@ -6,21 +6,24 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
 #include <LibWeb/DOM/CharacterData.h>
 
 namespace Web::DOM {
 
 class Comment final : public CharacterData {
-public:
-    using WrapperType = Bindings::CommentWrapper;
+    WEB_PLATFORM_OBJECT(Comment, CharacterData);
+    JS_DECLARE_ALLOCATOR(Comment);
 
-    explicit Comment(Document&, String const&);
+public:
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<Comment>> construct_impl(JS::Realm&, String const& data);
     virtual ~Comment() override = default;
 
-    virtual FlyString node_name() const override { return "#comment"; }
+    virtual FlyString node_name() const override { return "#comment"_fly_string; }
 
-    static NonnullRefPtr<Comment> create_with_global_object(Bindings::WindowObject& window, String const& data);
+private:
+    Comment(Document&, String const&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 template<>

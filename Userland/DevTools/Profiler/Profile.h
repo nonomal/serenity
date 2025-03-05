@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Jakub Berkop <jakub.berkop@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,12 +16,12 @@
 #include "SignpostsModel.h"
 #include "SourceModel.h"
 #include <AK/Bitmap.h>
-#include <AK/FlyString.h>
+#include <AK/DeprecatedFlyString.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/OwnPtr.h>
+#include <AK/Time.h>
 #include <AK/Variant.h>
 #include <LibCore/MappedFile.h>
 #include <LibELF/Image.h>
@@ -34,7 +35,7 @@ extern OwnPtr<Debug::DebugInfo> g_kernel_debug_info;
 
 class ProfileNode : public RefCounted<ProfileNode> {
 public:
-    static NonnullRefPtr<ProfileNode> create(Process const& process, FlyString const& object_name, String symbol, FlatPtr address, u32 offset, u64 timestamp, pid_t pid)
+    static NonnullRefPtr<ProfileNode> create(Process const& process, DeprecatedFlyString const& object_name, ByteString symbol, FlatPtr address, u32 offset, u64 timestamp, pid_t pid)
     {
         return adopt_ref(*new ProfileNode(process, object_name, move(symbol), address, offset, timestamp, pid));
     }
@@ -48,13 +49,13 @@ public:
     void will_track_seen_events(size_t profile_event_count)
     {
         if (m_seen_events.size() != profile_event_count)
-            m_seen_events = Bitmap::must_create(profile_event_count, false);
+            m_seen_events = Bitmap::create(profile_event_count, false).release_value_but_fixme_should_propagate_errors();
     }
     bool has_seen_event(size_t event_index) const { return m_seen_events.get(event_index); }
     void did_see_event(size_t event_index) { m_seen_events.set(event_index, true); }
 
-    FlyString const& object_name() const { return m_object_name; }
-    String const& symbol() const { return m_symbol; }
+    DeprecatedFlyString const& object_name() const { return m_object_name; }
+    ByteString const& symbol() const { return m_symbol; }
     FlatPtr address() const { return m_address; }
     u32 offset() const { return m_offset; }
     u64 timestamp() const { return m_timestamp; }
@@ -74,7 +75,7 @@ public:
         m_children.append(child);
     }
 
-    ProfileNode& find_or_create_child(FlyString const& object_name, String symbol, FlatPtr address, u32 offset, u64 timestamp, pid_t pid)
+    ProfileNode& find_or_create_child(DeprecatedFlyString const& object_name, ByteString symbol, FlatPtr address, u32 offset, u64 timestamp, pid_t pid)
     {
         for (size_t i = 0; i < m_children.size(); ++i) {
             auto& child = m_children[i];
@@ -85,7 +86,7 @@ public:
         auto new_child = ProfileNode::create(m_process, object_name, move(symbol), address, offset, timestamp, pid);
         add_child(new_child);
         return new_child;
-    };
+    }
 
     ProfileNode* parent() { return m_parent; }
     ProfileNode const* parent() const { return m_parent; }
@@ -112,13 +113,13 @@ public:
 
 private:
     explicit ProfileNode(Process const&);
-    explicit ProfileNode(Process const&, FlyString const& object_name, String symbol, FlatPtr address, u32 offset, u64 timestamp, pid_t);
+    explicit ProfileNode(Process const&, DeprecatedFlyString const& object_name, ByteString symbol, FlatPtr address, u32 offset, u64 timestamp, pid_t);
 
     bool m_root { false };
     Process const& m_process;
     ProfileNode* m_parent { nullptr };
-    FlyString m_object_name;
-    String m_symbol;
+    DeprecatedFlyString m_object_name;
+    ByteString m_symbol;
     pid_t m_pid { 0 };
     FlatPtr m_address { 0 };
     u32 m_offset { 0 };
@@ -166,8 +167,8 @@ public:
     Vector<NonnullRefPtr<ProfileNode>> const& roots() const { return m_roots; }
 
     struct Frame {
-        FlyString object_name;
-        String symbol;
+        DeprecatedFlyString object_name;
+        ByteString symbol;
         FlatPtr address { 0 };
         u32 offset { 0 };
     };
@@ -195,14 +196,14 @@ public:
         };
 
         struct SignpostData {
-            String string;
+            ByteString string;
             FlatPtr arg {};
         };
 
         struct MmapData {
             FlatPtr ptr {};
             size_t size {};
-            String name;
+            ByteString name;
         };
 
         struct MunmapData {
@@ -212,26 +213,56 @@ public:
 
         struct ProcessCreateData {
             pid_t parent_pid { 0 };
-            String executable;
+            ByteString executable;
         };
 
         struct ProcessExecData {
-            String executable;
+            ByteString executable;
         };
 
         struct ThreadCreateData {
             pid_t parent_tid {};
         };
 
-        struct ReadData {
-            int fd;
-            size_t size;
-            String path;
-            size_t start_timestamp;
-            bool success;
+        // Based on Syscall::SC_open_params
+        struct OpenEventData {
+            int dirfd;
+            ByteString path;
+            int options;
+            u64 mode;
         };
 
-        Variant<std::nullptr_t, SampleData, MallocData, FreeData, SignpostData, MmapData, MunmapData, ProcessCreateData, ProcessExecData, ThreadCreateData, ReadData> data { nullptr };
+        struct CloseEventData {
+            int fd;
+            ByteString path;
+        };
+
+        struct ReadvEventData {
+            int fd;
+            ByteString path;
+            // struct iovec* iov; // TODO: Implement
+            // int iov_count; // TODO: Implement
+        };
+
+        struct ReadEventData {
+            int fd;
+            ByteString path;
+        };
+
+        struct PreadEventData {
+            int fd;
+            ByteString path;
+            FlatPtr buffer_ptr;
+            size_t size;
+            off_t offset;
+        };
+
+        struct FilesystemEventData {
+            Duration duration;
+            Variant<OpenEventData, CloseEventData, ReadvEventData, ReadEventData, PreadEventData> data;
+        };
+
+        Variant<nullptr_t, SampleData, MallocData, FreeData, SignpostData, MmapData, MunmapData, ProcessCreateData, ProcessExecData, ThreadCreateData, FilesystemEventData> data { nullptr };
     };
 
     Vector<Event> const& events() const { return m_events; }

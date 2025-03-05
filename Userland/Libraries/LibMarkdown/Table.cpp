@@ -6,15 +6,17 @@
 
 #include <AK/Debug.h>
 #include <AK/StringBuilder.h>
+#include <AK/Vector.h>
 #include <LibMarkdown/Table.h>
 #include <LibMarkdown/Visitor.h>
 
 namespace Markdown {
 
-String Table::render_for_terminal(size_t view_width) const
+Vector<ByteString> Table::render_lines_for_terminal(size_t view_width) const
 {
     auto unit_width_length = view_width == 0 ? 4 : ((float)(view_width - m_columns.size()) / (float)m_total_width);
     StringBuilder builder;
+    Vector<ByteString> lines;
 
     auto write_aligned = [&](auto const& text, auto width, auto alignment) {
         size_t original_length = text.terminal_length();
@@ -42,10 +44,13 @@ String Table::render_for_terminal(size_t view_width) const
         write_aligned(col.header, width, col.alignment);
     }
 
-    builder.append('\n');
+    lines.append(builder.to_byte_string());
+    builder.clear();
+
     for (size_t i = 0; i < view_width; ++i)
         builder.append('-');
-    builder.append('\n');
+    lines.append(builder.to_byte_string());
+    builder.clear();
 
     for (size_t i = 0; i < m_row_count; ++i) {
         bool first = true;
@@ -60,15 +65,16 @@ String Table::render_for_terminal(size_t view_width) const
             size_t width = col.relative_width * unit_width_length;
             write_aligned(cell, width, col.alignment);
         }
-        builder.append('\n');
+        lines.append(builder.to_byte_string());
+        builder.clear();
     }
 
-    builder.append('\n');
+    lines.append("");
 
-    return builder.to_string();
+    return lines;
 }
 
-String Table::render_to_html(bool) const
+ByteString Table::render_to_html(bool) const
 {
     auto alignment_string = [](Alignment alignment) {
         switch (alignment) {
@@ -108,7 +114,7 @@ String Table::render_to_html(bool) const
     builder.append("</tbody>"sv);
     builder.append("</table>"sv);
 
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
 RecursionDecision Table::walk(Visitor& visitor) const
@@ -138,8 +144,8 @@ OwnPtr<Table> Table::parse(LineIterator& lines)
     if (peek_it.is_end())
         return {};
 
-    auto header_segments = first_line.split_view('|', true);
-    auto header_delimiters = peek_it->split_view('|', true);
+    auto header_segments = first_line.split_view('|', SplitBehavior::KeepEmpty);
+    auto header_delimiters = peek_it->split_view('|', SplitBehavior::KeepEmpty);
 
     if (!header_segments.is_empty())
         header_segments.take_first();
@@ -214,7 +220,7 @@ OwnPtr<Table> Table::parse(LineIterator& lines)
 
         ++lines;
 
-        auto segments = line.split_view('|', true);
+        auto segments = line.split_view('|', SplitBehavior::KeepEmpty);
         segments.take_first();
         if (!segments.is_empty() && segments.last().is_empty())
             segments.take_last();

@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteString.h>
 #include <AK/Format.h>
 #include <AK/Random.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Vector.h>
 #include <Kernel/API/SyscallString.h>
@@ -44,7 +44,7 @@ static bool is_bad_idea(int fn, size_t const* direct_sc_args, size_t const* fake
         // FIXME: Known bug: https://github.com/SerenityOS/serenity/issues/5328
         return direct_sc_args[0] == 1;
     case SC_write:
-    case SC_writev:
+    case SC_pwritev:
         // FIXME: Known bug: https://github.com/SerenityOS/serenity/issues/5328
         return direct_sc_args[0] == 0;
     case SC_pledge:
@@ -101,7 +101,7 @@ static void do_weird_call(size_t attempt, int syscall_fn, size_t arg1, size_t ar
         builder.appendff("{:p}", fake_params[i]);
     }
     builder.append(']');
-    dbgln("{}", builder.build());
+    dbgln("{}", builder.to_byte_string());
 
     // Actually do the syscall ('fake_params' is passed indirectly, if any of arg1, arg2, or arg3 point to it.
     int rc = syscall(Syscall::Function(syscall_fn), arg1, arg2, arg3);
@@ -118,7 +118,7 @@ static void do_random_tests()
     }
 
     // Note that we will also make lots of syscalls for randomness and debugging.
-    const size_t fuzz_syscall_count = 10000;
+    size_t const fuzz_syscall_count = 10000;
 
     size_t direct_sc_args[3] = { 0 };
     // Isolate to a separate region to make corruption less likely, because we will write to it:

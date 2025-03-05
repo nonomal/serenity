@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
- * Copyright (c) 2022, Jakob-Niklas See <git@nwex.de>
+ * Copyright (c) 2022, networkException <networkexception@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -131,11 +131,13 @@ void AbstractButton::mouseup_event(MouseEvent& event)
     if (event.button() == m_pressed_mouse_button && m_being_pressed) {
         bool was_auto_repeating = m_auto_repeat_timer->is_active();
         m_auto_repeat_timer->stop();
-        bool was_being_pressed = m_being_pressed;
+        m_was_being_pressed = m_being_pressed;
+        ScopeGuard update_was_being_pressed { [this] { m_was_being_pressed = m_being_pressed; } };
         m_being_pressed = false;
         m_pressed_mouse_button = MouseButton::None;
-        repaint();
-        if (was_being_pressed && !was_auto_repeating) {
+        if (!is_checkable() || is_checked())
+            repaint();
+        if (m_was_being_pressed && !was_auto_repeating) {
             switch (event.button()) {
             case MouseButton::Primary:
                 click(event.modifiers());
@@ -149,6 +151,12 @@ void AbstractButton::mouseup_event(MouseEvent& event)
         }
     }
     Widget::mouseup_event(event);
+}
+
+void AbstractButton::doubleclick_event(GUI::MouseEvent& event)
+{
+    double_click(event.modifiers());
+    Widget::doubleclick_event(event);
 }
 
 void AbstractButton::enter_event(Core::Event&)
@@ -212,7 +220,7 @@ void AbstractButton::keydown_event(KeyEvent& event)
             new_checked_index = this_index == 0 ? exclusive_siblings.size() - 1 : this_index - 1;
         else
             new_checked_index = this_index == exclusive_siblings.size() - 1 ? 0 : this_index + 1;
-        exclusive_siblings[new_checked_index].set_checked(true);
+        exclusive_siblings[new_checked_index].click();
         return;
     }
     Widget::keydown_event(event);
@@ -249,6 +257,8 @@ void AbstractButton::paint_text(Painter& painter, Gfx::IntRect const& rect, Gfx:
 void AbstractButton::change_event(Event& event)
 {
     if (event.type() == Event::Type::EnabledChange) {
+        if (m_auto_repeat_timer->is_active())
+            m_auto_repeat_timer->stop();
         if (!is_enabled()) {
             bool was_being_pressed = m_being_pressed;
             m_being_pressed = false;

@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <AK/Platform.h>
+
 namespace AK {
 
 enum class RecursionDecision {
@@ -16,4 +18,6 @@ enum class RecursionDecision {
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::RecursionDecision;
+#endif

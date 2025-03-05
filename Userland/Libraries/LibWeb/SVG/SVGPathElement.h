@@ -14,20 +14,24 @@
 namespace Web::SVG {
 
 class SVGPathElement final : public SVGGeometryElement {
-public:
-    using WrapperType = Bindings::SVGPathElementWrapper;
+    WEB_PLATFORM_OBJECT(SVGPathElement, SVGGeometryElement);
+    JS_DECLARE_ALLOCATOR(SVGPathElement);
 
-    SVGPathElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~SVGPathElement() override = default;
 
-    virtual void parse_attribute(FlyString const& name, String const& value) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value) override;
 
-    virtual Gfx::Path& get_path() override;
+    virtual Gfx::Path get_path(CSSPixelSize viewport_size) override;
 
 private:
+    SVGPathElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
+
     Vector<PathInstruction> m_instructions;
-    Gfx::FloatPoint m_previous_control_point = {};
-    Optional<Gfx::Path> m_path;
 };
+
+Gfx::Path path_from_path_instructions(ReadonlySpan<PathInstruction>);
 
 }

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,18 +13,16 @@ namespace Web::Geometry {
 
 // https://drafts.fxtf.org/geometry/#DOMPoint
 class DOMPoint final : public DOMPointReadOnly {
+    WEB_PLATFORM_OBJECT(DOMPoint, DOMPointReadOnly);
+    JS_DECLARE_ALLOCATOR(DOMPoint);
+
 public:
-    using WrapperType = Bindings::DOMPointWrapper;
+    static JS::NonnullGCPtr<DOMPoint> construct_impl(JS::Realm&, double x = 0, double y = 0, double z = 0, double w = 1);
+    static JS::NonnullGCPtr<DOMPoint> create(JS::Realm&);
 
-    static NonnullRefPtr<DOMPoint> create_with_global_object(Bindings::WindowObject&, double x = 0, double y = 0, double z = 0, double w = 0)
-    {
-        return DOMPoint::create(x, y, z, w);
-    }
+    static JS::NonnullGCPtr<DOMPoint> from_point(JS::VM&, DOMPointInit const&);
 
-    static NonnullRefPtr<DOMPoint> create(double x = 0, double y = 0, double z = 0, double w = 0)
-    {
-        return adopt_ref(*new DOMPoint(x, y, z, w));
-    }
+    virtual ~DOMPoint() override;
 
     double x() const { return m_x; }
     double y() const { return m_y; }
@@ -35,10 +34,13 @@ public:
     void set_z(double z) { m_z = z; }
     void set_w(double w) { m_w = w; }
 
+    virtual StringView interface_name() const override { return "DOMPoint"sv; }
+
 private:
-    DOMPoint(float x, float y, float z, float w)
-        : DOMPointReadOnly(x, y, z, w)
-    {
-    }
+    DOMPoint(JS::Realm&, double x, double y, double z, double w);
+    DOMPoint(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 };
+
 }

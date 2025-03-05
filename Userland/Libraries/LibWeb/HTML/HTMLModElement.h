@@ -6,16 +6,24 @@
 
 #pragma once
 
+#include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/HTML/HTMLElement.h>
 
 namespace Web::HTML {
 
 class HTMLModElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLModElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLModElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLModElement);
 
-    HTMLModElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLModElement() override;
+
+    virtual Optional<ARIA::Role> default_role() const override;
+
+private:
+    HTMLModElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

@@ -6,13 +6,16 @@
 
 #pragma once
 
+#include <AK/DeprecatedFlyString.h>
 #include <AK/DistinctNumeric.h>
-#include <AK/FlyString.h>
 #include <AK/Vector.h>
 
 namespace JS::Bytecode {
 
-TYPEDEF_DISTINCT_NUMERIC_GENERAL(size_t, false, true, false, false, false, false, IdentifierTableIndex);
+struct IdentifierTableIndex {
+    bool is_valid() const { return value != NumericLimits<u32>::max(); }
+    u32 value { 0 };
+};
 
 class IdentifierTable {
     AK_MAKE_NONMOVABLE(IdentifierTable);
@@ -21,13 +24,13 @@ class IdentifierTable {
 public:
     IdentifierTable() = default;
 
-    IdentifierTableIndex insert(FlyString);
-    FlyString const& get(IdentifierTableIndex) const;
+    IdentifierTableIndex insert(DeprecatedFlyString);
+    DeprecatedFlyString const& get(IdentifierTableIndex) const;
     void dump() const;
     bool is_empty() const { return m_identifiers.is_empty(); }
 
 private:
-    Vector<FlyString> m_identifiers;
+    Vector<DeprecatedFlyString> m_identifiers;
 };
 
 }

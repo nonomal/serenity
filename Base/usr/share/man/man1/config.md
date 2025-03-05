@@ -5,22 +5,22 @@ config
 ## Synopsis
 
 ```sh
-$ config [--remove] <domain> <group> <key> [value]
+$ config [--remove] <domain> <group> [key] [value]
 ```
 
 ## Description
 
 Show or modify values in the configuration files through ConfigServer.
 
-## Options:
+## Options
 
-* `-r`, `--remove`: Remove key
+-   `-r`, `--remove`: Remove group or key
 
-## Arguments:
+## Arguments
 
-* `domain`: Config domain
-* `group`: Group name
-* `key`: Key name
-* `value`: Value to write
+-   `domain`: Config domain
+-   `group`: Group name
+-   `key`: Key name
+-   `value`: Value to write
 
 <!-- Auto-generated through ArgsParser -->

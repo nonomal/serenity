@@ -1,28 +1,27 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/FlyString.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefCounted.h>
 #include <LibWeb/CSS/GeneralEnclosed.h>
+#include <LibWeb/CSS/Length.h>
 #include <LibWeb/CSS/MediaFeatureID.h>
 #include <LibWeb/CSS/Ratio.h>
-#include <LibWeb/CSS/StyleValue.h>
+#include <LibWeb/CSS/Resolution.h>
 
 namespace Web::CSS {
 
 // https://www.w3.org/TR/mediaqueries-4/#typedef-mf-value
 class MediaFeatureValue {
 public:
-    explicit MediaFeatureValue(ValueID ident)
+    explicit MediaFeatureValue(Keyword ident)
         : m_value(move(ident))
     {
     }
@@ -49,17 +48,17 @@ public:
 
     String to_string() const;
 
-    bool is_ident() const { return m_value.has<ValueID>(); }
+    bool is_ident() const { return m_value.has<Keyword>(); }
     bool is_length() const { return m_value.has<Length>(); }
     bool is_number() const { return m_value.has<float>(); }
     bool is_ratio() const { return m_value.has<Ratio>(); }
     bool is_resolution() const { return m_value.has<Resolution>(); }
     bool is_same_type(MediaFeatureValue const& other) const;
 
-    ValueID const& ident() const
+    Keyword const& ident() const
     {
         VERIFY(is_ident());
-        return m_value.get<ValueID>();
+        return m_value.get<Keyword>();
     }
 
     Length const& length() const
@@ -87,7 +86,7 @@ public:
     }
 
 private:
-    Variant<ValueID, Length, Ratio, Resolution, float> m_value;
+    Variant<Keyword, Length, Ratio, Resolution, float> m_value;
 };
 
 // https://www.w3.org/TR/mediaqueries-4/#mq-features
@@ -198,8 +197,8 @@ struct MediaCondition {
     static NonnullOwnPtr<MediaCondition> from_general_enclosed(GeneralEnclosed&&);
     static NonnullOwnPtr<MediaCondition> from_feature(MediaFeature&&);
     static NonnullOwnPtr<MediaCondition> from_not(NonnullOwnPtr<MediaCondition>&&);
-    static NonnullOwnPtr<MediaCondition> from_and_list(NonnullOwnPtrVector<MediaCondition>&&);
-    static NonnullOwnPtr<MediaCondition> from_or_list(NonnullOwnPtrVector<MediaCondition>&&);
+    static NonnullOwnPtr<MediaCondition> from_and_list(Vector<NonnullOwnPtr<MediaCondition>>&&);
+    static NonnullOwnPtr<MediaCondition> from_or_list(Vector<NonnullOwnPtr<MediaCondition>>&&);
 
     MatchResult evaluate(HTML::Window const&) const;
     String to_string() const;
@@ -208,7 +207,7 @@ private:
     MediaCondition() = default;
     Type type;
     Optional<MediaFeature> feature;
-    NonnullOwnPtrVector<MediaCondition> conditions;
+    Vector<NonnullOwnPtr<MediaCondition>> conditions;
     Optional<GeneralEnclosed> general_enclosed;
 };
 
@@ -223,6 +222,7 @@ public:
         All,
         Print,
         Screen,
+        Unknown,
 
         // Deprecated, must never match:
         TTY,
@@ -254,11 +254,9 @@ private:
     bool m_matches { false };
 };
 
-String serialize_a_media_query_list(NonnullRefPtrVector<MediaQuery> const&);
+String serialize_a_media_query_list(Vector<NonnullRefPtr<MediaQuery>> const&);
 
-bool is_media_feature_name(StringView name);
-
-Optional<MediaQuery::MediaType> media_type_from_string(StringView);
+MediaQuery::MediaType media_type_from_string(StringView);
 StringView to_string(MediaQuery::MediaType);
 
 }

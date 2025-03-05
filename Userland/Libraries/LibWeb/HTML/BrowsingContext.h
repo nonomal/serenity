@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,131 +10,180 @@
 #include <AK/Noncopyable.h>
 #include <AK/RefPtr.h>
 #include <AK/WeakPtr.h>
-#include <LibCore/Timer.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Rect.h>
 #include <LibGfx/Size.h>
+#include <LibJS/Forward.h>
+#include <LibJS/Heap/Cell.h>
+#include <LibURL/Origin.h>
 #include <LibWeb/DOM/Position.h>
-#include <LibWeb/HTML/BrowsingContextContainer.h>
-#include <LibWeb/Loader/FrameLoader.h>
-#include <LibWeb/Page/EventHandler.h>
+#include <LibWeb/HTML/ActivateTab.h>
+#include <LibWeb/HTML/NavigableContainer.h>
+#include <LibWeb/HTML/SandboxingFlagSet.h>
+#include <LibWeb/HTML/SessionHistoryEntry.h>
+#include <LibWeb/HTML/TokenizedFeatures.h>
+#include <LibWeb/HTML/VisibilityState.h>
+#include <LibWeb/Platform/Timer.h>
 #include <LibWeb/TreeNode.h>
 
 namespace Web::HTML {
 
-class BrowsingContext : public TreeNode<BrowsingContext> {
+class BrowsingContext final : public JS::Cell {
+    JS_CELL(BrowsingContext, JS::Cell);
+    JS_DECLARE_ALLOCATOR(BrowsingContext);
+
 public:
-    static NonnullRefPtr<BrowsingContext> create_nested(Page& page, HTML::BrowsingContextContainer& container) { return adopt_ref(*new BrowsingContext(page, &container)); }
-    static NonnullRefPtr<BrowsingContext> create(Page& page) { return adopt_ref(*new BrowsingContext(page, nullptr)); }
-    ~BrowsingContext();
-
-    class ViewportClient {
-    public:
-        virtual ~ViewportClient() = default;
-        virtual void browsing_context_did_set_viewport_rect(Gfx::IntRect const&) = 0;
+    struct BrowsingContextAndDocument {
+        JS::NonnullGCPtr<BrowsingContext> browsing_context;
+        JS::NonnullGCPtr<DOM::Document> document;
     };
-    void register_viewport_client(ViewportClient&);
-    void unregister_viewport_client(ViewportClient&);
 
-    bool is_top_level() const;
-    bool is_focused_context() const;
+    static WebIDL::ExceptionOr<BrowsingContextAndDocument> create_a_new_browsing_context_and_document(JS::NonnullGCPtr<Page> page, JS::GCPtr<DOM::Document> creator, JS::GCPtr<DOM::Element> embedder, JS::NonnullGCPtr<BrowsingContextGroup> group);
+    static WebIDL::ExceptionOr<BrowsingContextAndDocument> create_a_new_auxiliary_browsing_context_and_document(JS::NonnullGCPtr<Page> page, JS::NonnullGCPtr<HTML::BrowsingContext> opener);
 
-    DOM::Document const* active_document() const { return m_active_document; }
-    DOM::Document* active_document() { return m_active_document; }
+    virtual ~BrowsingContext() override;
 
-    void set_active_document(DOM::Document*);
+    JS::NonnullGCPtr<HTML::TraversableNavigable> top_level_traversable() const;
 
-    Page* page() { return m_page; }
-    Page const* page() const { return m_page; }
+    JS::GCPtr<BrowsingContext> first_child() const;
+    JS::GCPtr<BrowsingContext> next_sibling() const;
 
-    Gfx::IntSize const& size() const { return m_size; }
-    void set_size(Gfx::IntSize const&);
+    bool is_ancestor_of(BrowsingContext const&) const;
+    bool is_familiar_with(BrowsingContext const&) const;
 
-    void set_needs_display();
-    void set_needs_display(Gfx::IntRect const&);
-
-    Gfx::IntPoint const& viewport_scroll_offset() const { return m_viewport_scroll_offset; }
-    Gfx::IntRect viewport_rect() const { return { m_viewport_scroll_offset, m_size }; }
-    void set_viewport_rect(Gfx::IntRect const&);
-
-    FrameLoader& loader() { return m_loader; }
-    FrameLoader const& loader() const { return m_loader; }
-
-    Web::EventHandler& event_handler() { return m_event_handler; }
-    Web::EventHandler const& event_handler() const { return m_event_handler; }
-
-    void scroll_to(Gfx::IntPoint const&);
-    void scroll_to_anchor(String const&);
-
-    BrowsingContext& top_level_browsing_context()
+    template<typename Callback>
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback) const
     {
-        BrowsingContext* context = this;
-        while (context->parent())
-            context = context->parent();
-        return *context;
+        if (callback(*this) == TraversalDecision::Break)
+            return TraversalDecision::Break;
+        for (auto child = first_child(); child; child = child->next_sibling()) {
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+        }
+        return TraversalDecision::Continue;
     }
 
-    BrowsingContext const& top_level_browsing_context() const { return const_cast<BrowsingContext*>(this)->top_level_browsing_context(); }
+    template<typename Callback>
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback)
+    {
+        if (callback(*this) == TraversalDecision::Break)
+            return TraversalDecision::Break;
+        for (auto child = first_child(); child; child = child->next_sibling()) {
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+        }
+        return TraversalDecision::Continue;
+    }
 
-    BrowsingContext* choose_a_browsing_context(StringView name, bool noopener);
+    template<typename Callback>
+    TraversalDecision for_each_in_subtree(Callback callback) const
+    {
+        for (auto child = first_child(); child; child = child->next_sibling()) {
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+        }
+        return TraversalDecision::Continue;
+    }
 
-    HTML::BrowsingContextContainer* container() { return m_container; }
-    HTML::BrowsingContextContainer const* container() const { return m_container; }
+    template<typename Callback>
+    TraversalDecision for_each_in_subtree(Callback callback)
+    {
+        for (auto child = first_child(); child; child = child->next_sibling()) {
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+        }
+        return TraversalDecision::Continue;
+    }
 
-    Gfx::IntPoint to_top_level_position(Gfx::IntPoint const&);
-    Gfx::IntRect to_top_level_rect(Gfx::IntRect const&);
+    bool is_top_level() const;
 
-    DOM::Position const& cursor_position() const { return m_cursor_position; }
-    void set_cursor_position(DOM::Position);
-    bool increment_cursor_position_offset();
-    bool decrement_cursor_position_offset();
+    DOM::Document const* active_document() const;
+    DOM::Document* active_document();
 
-    bool cursor_blink_state() const { return m_cursor_blink_state; }
+    HTML::WindowProxy* window_proxy();
+    HTML::WindowProxy const* window_proxy() const;
 
-    String selected_text() const;
-    void select_all();
+    void set_window_proxy(JS::GCPtr<WindowProxy>);
 
-    void did_edit(Badge<EditEventHandler>);
+    HTML::Window* active_window();
+    HTML::Window const* active_window() const;
 
-    void register_frame_nesting(AK::URL const&);
-    bool is_frame_nesting_allowed(AK::URL const&) const;
+    Page& page() { return m_page; }
+    Page const& page() const { return m_page; }
 
-    void set_frame_nesting_levels(HashMap<AK::URL, size_t> frame_nesting_levels) { m_frame_nesting_levels = move(frame_nesting_levels); };
-    HashMap<AK::URL, size_t> const& frame_nesting_levels() const { return m_frame_nesting_levels; }
+    u64 virtual_browsing_context_group_id() const { return m_virtual_browsing_context_group_id; }
 
-    DOM::Document* container_document();
-    DOM::Document const* container_document() const;
+    JS::GCPtr<BrowsingContext> top_level_browsing_context() const;
 
-    bool has_a_rendering_opportunity() const;
+    BrowsingContextGroup* group();
+    void set_group(BrowsingContextGroup*);
 
-    RefPtr<DOM::Node> currently_focused_area();
+    // https://html.spec.whatwg.org/multipage/browsers.html#bcg-remove
+    void remove();
 
-    String const& name() const { return m_name; }
-    void set_name(String const& name) { m_name = name; }
+    // https://html.spec.whatwg.org/multipage/origin.html#one-permitted-sandboxed-navigator
+    BrowsingContext const* the_one_permitted_sandboxed_navigator() const;
+    void set_the_one_permitted_sandboxed_navigator(BrowsingContext const*)
+    {
+        // FIXME: Implement this
+    }
+
+    bool has_navigable_been_destroyed() const;
+
+    JS::GCPtr<BrowsingContext> opener_browsing_context() const { return m_opener_browsing_context; }
+    void set_opener_browsing_context(JS::GCPtr<BrowsingContext> browsing_context) { m_opener_browsing_context = browsing_context; }
+
+    void set_is_popup(TokenizedFeature::Popup is_popup) { m_is_popup = is_popup; }
+
+    SandboxingFlagSet popup_sandboxing_flag_set() const { return m_popup_sandboxing_flag_set; }
+    void set_popup_sandboxing_flag_set(SandboxingFlagSet value) { m_popup_sandboxing_flag_set = value; }
 
 private:
-    explicit BrowsingContext(Page&, HTML::BrowsingContextContainer*);
+    explicit BrowsingContext(JS::NonnullGCPtr<Page>);
 
-    void reset_cursor_blink_cycle();
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    WeakPtr<Page> m_page;
+    JS::NonnullGCPtr<Page> m_page;
 
-    FrameLoader m_loader;
-    Web::EventHandler m_event_handler;
+    // https://html.spec.whatwg.org/multipage/document-sequences.html#browsing-context
+    JS::GCPtr<HTML::WindowProxy> m_window_proxy;
 
-    WeakPtr<HTML::BrowsingContextContainer> m_container;
-    RefPtr<DOM::Document> m_active_document;
-    Gfx::IntSize m_size;
-    Gfx::IntPoint m_viewport_scroll_offset;
+    // https://html.spec.whatwg.org/multipage/browsers.html#opener-browsing-context
+    JS::GCPtr<BrowsingContext> m_opener_browsing_context;
 
-    DOM::Position m_cursor_position;
-    RefPtr<Core::Timer> m_cursor_blink_timer;
-    bool m_cursor_blink_state { false };
+    // https://html.spec.whatwg.org/multipage/document-sequences.html#opener-origin-at-creation
+    Optional<URL::Origin> m_opener_origin_at_creation;
 
-    HashTable<ViewportClient*> m_viewport_clients;
+    // https://html.spec.whatwg.org/multipage/browsers.html#is-popup
+    TokenizedFeature::Popup m_is_popup { TokenizedFeature::Popup::No };
 
-    HashMap<AK::URL, size_t> m_frame_nesting_levels;
-    String m_name;
+    // https://html.spec.whatwg.org/multipage/browsers.html#popup-sandboxing-flag-set
+    SandboxingFlagSet m_popup_sandboxing_flag_set {};
+
+    // https://html.spec.whatwg.org/multipage/document-sequences.html#is-auxiliary
+    bool m_is_auxiliary { false };
+
+    // https://html.spec.whatwg.org/multipage/document-sequences.html#browsing-context-initial-url
+    Optional<URL::URL> m_initial_url;
+
+    // https://html.spec.whatwg.org/multipage/document-sequences.html#virtual-browsing-context-group-id
+    u64 m_virtual_browsing_context_group_id = { 0 };
+
+    // https://html.spec.whatwg.org/multipage/browsers.html#tlbc-group
+    JS::GCPtr<BrowsingContextGroup> m_group;
+
+    JS::GCPtr<BrowsingContext> m_first_child;
+    JS::GCPtr<BrowsingContext> m_last_child;
+    JS::GCPtr<BrowsingContext> m_next_sibling;
+    JS::GCPtr<BrowsingContext> m_previous_sibling;
 };
+
+URL::Origin determine_the_origin(Optional<URL::URL const&>, SandboxingFlagSet, Optional<URL::Origin> source_origin);
+
+SandboxingFlagSet determine_the_creation_sandboxing_flags(BrowsingContext const&, JS::GCPtr<DOM::Element> embedder);
+
+// FIXME: Find a better home for these
+bool url_matches_about_blank(URL::URL const& url);
+bool url_matches_about_srcdoc(URL::URL const& url);
 
 }

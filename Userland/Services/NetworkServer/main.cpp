@@ -10,7 +10,6 @@
 #include <LibCore/Command.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <unistd.h>
@@ -18,7 +17,7 @@
 ErrorOr<int> serenity_main(Main::Arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd rpath unix exec proc"));
-    TRY(Core::System::unveil("/proc/net", "r"));
+    TRY(Core::System::unveil("/sys/kernel/net", "r"));
     TRY(Core::System::unveil("/bin/DHCPClient", "x"));
     TRY(Core::System::unveil("/etc/Network.ini", "r"));
     TRY(Core::System::unveil("/bin/ifconfig", "x"));
@@ -28,9 +27,8 @@ ErrorOr<int> serenity_main(Main::Arguments)
 
     auto config_file = TRY(Core::ConfigFile::open_for_system("Network"));
 
-    // FIXME: Port this to Core::Stream when it gets read_all.
-    auto proc_net_adapters_file = TRY(Core::File::open("/proc/net/adapters"sv, Core::OpenMode::ReadOnly));
-    auto data = proc_net_adapters_file->read_all();
+    auto proc_net_adapters_file = TRY(Core::File::open("/sys/kernel/net/adapters"sv, Core::File::OpenMode::Read));
+    auto data = TRY(proc_net_adapters_file->read_until_eof());
     JsonParser parser(data);
     JsonValue proc_net_adapters_json = TRY(parser.parse());
 
@@ -44,15 +42,15 @@ ErrorOr<int> serenity_main(Main::Arguments)
     struct InterfaceConfig {
         bool enabled = false;
         bool dhcp_enabled = false;
-        String ipv4_address = "0.0.0.0"sv;
-        String ipv4_netmask = "0.0.0.0"sv;
-        String ipv4_gateway = "0.0.0.0"sv;
+        ByteString ipv4_address = "0.0.0.0"sv;
+        ByteString ipv4_netmask = "0.0.0.0"sv;
+        ByteString ipv4_gateway = "0.0.0.0"sv;
     };
 
-    Vector<String> interfaces_with_dhcp_enabled;
+    Vector<ByteString> interfaces_with_dhcp_enabled;
     proc_net_adapters_json.as_array().for_each([&](auto& value) {
         auto& if_object = value.as_object();
-        auto ifname = if_object.get("name"sv).to_string();
+        auto ifname = if_object.get_byte_string("name"sv).value_or({});
 
         if (ifname == "loop"sv)
             return;

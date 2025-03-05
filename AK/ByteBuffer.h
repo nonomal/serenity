@@ -81,7 +81,7 @@ public:
     {
         auto buffer = TRY(create_uninitialized(size));
         if (buffer.m_inline && size > inline_capacity)
-            __builtin_unreachable();
+            VERIFY_NOT_REACHED();
         if (size != 0)
             __builtin_memcpy(buffer.data(), data, size);
         return { move(buffer) };
@@ -90,6 +90,21 @@ public:
     [[nodiscard]] static ErrorOr<ByteBuffer> copy(ReadonlyBytes bytes)
     {
         return copy(bytes.data(), bytes.size());
+    }
+
+    [[nodiscard]] static ErrorOr<ByteBuffer> xor_buffers(ReadonlyBytes first, ReadonlyBytes second)
+    {
+        if (first.size() != second.size())
+            return Error::from_errno(EINVAL);
+
+        auto buffer = TRY(create_uninitialized(first.size()));
+        auto buffer_data = buffer.data();
+        auto first_data = first.data();
+        auto second_data = second.data();
+        for (size_t i = 0; i < first.size(); ++i)
+            buffer_data[i] = first_data[i] ^ second_data[i];
+
+        return { move(buffer) };
     }
 
     template<size_t other_inline_capacity>
@@ -101,8 +116,6 @@ public:
         // So they both have data, and the same length.
         return !__builtin_memcmp(data(), other.data(), size());
     }
-
-    bool operator!=(ByteBuffer const& other) const { return !(*this == other); }
 
     [[nodiscard]] u8& operator[](size_t i)
     {
@@ -119,17 +132,31 @@ public:
     [[nodiscard]] bool is_empty() const { return m_size == 0; }
     [[nodiscard]] size_t size() const { return m_size; }
 
-    [[nodiscard]] u8* data() { return m_inline ? m_inline_buffer : m_outline_buffer; }
+#ifdef AK_COMPILER_GCC
+#    pragma GCC diagnostic push
+//   Workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=109727
+#    pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+    [[nodiscard]] u8* data()
+    {
+        return m_inline ? m_inline_buffer : m_outline_buffer;
+    }
     [[nodiscard]] u8 const* data() const { return m_inline ? m_inline_buffer : m_outline_buffer; }
+#ifdef AK_COMPILER_GCC
+#    pragma GCC diagnostic pop
+#endif
 
-    [[nodiscard]] Bytes bytes() { return { data(), size() }; }
+    [[nodiscard]] Bytes bytes()
+    {
+        return { data(), size() };
+    }
     [[nodiscard]] ReadonlyBytes bytes() const { return { data(), size() }; }
 
-    [[nodiscard]] AK::Span<u8> span() { return { data(), size() }; }
-    [[nodiscard]] AK::Span<const u8> span() const { return { data(), size() }; }
+    [[nodiscard]] AK::Bytes span() { return { data(), size() }; }
+    [[nodiscard]] AK::ReadonlyBytes span() const { return { data(), size() }; }
 
-    [[nodiscard]] u8* offset_pointer(int offset) { return data() + offset; }
-    [[nodiscard]] u8 const* offset_pointer(int offset) const { return data() + offset; }
+    [[nodiscard]] u8* offset_pointer(size_t offset) { return data() + offset; }
+    [[nodiscard]] u8 const* offset_pointer(size_t offset) const { return data() + offset; }
 
     [[nodiscard]] void* end_pointer() { return data() + m_size; }
     [[nodiscard]] void const* end_pointer() const { return data() + m_size; }
@@ -151,9 +178,22 @@ public:
         m_size = 0;
     }
 
-    ALWAYS_INLINE void resize(size_t new_size)
+    enum class ZeroFillNewElements {
+        No,
+        Yes,
+    };
+
+    ALWAYS_INLINE void resize(size_t new_size, ZeroFillNewElements zero_fill_new_elements = ZeroFillNewElements::No)
     {
-        MUST(try_resize(new_size));
+        MUST(try_resize(new_size, zero_fill_new_elements));
+    }
+
+    void trim(size_t size, bool may_discard_existing_data)
+    {
+        VERIFY(size <= m_size);
+        if (!m_inline && size <= inline_capacity)
+            shrink_into_inline_buffer(size, may_discard_existing_data);
+        m_size = size;
     }
 
     ALWAYS_INLINE void ensure_capacity(size_t new_capacity)
@@ -161,13 +201,18 @@ public:
         MUST(try_ensure_capacity(new_capacity));
     }
 
-    ErrorOr<void> try_resize(size_t new_size)
+    ErrorOr<void> try_resize(size_t new_size, ZeroFillNewElements zero_fill_new_elements = ZeroFillNewElements::No)
     {
         if (new_size <= m_size) {
             trim(new_size, false);
             return {};
         }
         TRY(try_ensure_capacity(new_size));
+
+        if (zero_fill_new_elements == ZeroFillNewElements::Yes) {
+            __builtin_memset(data() + m_size, 0, new_size - m_size);
+        }
+
         m_size = new_size;
         return {};
     }
@@ -226,7 +271,7 @@ public:
         if (data_size == 0)
             return {};
         VERIFY(data != nullptr);
-        int old_size = size();
+        auto old_size = size();
         TRY(try_resize(size() + data_size));
         __builtin_memcpy(this->data() + old_size, data, data_size);
         return {};
@@ -270,14 +315,6 @@ private:
         other.m_inline = true;
     }
 
-    void trim(size_t size, bool may_discard_existing_data)
-    {
-        VERIFY(size <= m_size);
-        if (!m_inline && size <= inline_capacity)
-            shrink_into_inline_buffer(size, may_discard_existing_data);
-        m_size = size;
-    }
-
     NEVER_INLINE void shrink_into_inline_buffer(size_t size, bool may_discard_existing_data)
     {
         // m_inline_buffer and m_outline_buffer are part of a union, so save the pointer
@@ -291,8 +328,14 @@ private:
 
     NEVER_INLINE ErrorOr<void> try_ensure_capacity_slowpath(size_t new_capacity)
     {
+        // When we are asked to raise the capacity by very small amounts,
+        // the caller is perhaps appending very little data in many calls.
+        // To avoid copying the entire ByteBuffer every single time,
+        // we raise the capacity exponentially, by a factor of roughly 1.5.
+        // This is most noticeable in Lagom, where kmalloc_good_size is just a no-op.
+        new_capacity = max(new_capacity, (capacity() * 3) / 2);
         new_capacity = kmalloc_good_size(new_capacity);
-        auto* new_buffer = (u8*)kmalloc(new_capacity);
+        auto* new_buffer = static_cast<u8*>(kmalloc(new_capacity));
         if (!new_buffer)
             return Error::from_errno(ENOMEM);
 
@@ -323,10 +366,18 @@ private:
 }
 
 template<>
-struct Traits<ByteBuffer> : public GenericTraits<ByteBuffer> {
+struct Traits<ByteBuffer> : public DefaultTraits<ByteBuffer> {
     static unsigned hash(ByteBuffer const& byte_buffer)
     {
         return Traits<ReadonlyBytes>::hash(byte_buffer.span());
+    }
+    static bool equals(ByteBuffer const& byte_buffer, Bytes const& other)
+    {
+        return byte_buffer.bytes() == other;
+    }
+    static bool equals(ByteBuffer const& byte_buffer, ReadonlyBytes const& other)
+    {
+        return byte_buffer.bytes() == other;
     }
 };
 

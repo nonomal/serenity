@@ -7,8 +7,8 @@
 
 #include <LibTest/TestCase.h>
 
+#include <AK/ByteString.h>
 #include <AK/Optional.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
 
 TEST_CASE(basic_optional)
@@ -59,7 +59,7 @@ TEST_CASE(optional_rvalue_ref_qualified_getters)
 TEST_CASE(optional_leak_1)
 {
     struct Structure {
-        Optional<String> str;
+        Optional<ByteString> str;
     };
 
     // This used to leak, it does not anymore.
@@ -81,7 +81,7 @@ TEST_CASE(comparison_without_values)
 {
     Optional<StringView> opt0;
     Optional<StringView> opt1;
-    Optional<String> opt2;
+    Optional<ByteString> opt2;
     EXPECT_EQ(opt0, opt1);
     EXPECT_EQ(opt0, opt2);
 }
@@ -90,7 +90,7 @@ TEST_CASE(comparison_with_values)
 {
     Optional<StringView> opt0;
     Optional<StringView> opt1 = "foo"sv;
-    Optional<String> opt2 = "foo"sv;
+    Optional<ByteString> opt2 = "foo"sv;
     Optional<StringView> opt3 = "bar"sv;
     EXPECT_NE(opt0, opt1);
     EXPECT_EQ(opt1, opt2);
@@ -99,14 +99,14 @@ TEST_CASE(comparison_with_values)
 
 TEST_CASE(comparison_to_underlying_types)
 {
-    Optional<String> opt0;
-    EXPECT_NE(opt0, String());
+    Optional<ByteString> opt0;
+    EXPECT_NE(opt0, ByteString());
     EXPECT_NE(opt0, "foo");
 
     Optional<StringView> opt1 = "foo"sv;
     EXPECT_EQ(opt1, "foo");
     EXPECT_NE(opt1, "bar");
-    EXPECT_EQ(opt1, String("foo"));
+    EXPECT_EQ(opt1, ByteString("foo"));
 }
 
 TEST_CASE(comparison_with_numeric_types)
@@ -186,13 +186,13 @@ TEST_CASE(test_copy_ctor_and_dtor_called)
             : m_was_move_constructed(other.m_was_move_constructed)
         {
             EXPECT(false);
-        };
+        }
 
         MoveChecker(MoveChecker&& other)
             : m_was_move_constructed(other.m_was_move_constructed)
         {
             m_was_move_constructed = true;
-        };
+        }
 
         bool& m_was_move_constructed;
     };
@@ -248,6 +248,37 @@ TEST_CASE(move_optional_reference)
     EXPECT_EQ(x.has_value(), false);
 }
 
+TEST_CASE(optional_reference_to_optional)
+{
+    Optional<int&> x;
+    EXPECT_EQ(x.has_value(), false);
+    int c = 3;
+    x = c;
+    EXPECT_EQ(x.has_value(), true);
+    EXPECT_EQ(x.value(), 3);
+
+    auto y = x.copy();
+    EXPECT_EQ(y.has_value(), true);
+    EXPECT_EQ(y.value(), 3);
+
+    y = 4;
+    EXPECT_EQ(x.value(), 3);
+    EXPECT_EQ(y.value(), 4);
+    c = 5;
+    EXPECT_EQ(x.value(), 5);
+    EXPECT_EQ(y.value(), 4);
+
+    Optional<int> z = *x;
+    EXPECT_EQ(z.has_value(), true);
+    EXPECT_EQ(z.value(), 5);
+    z = 6;
+    EXPECT_EQ(x.value(), 5);
+    EXPECT_EQ(z.value(), 6);
+    c = 7;
+    EXPECT_EQ(x.value(), 7);
+    EXPECT_EQ(z.value(), 6);
+}
+
 TEST_CASE(short_notation_reference)
 {
     StringView test = "foo"sv;
@@ -262,7 +293,7 @@ TEST_CASE(comparison_reference)
     StringView test = "foo"sv;
     Optional<StringView&> opt0;
     Optional<StringView const&> opt1 = test;
-    Optional<String> opt2 = "foo"sv;
+    Optional<ByteString> opt2 = "foo"sv;
     Optional<StringView> opt3 = "bar"sv;
 
     EXPECT_NE(opt0, opt1);

@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/String.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/DirIterator.h>
 #include <LibCore/System.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -14,18 +14,18 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio rpath"));
 
-    char const* filename = nullptr;
+    StringView filename;
 
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(filename, "Name of executable", "executable");
     args_parser.parse(arguments);
 
-    auto fullpath = Core::find_executable_in_path(filename);
-    if (fullpath.is_empty()) {
+    auto fullpath = Core::System::resolve_executable_from_environment(filename);
+    if (fullpath.is_error()) {
         warnln("no '{}' in path", filename);
         return 1;
     }
 
-    outln("{}", fullpath);
+    outln("{}", fullpath.release_value());
     return 0;
 }

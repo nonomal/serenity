@@ -9,6 +9,7 @@
 #include <AK/Assertions.h>
 #include <AK/Atomic.h>
 #include <AK/BuiltinWrappers.h>
+#include <AK/ByteString.h>
 #include <AK/Debug.h>
 #include <AK/Error.h>
 #include <AK/Format.h>
@@ -18,7 +19,6 @@
 #include <AK/Platform.h>
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
-#include <AK/String.h>
 #include <AK/Types.h>
 #include <AK/Variant.h>
 #include <AK/Weakable.h>
@@ -41,12 +41,10 @@ namespace Core {
 // This class is designed to be transferred over IPC and mmap()ed into multiple processes' memory.
 // It is a synthetic pointer to the actual shared memory, which is abstracted away from the user.
 // FIXME: Make this independent of shared memory, so that we can move it to AK.
-// clang-format off
 template<typename T, size_t Size = 32>
 // Size must be a power of two, which speeds up the modulus operations for indexing.
 requires(popcount(Size) == 1)
 class SharedSingleProducerCircularQueue final {
-    // clang-format on
 
 public:
     using ValueType = T;
@@ -64,16 +62,16 @@ public:
     SharedSingleProducerCircularQueue& operator=(SharedSingleProducerCircularQueue&& queue) = default;
 
     // Allocates a new circular queue in shared memory.
-    static ErrorOr<SharedSingleProducerCircularQueue<T, Size>> try_create()
+    static ErrorOr<SharedSingleProducerCircularQueue<T, Size>> create()
     {
         auto fd = TRY(System::anon_create(sizeof(SharedMemorySPCQ), O_CLOEXEC));
-        return try_create_internal(fd, true);
+        return create_internal(fd, true);
     }
 
     // Uses an existing circular queue from given shared memory.
-    static ErrorOr<SharedSingleProducerCircularQueue<T, Size>> try_create(int fd)
+    static ErrorOr<SharedSingleProducerCircularQueue<T, Size>> create(int fd)
     {
-        return try_create_internal(fd, false);
+        return create_internal(fd, false);
     }
 
     constexpr size_t size() const { return Size; }
@@ -92,14 +90,14 @@ public:
     ALWAYS_INLINE constexpr size_t weak_head() const { return m_queue->m_queue->m_head.load(AK::MemoryOrder::memory_order_relaxed); }
     ALWAYS_INLINE constexpr size_t weak_tail() const { return m_queue->m_queue->m_tail.load(AK::MemoryOrder::memory_order_relaxed); }
 
-    ErrorOr<void, QueueStatus> try_enqueue(ValueType to_insert)
+    ErrorOr<void, QueueStatus> enqueue(ValueType to_insert)
     {
         VERIFY(!m_queue.is_null());
         if (!can_enqueue())
             return QueueStatus::Full;
         auto our_tail = m_queue->m_queue->m_tail.load() % Size;
         m_queue->m_queue->m_data[our_tail] = to_insert;
-        ++m_queue->m_queue->m_tail;
+        m_queue->m_queue->m_tail.fetch_add(1);
 
         return {};
     }
@@ -110,11 +108,11 @@ public:
     }
 
     // Repeatedly try to enqueue, using the wait_function to wait if it's not possible
-    ErrorOr<void> try_blocking_enqueue(ValueType to_insert, Function<void()> wait_function)
+    ErrorOr<void> blocking_enqueue(ValueType to_insert, Function<void()> wait_function)
     {
         ErrorOr<void, QueueStatus> result;
         while (true) {
-            result = try_enqueue(to_insert);
+            result = enqueue(to_insert);
             if (!result.is_error())
                 break;
             if (result.error() != QueueStatus::Full)
@@ -125,18 +123,19 @@ public:
         return {};
     }
 
-    ErrorOr<ValueType, QueueStatus> try_dequeue()
+    ErrorOr<ValueType, QueueStatus> dequeue()
     {
         VERIFY(!m_queue.is_null());
         while (true) {
-            // The >= is not strictly necessary, but it feels safer :^)
-            if (head() >= m_queue->m_queue->m_tail.load())
-                return QueueStatus::Empty;
-
             // This CAS only succeeds if nobody is currently dequeuing.
             auto size_max = NumericLimits<size_t>::max();
             if (m_queue->m_queue->m_head_protector.compare_exchange_strong(size_max, m_queue->m_queue->m_head.load())) {
                 auto old_head = m_queue->m_queue->m_head.load();
+                // This check looks like it's in a weird place (especially since we have to roll back the protector), but it's actually protecting against a race between multiple dequeuers.
+                if (old_head >= m_queue->m_queue->m_tail.load()) {
+                    m_queue->m_queue->m_head_protector.store(NumericLimits<size_t>::max(), AK::MemoryOrder::memory_order_release);
+                    return QueueStatus::Empty;
+                }
                 auto data = move(m_queue->m_queue->m_data[old_head % Size]);
                 m_queue->m_queue->m_head.fetch_add(1);
                 m_queue->m_queue->m_head_protector.store(NumericLimits<size_t>::max(), AK::MemoryOrder::memory_order_release);
@@ -168,9 +167,9 @@ private:
         // A full queue is signalled with:  head - 1 mod size = tail mod size  (i.e. head and tail point to the same index in the data array)
         // FIXME: These invariants aren't proven to be correct after each successful completion of each operation where it is relevant.
         //        The work could be put in but for now I think the algorithmic correctness proofs of the functions are enough.
-        CACHE_ALIGNED Atomic<size_t, AK::MemoryOrder::memory_order_seq_cst> m_tail { 0 };
-        CACHE_ALIGNED Atomic<size_t, AK::MemoryOrder::memory_order_seq_cst> m_head { 0 };
-        CACHE_ALIGNED Atomic<size_t, AK::MemoryOrder::memory_order_seq_cst> m_head_protector { NumericLimits<size_t>::max() };
+        AK_CACHE_ALIGNED Atomic<size_t, AK::MemoryOrder::memory_order_seq_cst> m_tail { 0 };
+        AK_CACHE_ALIGNED Atomic<size_t, AK::MemoryOrder::memory_order_seq_cst> m_head { 0 };
+        AK_CACHE_ALIGNED Atomic<size_t, AK::MemoryOrder::memory_order_seq_cst> m_head_protector { NumericLimits<size_t>::max() };
 
         alignas(ValueType) Array<ValueType, Size> m_data;
     };
@@ -199,9 +198,9 @@ private:
         }
     };
 
-    static ErrorOr<SharedSingleProducerCircularQueue<T, Size>> try_create_internal(int fd, bool is_new)
+    static ErrorOr<SharedSingleProducerCircularQueue<T, Size>> create_internal(int fd, bool is_new)
     {
-        auto name = String::formatted("SharedSingleProducerCircularQueue@{:x}", fd);
+        auto name = ByteString::formatted("SharedSingleProducerCircularQueue@{:x}", fd);
         auto* raw_mapping = TRY(System::mmap(nullptr, sizeof(SharedMemorySPCQ), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0, 0, name));
         dbgln_if(SHARED_QUEUE_DEBUG, "successfully mmapped {} at {:p}", name, raw_mapping);
 
@@ -213,7 +212,7 @@ private:
         return SharedSingleProducerCircularQueue<T, Size> { move(name), adopt_ref(*new (nothrow) RefCountedSharedMemorySPCQ(shared_queue, fd)) };
     }
 
-    SharedSingleProducerCircularQueue(String name, RefPtr<RefCountedSharedMemorySPCQ> queue)
+    SharedSingleProducerCircularQueue(ByteString name, RefPtr<RefCountedSharedMemorySPCQ> queue)
         : m_queue(queue)
         , m_name(move(name))
     {
@@ -221,7 +220,7 @@ private:
 
     RefPtr<RefCountedSharedMemorySPCQ> m_queue;
 
-    String m_name {};
+    ByteString m_name {};
 };
 
 }

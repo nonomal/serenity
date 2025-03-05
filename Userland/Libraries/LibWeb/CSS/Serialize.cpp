@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -113,8 +113,26 @@ void serialize_a_url(StringBuilder& builder, StringView url)
     // To serialize a URL means to create a string represented by "url(",
     // followed by the serialization of the URL as a string, followed by ")".
     builder.append("url("sv);
-    serialize_a_string(builder, url.to_string());
+    serialize_a_string(builder, url);
     builder.append(')');
+}
+
+// https://www.w3.org/TR/cssom-1/#serialize-a-local
+void serialize_a_local(StringBuilder& builder, StringView path)
+{
+    // To serialize a LOCAL means to create a string represented by "local(",
+    // followed by the serialization of the LOCAL as a string, followed by ")".
+    builder.append("local("sv);
+    serialize_a_string(builder, path);
+    builder.append(')');
+}
+
+// NOTE: No spec currently exists for serializing a <'unicode-range'>.
+void serialize_unicode_ranges(StringBuilder& builder, Vector<Gfx::UnicodeRange> const& unicode_ranges)
+{
+    serialize_a_comma_separated_list(builder, unicode_ranges, [](auto& builder, Gfx::UnicodeRange unicode_range) -> void {
+        return serialize_a_string(builder, unicode_range.to_string());
+    });
 }
 
 // https://www.w3.org/TR/css-color-4/#serializing-sRGB-values
@@ -126,49 +144,49 @@ void serialize_a_srgb_value(StringBuilder& builder, Color color)
     if (color.alpha() == 255)
         builder.appendff("rgb({}, {}, {})"sv, color.red(), color.green(), color.blue());
     else
-        builder.appendff("rgba({}, {}, {}, {})"sv, color.red(), color.green(), color.blue(), (float)(color.alpha()) / 255.0f);
+        builder.appendff("rgba({}, {}, {}, {:.4})"sv, color.red(), color.green(), color.blue(), (float)(color.alpha()) / 255.0f);
 }
 
 String escape_a_character(u32 character)
 {
     StringBuilder builder;
     escape_a_character(builder, character);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 String escape_a_character_as_code_point(u32 character)
 {
     StringBuilder builder;
     escape_a_character_as_code_point(builder, character);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 String serialize_an_identifier(StringView ident)
 {
     StringBuilder builder;
     serialize_an_identifier(builder, ident);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 String serialize_a_string(StringView string)
 {
     StringBuilder builder;
     serialize_a_string(builder, string);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 String serialize_a_url(StringView url)
 {
     StringBuilder builder;
     serialize_a_url(builder, url);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 String serialize_a_srgb_value(Color color)
 {
     StringBuilder builder;
     serialize_a_srgb_value(builder, color);
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 }

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/DeprecatedFlyString.h>
 #include <AK/Error.h>
 #include <AK/FlyString.h>
 #include <errno.h>
@@ -28,7 +29,7 @@ struct LoaderError {
     Category category { Category::Unknown };
     // Binary index: where in the file the error occurred.
     size_t index { 0 };
-    FlyString description { String::empty() };
+    FlyString description { ""_fly_string };
 
     constexpr LoaderError() = default;
     LoaderError(Category category, size_t index, FlyString description)
@@ -54,22 +55,43 @@ struct LoaderError {
     {
         if (error.is_errno()) {
             auto code = error.code();
-            description = String::formatted("{} ({})", strerror(code), code);
+            description = String::formatted("{} ({})", strerror(code), code).release_value_but_fixme_should_propagate_errors();
             if (code == EBADF || code == EBUSY || code == EEXIST || code == EIO || code == EISDIR || code == ENOENT || code == ENOMEM || code == EPIPE)
                 category = Category::IO;
         } else {
-            description = error.string_literal();
+            description = FlyString::from_utf8(error.string_literal()).release_value_but_fixme_should_propagate_errors();
         }
     }
 };
 
 }
 
-// Convenience TRY-like macro to convert an Error to a LoaderError
-#define LOADER_TRY(expression)                                     \
-    ({                                                             \
-        auto _temporary_result = (expression);                     \
-        if (_temporary_result.is_error())                          \
-            return LoaderError(_temporary_result.release_error()); \
-        _temporary_result.release_value();                         \
-    })
+namespace AK {
+
+template<>
+struct Formatter<Audio::LoaderError> : Formatter<FormatString> {
+    ErrorOr<void> format(FormatBuilder& builder, Audio::LoaderError const& error)
+    {
+        StringView category;
+        switch (error.category) {
+        case Audio::LoaderError::Category::Unknown:
+            category = "Unknown"sv;
+            break;
+        case Audio::LoaderError::Category::IO:
+            category = "I/O"sv;
+            break;
+        case Audio::LoaderError::Category::Format:
+            category = "Format"sv;
+            break;
+        case Audio::LoaderError::Category::Internal:
+            category = "Internal"sv;
+            break;
+        case Audio::LoaderError::Category::Unimplemented:
+            category = "Unimplemented"sv;
+            break;
+        }
+        return Formatter<FormatString>::format(builder, "{} error: {} (at {})"sv, category, error.description, error.index);
+    }
+};
+
+}

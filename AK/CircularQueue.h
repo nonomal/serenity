@@ -14,8 +14,6 @@ namespace AK {
 
 template<typename T, size_t Capacity>
 class CircularQueue {
-    friend CircularDuplexStream<Capacity>;
-
 public:
     CircularQueue() = default;
 
@@ -63,11 +61,11 @@ public:
         return value;
     }
 
-    const T& at(size_t index) const { return elements()[(m_head + index) % Capacity]; }
+    T const& at(size_t index) const { return elements()[(m_head + index) % Capacity]; }
     T& at(size_t index) { return elements()[(m_head + index) % Capacity]; }
 
-    const T& first() const { return at(0); }
-    const T& last() const { return at(size() - 1); }
+    T const& first() const { return at(0); }
+    T const& last() const { return at(size() - 1); }
 
     class ConstIterator {
     public:
@@ -78,11 +76,11 @@ public:
             return *this;
         }
 
-        const T& operator*() const { return m_queue.at(m_index); }
+        T const& operator*() const { return m_queue.at(m_index); }
 
     private:
         friend class CircularQueue;
-        ConstIterator(CircularQueue const& queue, const size_t index)
+        ConstIterator(CircularQueue const& queue, size_t const index)
             : m_queue(queue)
             , m_index(index)
         {
@@ -123,7 +121,7 @@ public:
 
 protected:
     T* elements() { return reinterpret_cast<T*>(m_storage); }
-    const T* elements() const { return reinterpret_cast<const T*>(m_storage); }
+    T const* elements() const { return reinterpret_cast<T const*>(m_storage); }
 
     friend class ConstIterator;
     alignas(T) u8 m_storage[sizeof(T) * Capacity];
@@ -133,4 +131,6 @@ protected:
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::CircularQueue;
+#endif

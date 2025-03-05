@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteBuffer.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/Net/LocalSocket.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 #include <Kernel/UnixTypes.h>
 
 namespace Kernel {
@@ -14,6 +15,8 @@ namespace Kernel {
 #define REQUIRE_PROMISE_FOR_SOCKET_DOMAIN(domain) \
     do {                                          \
         if (domain == AF_INET)                    \
+            TRY(require_promise(Pledge::inet));   \
+        else if (domain == AF_INET6)              \
             TRY(require_promise(Pledge::inet));   \
         else if (domain == AF_LOCAL)              \
             TRY(require_promise(Pledge::unix));   \
@@ -33,10 +36,11 @@ static void setup_socket_fd(Process::OpenFileDescriptions& fds, int fd, NonnullR
 
 ErrorOr<FlatPtr> Process::sys$socket(int domain, int type, int protocol)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     REQUIRE_PROMISE_FOR_SOCKET_DOMAIN(domain);
 
-    if ((type & SOCK_TYPE_MASK) == SOCK_RAW && !is_superuser())
+    auto credentials = this->credentials();
+    if ((type & SOCK_TYPE_MASK) == SOCK_RAW && !credentials->is_superuser())
         return EACCES;
 
     return m_fds.with_exclusive([&](auto& fds) -> ErrorOr<FlatPtr> {
@@ -50,21 +54,27 @@ ErrorOr<FlatPtr> Process::sys$socket(int domain, int type, int protocol)
 
 ErrorOr<FlatPtr> Process::sys$bind(int sockfd, Userspace<sockaddr const*> address, socklen_t address_length)
 {
-    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto description = TRY(open_file_description(sockfd));
     if (!description->is_socket())
         return ENOTSOCK;
     auto& socket = *description->socket();
     REQUIRE_PROMISE_FOR_SOCKET_DOMAIN(socket.domain());
-    TRY(socket.bind(address, address_length));
+    TRY(socket.bind(credentials(), address, address_length));
     return 0;
 }
 
 ErrorOr<FlatPtr> Process::sys$listen(int sockfd, int backlog)
 {
-    VERIFY_NO_PROCESS_BIG_LOCK(this)
-    if (backlog < 0)
-        return EINVAL;
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    // As per POSIX, the behavior of listen() with a backlog value of 0 is implementation defined:
+    // "A backlog argument of 0 may allow the socket to accept connections, in which case the length of the listen queue may be set to an implementation-defined minimum value."
+    // Since creating a socket that can't accept any connections seems relatively useless, and as other platforms (Linux, FreeBSD, etc) chose to support accepting connections
+    // with this backlog value, support it as well by normalizing it to 1.
+    // Also, as per POSIX, the behaviour of a negative backlog value is equivalent to a backlog value of 0:
+    // "If listen() is called with a backlog argument value that is less than 0, the function behaves as if it had been called with a backlog argument value of 0."
+    if (backlog <= 0)
+        backlog = 1;
     auto description = TRY(open_file_description(sockfd));
     if (!description->is_socket())
         return ENOTSOCK;
@@ -78,7 +88,7 @@ ErrorOr<FlatPtr> Process::sys$listen(int sockfd, int backlog)
 
 ErrorOr<FlatPtr> Process::sys$accept4(Userspace<Syscall::SC_accept4_params const*> user_params)
 {
-    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::accept));
     auto params = TRY(copy_typed_from_user(user_params));
 
@@ -103,7 +113,7 @@ ErrorOr<FlatPtr> Process::sys$accept4(Userspace<Syscall::SC_accept4_params const
         return ENOTSOCK;
     auto& socket = *accepting_socket_description->socket();
 
-    RefPtr<Socket> accepted_socket;
+    LockRefPtr<Socket> accepted_socket;
     for (;;) {
         accepted_socket = socket.accept();
         if (accepted_socket)
@@ -145,20 +155,20 @@ ErrorOr<FlatPtr> Process::sys$accept4(Userspace<Syscall::SC_accept4_params const
 
 ErrorOr<FlatPtr> Process::sys$connect(int sockfd, Userspace<sockaddr const*> user_address, socklen_t user_address_size)
 {
-    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
 
     auto description = TRY(open_file_description(sockfd));
     if (!description->is_socket())
         return ENOTSOCK;
     auto& socket = *description->socket();
     REQUIRE_PROMISE_FOR_SOCKET_DOMAIN(socket.domain());
-    TRY(socket.connect(*description, user_address, user_address_size, description->is_blocking() ? ShouldBlock::Yes : ShouldBlock::No));
+    TRY(socket.connect(credentials(), *description, user_address, user_address_size));
     return 0;
 }
 
 ErrorOr<FlatPtr> Process::sys$shutdown(int sockfd, int how)
 {
-    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
     if (how != SHUT_RD && how != SHUT_WR && how != SHUT_RDWR)
         return EINVAL;
@@ -173,7 +183,7 @@ ErrorOr<FlatPtr> Process::sys$shutdown(int sockfd, int how)
 
 ErrorOr<FlatPtr> Process::sys$sendmsg(int sockfd, Userspace<const struct msghdr*> user_msg, int flags)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
     TRY(require_promise(Pledge::stdio));
     auto msg = TRY(copy_typed_from_user(user_msg));
 
@@ -193,8 +203,29 @@ ErrorOr<FlatPtr> Process::sys$sendmsg(int sockfd, Userspace<const struct msghdr*
         return ENOTSOCK;
 
     auto& socket = *description->socket();
-    if (socket.is_shut_down_for_writing())
+    if (socket.is_shut_down_for_writing()) {
+        if ((flags & MSG_NOSIGNAL) == 0)
+            Thread::current()->send_signal(SIGPIPE, &Process::current());
         return EPIPE;
+    }
+
+    if (msg.msg_controllen > 0) {
+        // Handle command messages.
+        auto cmsg_buffer = TRY(ByteBuffer::create_uninitialized(msg.msg_controllen));
+        TRY(copy_from_user(cmsg_buffer.data(), msg.msg_control, msg.msg_controllen));
+        msg.msg_control = cmsg_buffer.data();
+        for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg); cmsg != nullptr; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+            if (socket.is_local() && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+                auto& local_socket = static_cast<LocalSocket&>(socket);
+                int* fds = (int*)CMSG_DATA(cmsg);
+                size_t nfds = (cmsg->cmsg_len - CMSG_ALIGN(sizeof(struct cmsghdr))) / sizeof(int);
+                for (size_t i = 0; i < nfds; ++i) {
+                    TRY(local_socket.sendfd(*description, TRY(open_file_description(fds[i]))));
+                }
+            }
+        }
+    }
+
     auto data_buffer = TRY(UserOrKernelBuffer::for_user_buffer((u8*)iovs[0].iov_base, iovs[0].iov_len));
 
     while (true) {
@@ -210,7 +241,14 @@ ErrorOr<FlatPtr> Process::sys$sendmsg(int sockfd, Userspace<const struct msghdr*
             // TODO: handle exceptions in unblock_flags
         }
 
-        auto bytes_sent = TRY(socket.sendto(*description, data_buffer, iovs[0].iov_len, flags, user_addr, addr_length));
+        auto bytes_sent_or_error = socket.sendto(*description, data_buffer, iovs[0].iov_len, flags, user_addr, addr_length);
+        if (bytes_sent_or_error.is_error()) {
+            if ((flags & MSG_NOSIGNAL) == 0 && bytes_sent_or_error.error().code() == EPIPE)
+                Thread::current()->send_signal(SIGPIPE, &Process::current());
+            return bytes_sent_or_error.release_error();
+        }
+
+        auto bytes_sent = bytes_sent_or_error.release_value();
         if (bytes_sent > 0)
             return bytes_sent;
     }
@@ -218,7 +256,7 @@ ErrorOr<FlatPtr> Process::sys$sendmsg(int sockfd, Userspace<const struct msghdr*
 
 ErrorOr<FlatPtr> Process::sys$recvmsg(int sockfd, Userspace<struct msghdr*> user_msg, int flags)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
     TRY(require_promise(Pledge::stdio));
 
     struct msghdr msg;
@@ -241,15 +279,10 @@ ErrorOr<FlatPtr> Process::sys$recvmsg(int sockfd, Userspace<struct msghdr*> user
     if (socket.is_shut_down_for_reading())
         return 0;
 
-    bool original_blocking = description->is_blocking();
-    if (flags & MSG_DONTWAIT)
-        description->set_blocking(false);
-
     auto data_buffer = TRY(UserOrKernelBuffer::for_user_buffer((u8*)iovs[0].iov_base, iovs[0].iov_len));
-    Time timestamp {};
-    auto result = socket.recvfrom(*description, data_buffer, iovs[0].iov_len, flags, user_addr, user_addr_length, timestamp);
-    if (flags & MSG_DONTWAIT)
-        description->set_blocking(original_blocking);
+    UnixDateTime timestamp {};
+    bool blocking = (flags & MSG_DONTWAIT) ? false : description->is_blocking();
+    auto result = socket.recvfrom(*description, data_buffer, iovs[0].iov_len, flags, user_addr, user_addr_length, timestamp, blocking);
 
     if (result.is_error())
         return result.release_error();
@@ -261,26 +294,47 @@ ErrorOr<FlatPtr> Process::sys$recvmsg(int sockfd, Userspace<struct msghdr*> user
         msg_flags |= MSG_TRUNC;
     }
 
-    if (socket.wants_timestamp()) {
-        struct {
-            cmsghdr cmsg;
-            timeval timestamp;
-        } cmsg_timestamp;
-        socklen_t control_length = sizeof(cmsg_timestamp);
-        if (msg.msg_controllen < control_length) {
+    socklen_t current_cmsg_len = 0;
+    auto try_add_cmsg = [&](int level, int type, void const* data, socklen_t len) -> ErrorOr<bool> {
+        if (current_cmsg_len + len > msg.msg_controllen) {
             msg_flags |= MSG_CTRUNC;
-        } else {
-            cmsg_timestamp = { { control_length, SOL_SOCKET, SCM_TIMESTAMP }, timestamp.to_timeval() };
-            TRY(copy_to_user(msg.msg_control, &cmsg_timestamp, control_length));
+            return false;
         }
-        TRY(copy_to_user(&user_msg.unsafe_userspace_ptr()->msg_controllen, &control_length));
+
+        cmsghdr cmsg = { (socklen_t)CMSG_LEN(len), level, type };
+        cmsghdr* target = (cmsghdr*)(((char*)msg.msg_control) + current_cmsg_len);
+        TRY(copy_to_user(target, &cmsg));
+        TRY(copy_to_user(CMSG_DATA(target), data, len));
+        current_cmsg_len += CMSG_ALIGN(cmsg.cmsg_len);
+        return true;
+    };
+
+    if (socket.wants_timestamp()) {
+        timeval time = timestamp.to_timeval();
+        TRY(try_add_cmsg(SOL_SOCKET, SCM_TIMESTAMP, &time, sizeof(time)));
     }
+
+    int space_for_fds = (msg.msg_controllen - current_cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
+    if (space_for_fds > 0 && socket.is_local()) {
+        auto& local_socket = static_cast<LocalSocket&>(socket);
+        auto descriptions = TRY(local_socket.recvfds(description, space_for_fds));
+        Vector<int> fdnums;
+        for (auto& description : descriptions) {
+            auto fd_allocation = TRY(m_fds.with_exclusive([](auto& fds) { return fds.allocate(); }));
+            m_fds.with_exclusive([&](auto& fds) { fds[fd_allocation.fd].set(*description, 0); });
+            fdnums.append(fd_allocation.fd);
+        }
+        if (!fdnums.is_empty())
+            TRY(try_add_cmsg(SOL_SOCKET, SCM_RIGHTS, fdnums.data(), fdnums.size() * sizeof(int)));
+    }
+
+    TRY(copy_to_user(&user_msg.unsafe_userspace_ptr()->msg_controllen, &current_cmsg_len));
 
     TRY(copy_to_user(&user_msg.unsafe_userspace_ptr()->msg_flags, &msg_flags));
     return result.value();
 }
 
-template<bool sockname, typename Params>
+template<Process::SockOrPeerName sock_or_peer_name, typename Params>
 ErrorOr<void> Process::get_sock_or_peer_name(Params const& params)
 {
     socklen_t addrlen_value;
@@ -298,7 +352,7 @@ ErrorOr<void> Process::get_sock_or_peer_name(Params const& params)
 
     sockaddr_un address_buffer {};
     addrlen_value = min(sizeof(sockaddr_un), static_cast<size_t>(addrlen_value));
-    if constexpr (sockname)
+    if constexpr (sock_or_peer_name == SockOrPeerName::SockName)
         socket.get_local_address((sockaddr*)&address_buffer, &addrlen_value);
     else
         socket.get_peer_address((sockaddr*)&address_buffer, &addrlen_value);
@@ -308,23 +362,23 @@ ErrorOr<void> Process::get_sock_or_peer_name(Params const& params)
 
 ErrorOr<FlatPtr> Process::sys$getsockname(Userspace<Syscall::SC_getsockname_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto params = TRY(copy_typed_from_user(user_params));
-    TRY(get_sock_or_peer_name<true>(params));
+    TRY(get_sock_or_peer_name<SockOrPeerName::SockName>(params));
     return 0;
 }
 
 ErrorOr<FlatPtr> Process::sys$getpeername(Userspace<Syscall::SC_getpeername_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto params = TRY(copy_typed_from_user(user_params));
-    TRY(get_sock_or_peer_name<false>(params));
+    TRY(get_sock_or_peer_name<SockOrPeerName::PeerName>(params));
     return 0;
 }
 
 ErrorOr<FlatPtr> Process::sys$getsockopt(Userspace<Syscall::SC_getsockopt_params const*> user_params)
 {
-    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto params = TRY(copy_typed_from_user(user_params));
 
     int sockfd = params.sockfd;
@@ -347,7 +401,7 @@ ErrorOr<FlatPtr> Process::sys$getsockopt(Userspace<Syscall::SC_getsockopt_params
 
 ErrorOr<FlatPtr> Process::sys$setsockopt(Userspace<Syscall::SC_setsockopt_params const*> user_params)
 {
-    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto params = TRY(copy_typed_from_user(user_params));
 
     Userspace<void const*> user_value((FlatPtr)params.value);
@@ -362,7 +416,7 @@ ErrorOr<FlatPtr> Process::sys$setsockopt(Userspace<Syscall::SC_setsockopt_params
 
 ErrorOr<FlatPtr> Process::sys$socketpair(Userspace<Syscall::SC_socketpair_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto params = TRY(copy_typed_from_user(user_params));
 
     if (params.domain != AF_LOCAL)
@@ -383,7 +437,7 @@ ErrorOr<FlatPtr> Process::sys$socketpair(Userspace<Syscall::SC_socketpair_params
         setup_socket_fd(fds, allocated_fds[0], pair.description0, params.type);
         setup_socket_fd(fds, allocated_fds[1], pair.description1, params.type);
 
-        if (copy_to_user(params.sv, allocated_fds, sizeof(allocated_fds)).is_error()) {
+        if (copy_n_to_user(params.sv, allocated_fds, 2).is_error()) {
             // Avoid leaking both file descriptors on error.
             fds[allocated_fds[0]] = {};
             fds[allocated_fds[1]] = {};

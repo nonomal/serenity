@@ -5,8 +5,7 @@
  */
 
 #include <Kernel/Arch/InterruptManagement.h>
-#include <Kernel/Arch/x86/Interrupts.h>
-#include <Kernel/Interrupts/PIC.h>
+#include <Kernel/Arch/x86_64/Interrupts.h>
 #include <Kernel/Interrupts/SpuriousInterruptHandler.h>
 #include <Kernel/Sections.h>
 
@@ -69,13 +68,13 @@ SpuriousInterruptHandler::SpuriousInterruptHandler(u8 irq)
 
 SpuriousInterruptHandler::~SpuriousInterruptHandler() = default;
 
-bool SpuriousInterruptHandler::handle_interrupt(RegisterState const& state)
+bool SpuriousInterruptHandler::handle_interrupt()
 {
     // Actually check if IRQ7 or IRQ15 are spurious, and if not, call the real handler to handle the IRQ.
     if (m_responsible_irq_controller->get_isr() & (1 << interrupt_number())) {
         m_real_irq = true; // remember that we had a real IRQ, when EOI later!
-        if (m_real_handler->handle_interrupt(state)) {
-            m_real_handler->increment_invoking_counter();
+        if (m_real_handler->handle_interrupt()) {
+            m_real_handler->increment_call_count();
             return true;
         }
         return false;

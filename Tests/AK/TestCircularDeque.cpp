@@ -6,9 +6,9 @@
 
 #include <LibTest/TestCase.h>
 
+#include <AK/ByteString.h>
 #include <AK/CircularDeque.h>
 #include <AK/StdLibExtras.h>
-#include <AK/String.h>
 
 TEST_CASE(enqueue_begin)
 {
@@ -37,11 +37,11 @@ TEST_CASE(enqueue_begin)
 
 TEST_CASE(enqueue_begin_being_moved_from)
 {
-    CircularDeque<String, 2> strings;
+    CircularDeque<ByteString, 2> strings;
 
-    String str { "test" };
+    ByteString str { "test" };
     strings.enqueue_begin(move(str));
-    EXPECT(str.is_null());
+    EXPECT(str.is_empty());
 }
 
 TEST_CASE(deque_end)

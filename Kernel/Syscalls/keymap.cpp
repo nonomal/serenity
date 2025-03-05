@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/Devices/HID/HIDManagement.h>
-#include <Kernel/Process.h>
+#include <Kernel/Devices/HID/Management.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
@@ -16,7 +16,8 @@ ErrorOr<FlatPtr> Process::sys$setkeymap(Userspace<Syscall::SC_setkeymap_params c
     VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::setkeymap));
 
-    if (!is_superuser())
+    auto credentials = this->credentials();
+    if (!credentials->is_superuser())
         return EPERM;
 
     auto params = TRY(copy_typed_from_user(user_params));
@@ -49,11 +50,11 @@ ErrorOr<FlatPtr> Process::sys$getkeymap(Userspace<Syscall::SC_getkeymap_params c
         TRY(copy_to_user(params.map_name.data, keymap_data.character_map_name->characters(), keymap_data.character_map_name->length()));
 
         auto const& character_maps = keymap_data.character_map;
-        TRY(copy_to_user(params.map, character_maps.map, CHAR_MAP_SIZE * sizeof(u32)));
-        TRY(copy_to_user(params.shift_map, character_maps.shift_map, CHAR_MAP_SIZE * sizeof(u32)));
-        TRY(copy_to_user(params.alt_map, character_maps.alt_map, CHAR_MAP_SIZE * sizeof(u32)));
-        TRY(copy_to_user(params.altgr_map, character_maps.altgr_map, CHAR_MAP_SIZE * sizeof(u32)));
-        TRY(copy_to_user(params.shift_altgr_map, character_maps.shift_altgr_map, CHAR_MAP_SIZE * sizeof(u32)));
+        TRY(copy_n_to_user(params.map, character_maps.map, CHAR_MAP_SIZE));
+        TRY(copy_n_to_user(params.shift_map, character_maps.shift_map, CHAR_MAP_SIZE));
+        TRY(copy_n_to_user(params.alt_map, character_maps.alt_map, CHAR_MAP_SIZE));
+        TRY(copy_n_to_user(params.altgr_map, character_maps.altgr_map, CHAR_MAP_SIZE));
+        TRY(copy_n_to_user(params.shift_altgr_map, character_maps.shift_altgr_map, CHAR_MAP_SIZE));
         return 0;
     });
 }

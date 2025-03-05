@@ -5,14 +5,15 @@
  */
 
 #include <Kernel/FileSystem/VirtualFileSystem.h>
-#include <Kernel/Process.h>
+#include <Kernel/Memory/MemoryManager.h>
+#include <Kernel/Tasks/Process.h>
 #include <Kernel/Time/TimeManagement.h>
 
 namespace Kernel {
 
 ErrorOr<FlatPtr> Process::sys$sysconf(int name)
 {
-    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     switch (name) {
     case _SC_MONOTONIC_CLOCK:
         return 1;
@@ -28,6 +29,7 @@ ErrorOr<FlatPtr> Process::sys$sysconf(int name)
     case _SC_TTY_NAME_MAX:
         return TTY_NAME_MAX;
     case _SC_GETPW_R_SIZE_MAX:
+    case _SC_GETGR_R_SIZE_MAX:
         return 4096; // idk
     case _SC_CLK_TCK:
         return TimeManagement::the().ticks_per_second();
@@ -37,6 +39,8 @@ ErrorOr<FlatPtr> Process::sys$sysconf(int name)
         return Process::max_arguments_size;
     case _SC_IOV_MAX:
         return IOV_MAX;
+    case _SC_PHYS_PAGES:
+        return MM.get_system_memory_info().physical_pages;
     default:
         return EINVAL;
     }

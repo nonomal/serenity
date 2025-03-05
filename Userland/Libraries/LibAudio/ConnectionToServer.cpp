@@ -6,34 +6,40 @@
  */
 
 #include <AK/Atomic.h>
+#include <AK/Debug.h>
 #include <AK/Format.h>
 #include <AK/OwnPtr.h>
 #include <AK/Time.h>
 #include <AK/Types.h>
 #include <LibAudio/ConnectionToServer.h>
+#include <LibAudio/Queue.h>
 #include <LibAudio/UserSampleQueue.h>
 #include <LibCore/Event.h>
 #include <LibThreading/Mutex.h>
+#include <Userland/Services/AudioServer/AudioClientEndpoint.h>
+#include <sched.h>
 #include <time.h>
 
 namespace Audio {
 
-ConnectionToServer::ConnectionToServer(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+ConnectionToServer::ConnectionToServer(NonnullOwnPtr<Core::LocalSocket> socket)
     : IPC::ConnectionToServer<AudioClientEndpoint, AudioServerEndpoint>(*this, move(socket))
-    , m_buffer(make<AudioQueue>(MUST(AudioQueue::try_create())))
+    , m_buffer(make<AudioQueue>(MUST(AudioQueue::create())))
     , m_user_queue(make<UserSampleQueue>())
     , m_background_audio_enqueuer(Threading::Thread::construct([this]() {
         // All the background thread does is run an event loop.
         Core::EventLoop enqueuer_loop;
         m_enqueuer_loop = &enqueuer_loop;
         enqueuer_loop.exec();
-        m_enqueuer_loop_destruction.lock();
-        m_enqueuer_loop = nullptr;
-        m_enqueuer_loop_destruction.unlock();
+        {
+            Threading::MutexLocker const locker(m_enqueuer_loop_destruction);
+            m_enqueuer_loop = nullptr;
+        }
         return (intptr_t) nullptr;
     }))
 {
-    m_background_audio_enqueuer->start();
+    update_good_sleep_time();
+    async_pause_playback();
     set_buffer(*m_buffer);
 }
 
@@ -44,23 +50,32 @@ ConnectionToServer::~ConnectionToServer()
 
 void ConnectionToServer::die()
 {
-    // We're sometimes getting here after the other thread has already exited and its event loop does no longer exist.
-    m_enqueuer_loop_destruction.lock();
-    if (m_enqueuer_loop != nullptr) {
-        m_enqueuer_loop->wake();
-        m_enqueuer_loop->quit(0);
+    {
+        Threading::MutexLocker const locker(m_enqueuer_loop_destruction);
+        // We're sometimes getting here after the other thread has already exited and its event loop does no longer exist.
+        if (m_enqueuer_loop != nullptr) {
+            m_enqueuer_loop->wake();
+            m_enqueuer_loop->quit(0);
+        }
     }
-    m_enqueuer_loop_destruction.unlock();
-    (void)m_background_audio_enqueuer->join();
+    if (m_background_audio_enqueuer->is_started())
+        (void)m_background_audio_enqueuer->join();
 }
 
 ErrorOr<void> ConnectionToServer::async_enqueue(FixedArray<Sample>&& samples)
 {
-    update_good_sleep_time();
+    if (!m_background_audio_enqueuer->is_started()) {
+        m_background_audio_enqueuer->start();
+        // Wait until the enqueuer has constructed its loop. A pseudo-spinlock is fine since this happens as soon as the other thread gets scheduled.
+        while (!m_enqueuer_loop)
+            usleep(1);
+        TRY(m_background_audio_enqueuer->set_priority(THREAD_PRIORITY_MAX));
+    }
+
     m_user_queue->append(move(samples));
     // Wake the background thread to make sure it starts enqueuing audio.
-    if (!m_audio_enqueuer_active.load())
-        m_enqueuer_loop->post_event(*this, make<Core::CustomEvent>(0), Core::EventLoop::ShouldWake::Yes);
+    m_enqueuer_loop->post_event(*this, make<Core::CustomEvent>(0));
+    m_enqueuer_loop->wake();
     async_start_playback();
 
     return {};
@@ -73,10 +88,16 @@ void ConnectionToServer::clear_client_buffer()
 
 void ConnectionToServer::update_good_sleep_time()
 {
-    auto sample_rate = static_cast<double>(get_sample_rate());
+    auto sample_rate = static_cast<double>(get_self_sample_rate());
     auto buffer_play_time_ns = 1'000'000'000.0 / (sample_rate / static_cast<double>(AUDIO_BUFFER_SIZE));
     // A factor of 1 should be good for now.
-    m_good_sleep_time = Time::from_nanoseconds(static_cast<unsigned>(buffer_play_time_ns)).to_timespec();
+    m_good_sleep_time = Duration::from_nanoseconds(static_cast<unsigned>(buffer_play_time_ns)).to_timespec();
+}
+
+void ConnectionToServer::set_self_sample_rate(u32 sample_rate)
+{
+    IPC::ConnectionToServer<AudioClientEndpoint, AudioServerEndpoint>::set_self_sample_rate(sample_rate);
+    update_good_sleep_time();
 }
 
 // Non-realtime audio writing loop
@@ -84,10 +105,8 @@ void ConnectionToServer::custom_event(Core::CustomEvent&)
 {
     Array<Sample, AUDIO_BUFFER_SIZE> next_chunk;
     while (true) {
-        m_audio_enqueuer_active.store(true);
-
         if (m_user_queue->is_empty()) {
-            dbgln("Reached end of provided audio data, going to sleep");
+            dbgln_if(AUDIO_DEBUG, "Reached end of provided audio data, going to sleep");
             break;
         }
 
@@ -98,18 +117,22 @@ void ConnectionToServer::custom_event(Core::CustomEvent&)
         m_user_queue->discard_samples(available_samples);
 
         // FIXME: Could we receive interrupts in a good non-IPC way instead?
-        auto result = m_buffer->try_blocking_enqueue(next_chunk, [this]() {
+        auto result = m_buffer->blocking_enqueue(next_chunk, [this]() {
             nanosleep(&m_good_sleep_time, nullptr);
         });
         if (result.is_error())
             dbgln("Error while writing samples to shared buffer: {}", result.error());
     }
-    m_audio_enqueuer_active.store(false);
 }
 
 ErrorOr<void, AudioQueue::QueueStatus> ConnectionToServer::realtime_enqueue(Array<Sample, AUDIO_BUFFER_SIZE> samples)
 {
-    return m_buffer->try_enqueue(samples);
+    return m_buffer->enqueue(samples);
+}
+
+ErrorOr<void> ConnectionToServer::blocking_realtime_enqueue(Array<Sample, AUDIO_BUFFER_SIZE> samples, Function<void()> wait_function)
+{
+    return m_buffer->blocking_enqueue(samples, move(wait_function));
 }
 
 unsigned ConnectionToServer::total_played_samples() const
@@ -127,16 +150,9 @@ size_t ConnectionToServer::remaining_buffers() const
     return m_buffer->size() - m_buffer->weak_remaining_capacity();
 }
 
-void ConnectionToServer::main_mix_muted_state_changed(bool muted)
+bool ConnectionToServer::can_enqueue() const
 {
-    if (on_main_mix_muted_state_change)
-        on_main_mix_muted_state_change(muted);
-}
-
-void ConnectionToServer::main_mix_volume_changed(double volume)
-{
-    if (on_main_mix_volume_change)
-        on_main_mix_volume_change(volume);
+    return m_buffer->can_enqueue();
 }
 
 void ConnectionToServer::client_volume_changed(double volume)

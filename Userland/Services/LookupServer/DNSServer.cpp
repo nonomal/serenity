@@ -13,7 +13,7 @@ namespace LookupServer {
 
 using namespace DNS;
 
-DNSServer::DNSServer(Object* parent)
+DNSServer::DNSServer(Core::EventReceiver* parent)
     : Core::UDPServer(parent)
 {
     bind(IPv4Address(), 53);
@@ -28,13 +28,8 @@ DNSServer::DNSServer(Object* parent)
 ErrorOr<void> DNSServer::handle_client()
 {
     sockaddr_in client_address;
-    auto buffer = receive(1024, client_address);
-    auto optional_request = Packet::from_raw_packet(buffer.data(), buffer.size());
-    if (!optional_request.has_value()) {
-        dbgln("Got an invalid DNS packet");
-        return {};
-    }
-    auto& request = optional_request.value();
+    auto buffer = TRY(receive(1024, client_address));
+    auto request = TRY(Packet::from_raw_packet(buffer));
 
     if (!request.is_query()) {
         dbgln("It's not a request");
@@ -62,7 +57,7 @@ ErrorOr<void> DNSServer::handle_client()
     else
         response.set_code(Packet::Code::NOERROR);
 
-    buffer = response.to_byte_buffer();
+    buffer = TRY(response.to_byte_buffer());
 
     TRY(send(buffer, client_address));
     return {};

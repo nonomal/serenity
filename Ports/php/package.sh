@@ -1,28 +1,38 @@
 #!/usr/bin/env -S bash ../.port_include.sh
 port='php'
 useconfigure='true'
-version='8.1.6'
-files="https://www.php.net/distributions/php-${version}.tar.xz php-${version}.tar.xz da38d65bb0d5dd56f711cd478204f2b62a74a2c2b0d2d523a78d6eb865b2364c"
-auth_type='sha256'
-depends=("libiconv" "libxml2" "openssl" "readline" "sqlite" "zlib")
-configopts=(
-    "--disable-cgi"
-    "--disable-opcache"
-    "--enable-fpm"
-    "--prefix=${SERENITY_INSTALL_ROOT}/usr/local"
-    "--with-iconv=${SERENITY_INSTALL_ROOT}/usr/local"
-    "--with-openssl"
-    "--with-readline=${SERENITY_INSTALL_ROOT}/usr/local"
-    "--with-zlib"
-    "--without-pcre-jit"
+version='8.2.10'
+files=(
+    "https://www.php.net/distributions/php-${version}.tar.xz#561dc4acd5386e47f25be76f2c8df6ae854756469159248313bcf276e282fbb3"
 )
-launcher_name="PHP"
-launcher_category="Development"
-launcher_command="/usr/local/bin/php -a"
-launcher_run_in_terminal="true"
-icon_file="win32/build/php.ico"
+depends=(
+    'curl'
+    'libiconv'
+    'libxml2'
+    'openssl'
+    'readline'
+    'sqlite'
+    'zlib'
+)
+configopts=(
+    '--disable-cgi'
+    '--disable-opcache'
+    '--enable-fpm'
+    "--prefix=${SERENITY_INSTALL_ROOT}/usr/local"
+    '--with-curl'
+    "--with-iconv=${SERENITY_INSTALL_ROOT}/usr/local"
+    '--with-openssl'
+    "--with-readline=${SERENITY_INSTALL_ROOT}/usr/local"
+    '--with-zlib'
+    '--without-pcre-jit'
+)
+launcher_name='PHP'
+launcher_category='D&evelopment'
+launcher_command='/usr/local/bin/php -a'
+launcher_run_in_terminal='true'
+icon_file='win32/build/php.ico'
 
-export CFLAGS="-I${SERENITY_INSTALL_ROOT}/usr/local/include/libxml2"
+export CFLAGS="-I${SERENITY_INSTALL_ROOT}/usr/include/LibCrypt -I${SERENITY_INSTALL_ROOT}/usr/local/include/libxml2"
 export LIBS='-ldl'
 export LIBXML_CFLAGS='y'
 export LIBXML_LIBS='-lxml2'

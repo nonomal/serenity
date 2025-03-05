@@ -1,47 +1,40 @@
 /*
  * Copyright (c) 2022, DerpyCrabs <derpycrabs@gmail.com>
+ * Copyright (c) 2023, Luke Wilde <lukew@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/Noncopyable.h>
-#include <AK/NonnullRefPtrVector.h>
-#include <AK/RefCounted.h>
 #include <AK/Vector.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/Forward.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Geometry/DOMRect.h>
 
 namespace Web::Geometry {
 
 // https://drafts.fxtf.org/geometry-1/#DOMRectList
-class DOMRectList final
-    : public RefCounted<DOMRectList>
-    , public Bindings::Wrappable {
-    AK_MAKE_NONCOPYABLE(DOMRectList);
-    AK_MAKE_NONMOVABLE(DOMRectList);
+class DOMRectList final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(DOMRectList, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(DOMRectList);
 
 public:
-    using WrapperType = Bindings::DOMRectListWrapper;
+    [[nodiscard]] static JS::NonnullGCPtr<DOMRectList> create(JS::Realm&, Vector<JS::Handle<DOMRect>>);
 
-    static NonnullRefPtr<DOMRectList> create(NonnullRefPtrVector<DOMRect>&& rects)
-    {
-        return adopt_ref(*new DOMRectList(move(rects)));
-    }
-
-    ~DOMRectList() = default;
+    virtual ~DOMRectList() override;
 
     u32 length() const;
     DOMRect const* item(u32 index) const;
 
-    bool is_supported_property_index(u32) const;
+    virtual Optional<JS::Value> item_value(size_t index) const override;
 
 private:
-    DOMRectList(NonnullRefPtrVector<DOMRect>&& rects);
+    DOMRectList(JS::Realm&, Vector<JS::NonnullGCPtr<DOMRect>>);
 
-    NonnullRefPtrVector<DOMRect> m_rects;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    Vector<JS::NonnullGCPtr<DOMRect>> m_rects;
 };
 
 }

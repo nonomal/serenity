@@ -12,7 +12,6 @@
 #include <AK/MemoryStream.h>
 #include <AK/StringBuilder.h>
 #include <arpa/inet.h>
-#include <stdlib.h>
 
 namespace DNS {
 
@@ -30,7 +29,7 @@ void Packet::add_answer(Answer const& answer)
     VERIFY(m_answers.size() <= UINT16_MAX);
 }
 
-ByteBuffer Packet::to_byte_buffer() const
+ErrorOr<ByteBuffer> Packet::to_byte_buffer() const
 {
     PacketHeader header;
     header.set_id(m_id);
@@ -49,30 +48,32 @@ ByteBuffer Packet::to_byte_buffer() const
     header.set_question_count(m_questions.size());
     header.set_answer_count(m_answers.size());
 
-    DuplexMemoryStream stream;
+    AllocatingMemoryStream stream;
 
-    stream << ReadonlyBytes { &header, sizeof(header) };
+    TRY(stream.write_value(header));
     for (auto& question : m_questions) {
-        stream << question.name();
-        stream << htons((u16)question.record_type());
-        stream << htons(question.raw_class_code());
+        TRY(stream.write_value(question.name()));
+        TRY(stream.write_value(htons((u16)question.record_type())));
+        TRY(stream.write_value(htons(question.raw_class_code())));
     }
     for (auto& answer : m_answers) {
-        stream << answer.name();
-        stream << htons((u16)answer.type());
-        stream << htons(answer.raw_class_code());
-        stream << htonl(answer.ttl());
+        TRY(stream.write_value(answer.name()));
+        TRY(stream.write_value(htons((u16)answer.type())));
+        TRY(stream.write_value(htons(answer.raw_class_code())));
+        TRY(stream.write_value(htonl(answer.ttl())));
         if (answer.type() == RecordType::PTR) {
             Name name { answer.record_data() };
-            stream << htons(name.serialized_size());
-            stream << name;
+            TRY(stream.write_value(htons(name.serialized_size())));
+            TRY(stream.write_value(name));
         } else {
-            stream << htons(answer.record_data().length());
-            stream << answer.record_data().bytes();
+            TRY(stream.write_value(htons(answer.record_data().length())));
+            TRY(stream.write_until_depleted(answer.record_data().bytes()));
         }
     }
 
-    return stream.copy_into_contiguous_buffer();
+    auto buffer = TRY(ByteBuffer::create_uninitialized(stream.used_buffer_size()));
+    TRY(stream.read_until_filled(buffer));
+    return buffer;
 }
 
 class [[gnu::packed]] DNSRecordWithoutName {
@@ -96,14 +97,14 @@ private:
 
 static_assert(sizeof(DNSRecordWithoutName) == 10);
 
-Optional<Packet> Packet::from_raw_packet(u8 const* raw_data, size_t raw_size)
+ErrorOr<Packet> Packet::from_raw_packet(ReadonlyBytes bytes)
 {
-    if (raw_size < sizeof(PacketHeader)) {
-        dbgln("DNS response not large enough ({} out of {}) to be a DNS packet.", raw_size, sizeof(PacketHeader));
-        return {};
+    if (bytes.size() < sizeof(PacketHeader)) {
+        dbgln_if(LOOKUPSERVER_DEBUG, "DNS response not large enough ({} out of {}) to be a DNS packet", bytes.size(), sizeof(PacketHeader));
+        return Error::from_string_literal("DNS response not large enough to be a DNS packet");
     }
 
-    auto& header = *(PacketHeader const*)(raw_data);
+    auto const& header = *bit_cast<PacketHeader const*>(bytes.data());
     dbgln_if(LOOKUPSERVER_DEBUG, "Got packet (ID: {})", header.id());
     dbgln_if(LOOKUPSERVER_DEBUG, "  Question count: {}", header.question_count());
     dbgln_if(LOOKUPSERVER_DEBUG, "    Answer count: {}", header.answer_count());
@@ -122,12 +123,15 @@ Optional<Packet> Packet::from_raw_packet(u8 const* raw_data, size_t raw_size)
     size_t offset = sizeof(PacketHeader);
 
     for (u16 i = 0; i < header.question_count(); i++) {
-        auto name = Name::parse(raw_data, offset, raw_size);
+        auto name = TRY(Name::parse(bytes, offset));
         struct RawDNSAnswerQuestion {
             NetworkOrdered<u16> record_type;
             NetworkOrdered<u16> class_code;
         };
-        auto& record_and_class = *(RawDNSAnswerQuestion const*)&raw_data[offset];
+        if (offset >= bytes.size() || bytes.size() - offset < sizeof(RawDNSAnswerQuestion))
+            return Error::from_string_literal("Unexpected EOF when parsing DNS packet");
+
+        auto const& record_and_class = *bit_cast<RawDNSAnswerQuestion const*>(bytes.offset_pointer(offset));
         u16 class_code = record_and_class.class_code & ~MDNS_WANTS_UNICAST_RESPONSE;
         bool mdns_wants_unicast_response = record_and_class.class_code & MDNS_WANTS_UNICAST_RESPONSE;
         packet.m_questions.empend(name, (RecordType)(u16)record_and_class.record_type, (RecordClass)class_code, mdns_wants_unicast_response);
@@ -137,18 +141,21 @@ Optional<Packet> Packet::from_raw_packet(u8 const* raw_data, size_t raw_size)
     }
 
     for (u16 i = 0; i < header.answer_count(); ++i) {
-        auto name = Name::parse(raw_data, offset, raw_size);
+        auto name = TRY(Name::parse(bytes, offset));
+        if (offset >= bytes.size() || bytes.size() - offset < sizeof(DNSRecordWithoutName))
+            return Error::from_string_literal("Unexpected EOF when parsing DNS packet");
 
-        auto& record = *(DNSRecordWithoutName const*)(&raw_data[offset]);
-
-        String data;
-
+        auto const& record = *bit_cast<DNSRecordWithoutName const*>(bytes.offset_pointer(offset));
         offset += sizeof(DNSRecordWithoutName);
+        if (record.data_length() > bytes.size() - offset)
+            return Error::from_string_literal("Unexpected EOF when parsing DNS packet");
+
+        ByteString data;
 
         switch ((RecordType)record.type()) {
         case RecordType::PTR: {
             size_t dummy_offset = offset;
-            data = Name::parse(raw_data, dummy_offset, raw_size).as_string();
+            data = TRY(Name::parse(bytes, dummy_offset)).as_string();
             break;
         }
         case RecordType::CNAME:
@@ -160,7 +167,7 @@ Optional<Packet> Packet::from_raw_packet(u8 const* raw_data, size_t raw_size)
         case RecordType::AAAA:
             // Fall through
         case RecordType::SRV:
-            data = { record.data(), record.data_length() };
+            data = ReadonlyBytes { record.data(), record.data_length() };
             break;
         default:
             // FIXME: Parse some other record types perhaps?

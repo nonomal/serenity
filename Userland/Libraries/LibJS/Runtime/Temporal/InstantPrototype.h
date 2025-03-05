@@ -13,13 +13,15 @@ namespace JS::Temporal {
 
 class InstantPrototype final : public PrototypeObject<InstantPrototype, Instant> {
     JS_PROTOTYPE_OBJECT(InstantPrototype, Instant, Temporal.Instant);
+    JS_DECLARE_ALLOCATOR(InstantPrototype);
 
 public:
-    explicit InstantPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~InstantPrototype() override = default;
 
 private:
+    explicit InstantPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(epoch_seconds_getter);
     JS_DECLARE_NATIVE_FUNCTION(epoch_milliseconds_getter);
     JS_DECLARE_NATIVE_FUNCTION(epoch_microseconds_getter);

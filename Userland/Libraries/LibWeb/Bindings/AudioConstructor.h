@@ -12,17 +12,19 @@
 namespace Web::Bindings {
 
 class AudioConstructor final : public JS::NativeFunction {
+    JS_OBJECT(AudioConstructor, JS::NativeFunction);
+    JS_DECLARE_ALLOCATOR(AudioConstructor);
+
 public:
-    explicit AudioConstructor(JS::GlobalObject&);
-    virtual void initialize(JS::GlobalObject&) override;
+    explicit AudioConstructor(JS::Realm&);
+    virtual void initialize(JS::Realm&) override;
     virtual ~AudioConstructor() override = default;
 
     virtual JS::ThrowCompletionOr<JS::Value> call() override;
-    virtual JS::ThrowCompletionOr<JS::Object*> construct(JS::FunctionObject& new_target) override;
+    virtual JS::ThrowCompletionOr<JS::NonnullGCPtr<JS::Object>> construct(JS::FunctionObject& new_target) override;
 
 private:
     virtual bool has_constructor() const override { return true; }
-    virtual StringView class_name() const override { return "AudioConstructor"sv; }
 };
 
 }

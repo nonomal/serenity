@@ -6,10 +6,10 @@
 
 #include <LibTest/TestCase.h>
 
-#include <AK/Format.h>
 #include <AK/NumericLimits.h>
 #include <AK/Random.h>
 #include <AK/UFixedBigInt.h>
+#include <AK/UFixedBigIntDivision.h>
 
 constexpr int test_iterations = 32;
 
@@ -37,15 +37,6 @@ TEST_CASE(identities)
         EXPECT_EQ((x << 1u) >> 1u, x);
         EXPECT_EQ((x * 2u) / 2u, x);
         EXPECT_EQ((x + 2u) - 2u, x);
-    }
-}
-
-TEST_CASE(sqrt)
-{
-    srand(0);
-    for (int i = 0; i < test_iterations; ++i) {
-        u256 x = get_random<u128>();
-        EXPECT_EQ((x * x).sqrt(), x);
     }
 }
 
@@ -88,6 +79,77 @@ TEST_CASE(div_mod)
     }
 }
 
+TEST_CASE(div_anti_knuth)
+{
+    EXPECT_EQ((u256 { { 0ull, 0xffffffffffffffffull, 1ull, 0ull } } / u128 { 0x8000000000000001ull, 0xffffffffffffffffull }), 1u);
+    EXPECT_EQ((u128 { { 0xffffffff00000000ull, 1ull } } / u128 { 0xffffffff80000001ull }), 1u);
+
+    srand(0);
+
+    auto generate_u512 = [] {
+        using namespace AK::Detail;
+
+        u512 number;
+        auto& storage = get_storage_of(number);
+
+        static constexpr u32 interesting_words_count = 14;
+        static constexpr NativeWord interesting_words[interesting_words_count] = {
+            0,
+            0,
+            1,
+            2,
+            3,
+            max_native_word / 4 - 1,
+            max_native_word / 4,
+            max_native_word / 2 - 1,
+            max_native_word / 2,
+            max_native_word / 2 + 1,
+            max_native_word / 2 + 2,
+            max_native_word - 3,
+            max_native_word - 2,
+            max_native_word - 1,
+        };
+        for (size_t i = 0; i < storage.size(); ++i) {
+            u32 type = get_random_uniform(interesting_words_count + 1);
+            NativeWord& next_word = storage[i];
+            if (type == interesting_words_count)
+                next_word = get_random<NativeWord>();
+            else
+                next_word = interesting_words[type];
+        }
+
+        return number;
+    };
+
+    for (int i = 0; i < 16384; ++i) {
+        u512 a = generate_u512(), b = generate_u512();
+        if (b == 0)
+            continue;
+
+        u512 mod;
+        u512 div = a.div_mod(b, mod);
+
+        EXPECT_EQ(div * b + mod, a);
+        EXPECT_EQ(div.wide_multiply(b) + mod, a);
+        EXPECT(0 <= mod && mod < b);
+    }
+}
+
+TEST_CASE(shifts)
+{
+    u128 val { 0x1234ULL };
+    EXPECT_EQ(val << 1u, u128(0x2468ull));
+    EXPECT_EQ(val << 4u, u128(0x12340ull));
+    EXPECT_EQ(val << 64u, u128(0ull, 0x1234ull));
+}
+
+TEST_CASE(constexpr_truncae)
+{
+    static constexpr u256 wide = u256(u128 { 0x8a4b08d32f8b8e48ULL, 0x8459322f67b8e26dULL }, u128 { 0xeea82af4312d1931ULL, 0x654fb5cfe82dbd58ULL });
+    static constexpr u64 val = static_cast<u64>(wide);
+    EXPECT_EQ(val, 0x8a4b08d32f8b8e48ULL);
+}
+
 TEST_CASE(mod_hardcoded)
 {
     EXPECT_EQ(u256(u128 { 0x8a4b08d32f8b8e48ULL, 0x8459322f67b8e26dULL }, u128 { 0xeea82af4312d1931ULL, 0x654fb5cfe82dbd58ULL }) % u256(u128 { 0x40a58652868d5d66ULL, 0x81d674bf7d6d6861ULL }, u128 { 0xa8314900e6188a82ULL, 0xc273ca947237b4aaULL }), u256(u128 { 0x8a4b08d32f8b8e48ULL, 0x8459322f67b8e26dULL }, u128 { 0xeea82af4312d1931ULL, 0x654fb5cfe82dbd58ULL }));
@@ -122,4 +184,16 @@ TEST_CASE(mod_hardcoded)
     EXPECT_EQ(u256(u128 { 0x690f9145f7b1f8f8ULL, 0xe790aa66a2e08b63ULL }, u128 { 0x1d6ded50aa11aa3cULL, 0x601ec6f81fd1d57aULL }) % u256(u128 { 0x1256bdca9e0d6066ULL, 0xd19119919b026c0cULL }, u128 { 0x17a17b7df7689c40ULL, 0x97baf68d5f5622ddULL }), u256(u128 { 0x690f9145f7b1f8f8ULL, 0xe790aa66a2e08b63ULL }, u128 { 0x1d6ded50aa11aa3cULL, 0x601ec6f81fd1d57aULL }));
     EXPECT_EQ(u256(u128 { 0x7f13e232d82a24c6ULL, 0x23d41447dd7f5bc6ULL }, u128 { 0xd89a3ed8b30527caULL, 0xa98ef2cc01e83685ULL }) % u256(u128 { 0x8d4f5b1983fc1f0eULL, 0xf54102ece15fb0faULL }, u128 { 0x17b8aec68556a16dULL, 0x4e1e5bea70cb9398ULL }), u256(u128 { 0x64752bffd031e6aaULL, 0x39520e6e1abff9d1ULL }, u128 { 0xa928e14ba857e4eeULL, 0x0d523af720510f55ULL }));
     EXPECT_EQ(u256(u128 { 0x49750d7f39d61607ULL, 0x58bdef1c3e00d18eULL }, u128 { 0xa651479cd1fd1933ULL, 0xd1834bc3d654b633ULL }) % u256(u128 { 0x1bda34f5ec68ef3bULL, 0x12c65ce5363a7616ULL }, u128 { 0x5a79c4d85da0071aULL, 0xffa6b6284559d1aaULL }), u256(u128 { 0x49750d7f39d61607ULL, 0x58bdef1c3e00d18eULL }, u128 { 0xa651479cd1fd1933ULL, 0xd1834bc3d654b633ULL }));
+}
+
+TEST_CASE(endian_swap)
+{
+    constexpr u128 const a { 0x1234567890abcdefULL, 0xfedcba0987654321ULL };
+    constexpr u128 const a_swapped { 0x2143658709badcfeull, 0xefcdab9078563412ull };
+
+    static_assert(!AK::HostIsLittleEndian || bit_cast<u128>(BigEndian { a }) == a_swapped);
+    static_assert(AK::HostIsLittleEndian || bit_cast<u128>(LittleEndian { a }) == a_swapped);
+
+    static_assert(!AK::HostIsLittleEndian || bit_cast<u128>(LittleEndian { a }) == a);
+    static_assert(AK::HostIsLittleEndian || bit_cast<u128>(BigEndian { a }) == a);
 }

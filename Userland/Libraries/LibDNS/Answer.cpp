@@ -5,14 +5,13 @@
  */
 
 #include "Answer.h"
-#include <AK/Stream.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
 #include <time.h>
 
 namespace DNS {
 
-Answer::Answer(Name const& name, RecordType type, RecordClass class_code, u32 ttl, String const& record_data, bool mdns_cache_flush)
+Answer::Answer(Name const& name, RecordType type, RecordClass class_code, u32 ttl, ByteString const& record_data, bool mdns_cache_flush)
     : m_name(name)
     , m_type(type)
     , m_class_code(class_code)
@@ -25,7 +24,7 @@ Answer::Answer(Name const& name, RecordType type, RecordClass class_code, u32 tt
 
 bool Answer::has_expired() const
 {
-    return time(nullptr) >= m_received_time + m_ttl;
+    return time(nullptr) >= static_cast<time_t>(m_received_time + m_ttl);
 }
 
 unsigned Answer::hash() const
@@ -100,27 +99,30 @@ ErrorOr<void> AK::Formatter<DNS::RecordClass>::format(AK::FormatBuilder& builder
 
 namespace IPC {
 
-bool encode(Encoder& encoder, DNS::Answer const& answer)
+template<>
+ErrorOr<void> encode(Encoder& encoder, DNS::Answer const& answer)
 {
-    encoder << answer.name().as_string() << (u16)answer.type() << (u16)answer.class_code() << answer.ttl() << answer.record_data() << answer.mdns_cache_flush();
-    return true;
+    TRY(encoder.encode(answer.name().as_string()));
+    TRY(encoder.encode(static_cast<u16>(answer.type())));
+    TRY(encoder.encode(static_cast<u16>(answer.class_code())));
+    TRY(encoder.encode(answer.ttl()));
+    TRY(encoder.encode(answer.record_data()));
+    TRY(encoder.encode(answer.mdns_cache_flush()));
+
+    return {};
 }
 
-ErrorOr<void> decode(Decoder& decoder, DNS::Answer& answer)
+template<>
+ErrorOr<DNS::Answer> decode(Decoder& decoder)
 {
-    String name;
-    TRY(decoder.decode(name));
-    u16 record_type, class_code;
-    TRY(decoder.decode(record_type));
-    TRY(decoder.decode(class_code));
-    u32 ttl;
-    TRY(decoder.decode(ttl));
-    String record_data;
-    TRY(decoder.decode(record_data));
-    bool cache_flush;
-    TRY(decoder.decode(cache_flush));
-    answer = { { name }, (DNS::RecordType)record_type, (DNS::RecordClass)class_code, ttl, record_data, cache_flush };
-    return {};
+    auto name = TRY(decoder.decode<ByteString>());
+    auto record_type = TRY(decoder.decode<DNS::RecordType>());
+    auto class_code = TRY(decoder.decode<DNS::RecordClass>());
+    auto ttl = TRY(decoder.decode<u32>());
+    auto record_data = TRY(decoder.decode<ByteString>());
+    auto cache_flush = TRY(decoder.decode<bool>());
+
+    return DNS::Answer { name, record_type, class_code, ttl, record_data, cache_flush };
 }
 
 }

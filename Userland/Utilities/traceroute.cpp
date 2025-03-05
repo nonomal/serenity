@@ -5,7 +5,7 @@
  */
 
 #include <AK/Assertions.h>
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/System.h>
@@ -25,7 +25,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio id inet unix"));
 
-    char const* host_name;
+    ByteString host_name;
     int max_hops = 30;
     int max_retries = 3;
     int echo_timeout = 5;
@@ -45,7 +45,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return Error::from_string_literal("Invalid maximum retries amount");
     }
 
-    auto* hostent = gethostbyname(host_name);
+    auto* hostent = gethostbyname(host_name.characters());
     if (!hostent) {
         warnln("Lookup failed for '{}'", host_name);
         return 1;
@@ -78,8 +78,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     // 0: got ttl exhausted response
     // -1: error or no response
     auto try_reach_host = [&](int ttl) -> ErrorOr<int> {
-        Core::ElapsedTimer m_timer { true };
-        auto ttl_number = String::number(ttl);
+        Core::ElapsedTimer m_timer { Core::TimerType::Precise };
+        auto ttl_number = ByteString::number(ttl);
         for (auto i = 0; i < max_retries; i++) {
             icmp_request request {};
             request.header = { ICMP_ECHO, 0, 0, { { 0, 0 } } };
@@ -107,7 +107,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             auto response_time = m_timer.elapsed();
             auto* peer = gethostbyaddr(&peer_address.sin_addr, sizeof(peer_address.sin_addr), AF_INET);
 
-            String peer_name;
+            ByteString peer_name;
             if (peer) {
                 peer_name = peer->h_name;
             } else {

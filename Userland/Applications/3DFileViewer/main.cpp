@@ -5,9 +5,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibCore/ArgsParser.h>
 #include <LibCore/ElapsedTimer.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
+#include <LibDesktop/Launcher.h>
 #include <LibFileSystemAccessClient/Client.h>
 #include <LibGL/GL/gl.h>
 #include <LibGL/GLContext.h>
@@ -33,13 +34,12 @@ class GLContextWidget final : public GUI::Frame {
     C_OBJECT(GLContextWidget);
 
 public:
-    bool load_path(String const& fname);
-    bool load_file(Core::File& file);
+    bool load_file(ByteString const& filename, NonnullOwnPtr<Core::File> file);
     void toggle_rotate_x() { m_rotate_x = !m_rotate_x; }
     void toggle_rotate_y() { m_rotate_y = !m_rotate_y; }
     void toggle_rotate_z() { m_rotate_z = !m_rotate_z; }
     void set_rotation_speed(float speed) { m_rotation_speed = speed; }
-    void set_stat_label(RefPtr<GUI::Label> l) { m_stats = l; };
+    void set_stat_label(RefPtr<GUI::Label> l) { m_stats = l; }
     void set_wrap_s_mode(GLint mode) { m_wrap_s_mode = mode; }
     void set_wrap_t_mode(GLint mode) { m_wrap_t_mode = mode; }
     void set_texture_scale(float scale) { m_texture_scale = scale; }
@@ -58,10 +58,11 @@ private:
     {
         constexpr u16 RENDER_WIDTH = 640;
         constexpr u16 RENDER_HEIGHT = 480;
-        m_bitmap = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRx8888, { RENDER_WIDTH, RENDER_HEIGHT }).release_value_but_fixme_should_propagate_errors();
-        m_context = GL::create_context(*m_bitmap);
+        m_bitmap = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRx8888, { RENDER_WIDTH, RENDER_HEIGHT }).release_value_but_fixme_should_propagate_errors();
+        m_context = MUST(GL::create_context(*m_bitmap));
+        m_framerate_timer = Core::ElapsedTimer::start_new();
 
-        start_timer(20);
+        start_timer(15);
 
         GL::make_context_current(m_context);
         glFrontFace(GL_CCW);
@@ -91,6 +92,7 @@ private:
         glEndList();
     }
 
+    virtual void drag_enter_event(GUI::DragEvent&) override;
     virtual void drop_event(GUI::DropEvent&) override;
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void resize_event(GUI::ResizeEvent&) override;
@@ -100,10 +102,13 @@ private:
     virtual void keydown_event(GUI::KeyEvent&) override;
 
 private:
+    static constexpr u32 UPDATE_FRAMERATE_EVERY_FRAMES = 30;
+
     RefPtr<Mesh> m_mesh;
     RefPtr<Gfx::Bitmap> m_bitmap;
     OwnPtr<GL::GLContext> m_context;
     NonnullOwnPtr<WavefrontOBJLoader> m_mesh_loader;
+    Core::ElapsedTimer m_framerate_timer;
     GLuint m_init_list { 0 };
     bool m_rotate_x = true;
     bool m_rotate_y = false;
@@ -115,7 +120,6 @@ private:
     float m_rotation_speed = 60.f;
     bool m_show_frame_rate = false;
     int m_cycles = 0;
-    int m_accumulated_time = 0;
     RefPtr<GUI::Label> m_stats;
     GLint m_wrap_s_mode = GL_REPEAT;
     GLint m_wrap_t_mode = GL_REPEAT;
@@ -124,6 +128,12 @@ private:
     GLint m_mag_filter = GL_NEAREST;
     float m_zoom = 1;
 };
+
+void GLContextWidget::drag_enter_event(GUI::DragEvent& event)
+{
+    if (event.mime_data().has_urls())
+        event.accept();
+}
 
 void GLContextWidget::drop_event(GUI::DropEvent& event)
 {
@@ -136,13 +146,13 @@ void GLContextWidget::drop_event(GUI::DropEvent& event)
         return;
 
     for (auto& url : event.mime_data().urls()) {
-        if (url.protocol() != "file")
+        if (url.scheme() != "file")
             continue;
 
-        auto response = FileSystemAccessClient::Client::the().try_request_file(window(), url.path(), Core::OpenMode::ReadOnly);
+        auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(window(), URL::percent_decode(url.serialize_path()));
         if (response.is_error())
             return;
-        load_file(response.value());
+        load_file(response.value().filename(), response.value().release_stream());
     }
 }
 
@@ -161,7 +171,7 @@ void GLContextWidget::resize_event(GUI::ResizeEvent& event)
 
     if (m_stats)
         m_stats->set_x(width() - m_stats->width() - 6);
-};
+}
 
 void GLContextWidget::mousemove_event(GUI::MouseEvent& event)
 {
@@ -190,11 +200,12 @@ void GLContextWidget::keydown_event(GUI::KeyEvent& event)
         window()->set_fullscreen(false);
         return;
     }
+
+    event.ignore();
 }
 
 void GLContextWidget::timer_event(Core::TimerEvent&)
 {
-    auto timer = Core::ElapsedTimer::start_new();
     static unsigned int light_counter = 0;
 
     glCallList(m_init_list);
@@ -254,11 +265,11 @@ void GLContextWidget::timer_event(Core::TimerEvent&)
 
     m_context->present();
 
-    if ((m_cycles % 30) == 0) {
-        auto render_time = m_accumulated_time / 30.0;
+    if ((m_cycles % UPDATE_FRAMERATE_EVERY_FRAMES) == 0) {
+        auto render_time = static_cast<double>(m_framerate_timer.elapsed_milliseconds()) / UPDATE_FRAMERATE_EVERY_FRAMES;
         auto frame_rate = render_time > 0 ? 1000 / render_time : 0;
-        m_stats->set_text(String::formatted("{:.0f} fps, {:.1f} ms", frame_rate, render_time));
-        m_accumulated_time = 0;
+        m_stats->set_text(String::formatted("{:.0f} fps, {:.1f} ms", frame_rate, render_time).release_value_but_fixme_should_propagate_errors());
+        m_framerate_timer = Core::ElapsedTimer::start_new();
 
         glEnable(GL_LIGHT0);
         glEnable(GL_LIGHT1);
@@ -274,68 +285,35 @@ void GLContextWidget::timer_event(Core::TimerEvent&)
     }
 
     update();
-
-    m_accumulated_time += timer.elapsed();
     m_cycles++;
 }
 
-bool GLContextWidget::load_path(String const& filename)
+bool GLContextWidget::load_file(ByteString const& filename, NonnullOwnPtr<Core::File> file)
 {
-    auto file = Core::File::construct(filename);
-
-    if (!file->open(Core::OpenMode::ReadOnly) && file->error() != ENOENT) {
-        GUI::MessageBox::show(window(), String::formatted("Opening \"{}\" failed: {}", filename, strerror(errno)), "Error"sv, GUI::MessageBox::Type::Error);
-        return false;
-    }
-
-    return load_file(file);
-}
-
-bool GLContextWidget::load_file(Core::File& file)
-{
-    auto const& filename = file.filename();
     if (!filename.ends_with(".obj"sv)) {
-        GUI::MessageBox::show(window(), String::formatted("Opening \"{}\" failed: invalid file type", filename), "Error"sv, GUI::MessageBox::Type::Error);
+        GUI::MessageBox::show(window(), ByteString::formatted("Opening \"{}\" failed: invalid file type", filename), "Error"sv, GUI::MessageBox::Type::Error);
         return false;
     }
 
-    if (file.is_device()) {
-        GUI::MessageBox::show(window(), String::formatted("Opening \"{}\" failed: Can't open device files", filename), "Error"sv, GUI::MessageBox::Type::Error);
-        return false;
-    }
-
-    if (file.is_directory()) {
-        GUI::MessageBox::show(window(), String::formatted("Opening \"{}\" failed: Can't open directories", filename), "Error"sv, GUI::MessageBox::Type::Error);
-        return false;
-    }
-
-    auto new_mesh = m_mesh_loader->load(file);
-    if (new_mesh.is_null()) {
-        GUI::MessageBox::show(window(), String::formatted("Reading \"{}\" failed.", filename), "Error"sv, GUI::MessageBox::Type::Error);
+    auto new_mesh = m_mesh_loader->load(filename, move(file));
+    if (new_mesh.is_error()) {
+        GUI::MessageBox::show(window(), ByteString::formatted("Reading \"{}\" failed: {}", filename, new_mesh.release_error()), "Error"sv, GUI::MessageBox::Type::Error);
         return false;
     }
 
     // Determine whether or not a texture for this model resides within the same directory
     StringBuilder builder;
-    builder.append(filename.split('.').at(0));
+    builder.append(filename.split_view('.').at(0));
     builder.append(".bmp"sv);
-
-    String texture_path = Core::File::absolute_path(builder.string_view());
 
     // Attempt to open the texture file from disk
     RefPtr<Gfx::Bitmap> texture_image;
-    if (Core::File::exists(texture_path)) {
-        auto bitmap_or_error = Gfx::Bitmap::try_load_from_file(texture_path);
+    auto response = FileSystemAccessClient::Client::the().request_file_read_only_approved(window(), builder.string_view());
+    if (!response.is_error()) {
+        auto texture_file = response.release_value();
+        auto bitmap_or_error = Gfx::Bitmap::load_from_file(texture_file.release_stream(), texture_file.filename());
         if (!bitmap_or_error.is_error())
             texture_image = bitmap_or_error.release_value_but_fixme_should_propagate_errors();
-    } else {
-        auto response = FileSystemAccessClient::Client::the().try_request_file(window(), builder.string_view(), Core::OpenMode::ReadOnly);
-        if (!response.is_error()) {
-            auto texture_file = response.value();
-            auto bitmap_or_error = Gfx::Bitmap::try_load_from_fd_and_close(texture_file->leak_fd(), texture_file->filename());
-            if (!bitmap_or_error.is_error())
-                texture_image = bitmap_or_error.release_value_but_fixme_should_propagate_errors();
-        }
     }
 
     GLuint tex;
@@ -348,20 +326,35 @@ bool GLContextWidget::load_file(Core::File& file)
         dbgln("3DFileViewer: Couldn't load texture for {}", filename);
     }
 
-    m_mesh = new_mesh;
+    m_mesh = new_mesh.release_value();
     dbgln("3DFileViewer: mesh has {} triangles.", m_mesh->triangle_count());
+
+    window()->set_title(ByteString::formatted("{} - 3D File Viewer", filename));
 
     return true;
 }
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
-    TRY(Core::System::pledge("stdio thread recvfd sendfd rpath unix prot_exec"));
+    auto const man_file = "/usr/share/man/man1/Applications/3DFileViewer.md";
 
-    TRY(Core::System::unveil("/tmp/portal/filesystemaccess", "rw"));
-    TRY(Core::System::unveil("/home/anon/Documents/3D Models", "r"));
+    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_scheme(man_file) }));
+    TRY(Desktop::Launcher::seal_allowlist());
+
+    StringView filename;
+
+    Core::ArgsParser args_parser;
+    args_parser.add_positional_argument(filename, "3D model file to open", "path", Core::ArgsParser::Required::No);
+    args_parser.parse(arguments);
+
+    if (filename.is_empty())
+        filename = "/home/anon/Documents/3D Models/teapot.obj"sv;
+
+    TRY(Core::System::pledge("stdio thread recvfd sendfd rpath unix prot_exec map_fixed"));
+
+    TRY(Core::System::unveil("/tmp/session/%sid/portal/filesystemaccess", "rw"));
     TRY(Core::System::unveil("/res", "r"));
     TRY(Core::System::unveil("/usr/lib", "r"));
     TRY(Core::System::unveil(nullptr, nullptr));
@@ -374,7 +367,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->resize(640 + 4, 480 + 4);
     window->set_resizable(false);
     window->set_double_buffering_enabled(true);
-    auto widget = TRY(window->try_set_main_widget<GLContextWidget>());
+    auto widget = window->set_main_widget<GLContextWidget>();
 
     auto& time = widget->add<GUI::Label>();
     time.set_visible(false);
@@ -384,30 +377,30 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     time.set_x(widget->width() - time.width() - 6);
     widget->set_stat_label(time);
 
-    auto& file_menu = window->add_menu("&File");
+    auto file_menu = window->add_menu("&File"_string);
 
-    file_menu.add_action(GUI::CommonActions::make_open_action([&](auto&) {
-        auto response = FileSystemAccessClient::Client::the().try_open_file(window);
+    file_menu->add_action(GUI::CommonActions::make_open_action([&](auto&) {
+        FileSystemAccessClient::OpenFileOptions options {
+            .allowed_file_types = { { GUI::FileTypeFilter { "Object Files", { { "obj" } } }, GUI::FileTypeFilter::all_files() } },
+        };
+        auto response = FileSystemAccessClient::Client::the().open_file(window, options);
         if (response.is_error())
             return;
 
-        auto file = response.value();
-        if (widget->load_file(*file)) {
-            auto canonical_path = Core::File::absolute_path(file->filename());
-            window->set_title(String::formatted("{} - 3D File Viewer", canonical_path));
-        }
+        auto file = response.release_value();
+        widget->load_file(file.filename(), file.release_stream());
     }));
-    file_menu.add_separator();
-    file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) {
+    file_menu->add_separator();
+    file_menu->add_action(GUI::CommonActions::make_quit_action([&](auto&) {
         app->quit();
     }));
 
-    auto& view_menu = window->add_menu("&View");
-    view_menu.add_action(GUI::CommonActions::make_fullscreen_action([&](auto&) {
+    auto view_menu = window->add_menu("&View"_string);
+    view_menu->add_action(GUI::CommonActions::make_fullscreen_action([&](auto&) {
         window->set_fullscreen(!window->is_fullscreen());
     }));
 
-    auto& rotation_axis_menu = view_menu.add_submenu("Rotation &Axis");
+    auto rotation_axis_menu = view_menu->add_submenu("Rotation &Axis"_string);
     auto rotation_x_action = GUI::Action::create_checkable("&X", [&widget](auto&) {
         widget->toggle_rotate_x();
     });
@@ -418,14 +411,14 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         widget->toggle_rotate_z();
     });
 
-    rotation_axis_menu.add_action(*rotation_x_action);
-    rotation_axis_menu.add_action(*rotation_y_action);
-    rotation_axis_menu.add_action(*rotation_z_action);
+    rotation_axis_menu->add_action(*rotation_x_action);
+    rotation_axis_menu->add_action(*rotation_y_action);
+    rotation_axis_menu->add_action(*rotation_z_action);
 
     rotation_x_action->set_checked(true);
     rotation_z_action->set_checked(true);
 
-    auto& rotation_speed_menu = view_menu.add_submenu("Rotation &Speed");
+    auto rotation_speed_menu = view_menu->add_submenu("Rotation &Speed"_string);
     GUI::ActionGroup rotation_speed_actions;
     rotation_speed_actions.set_exclusive(true);
 
@@ -447,10 +440,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     rotation_speed_actions.add_action(*normal_rotation_action);
     rotation_speed_actions.add_action(*fast_rotation_action);
 
-    rotation_speed_menu.add_action(*no_rotation_action);
-    rotation_speed_menu.add_action(*slow_rotation_action);
-    rotation_speed_menu.add_action(*normal_rotation_action);
-    rotation_speed_menu.add_action(*fast_rotation_action);
+    rotation_speed_menu->add_action(*no_rotation_action);
+    rotation_speed_menu->add_action(*slow_rotation_action);
+    rotation_speed_menu->add_action(*normal_rotation_action);
+    rotation_speed_menu->add_action(*fast_rotation_action);
 
     normal_rotation_action->set_checked(true);
 
@@ -458,17 +451,17 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         widget->toggle_show_frame_rate();
     });
 
-    view_menu.add_action(*show_frame_rate_action);
+    view_menu->add_action(*show_frame_rate_action);
 
-    auto& texture_menu = window->add_menu("&Texture");
+    auto texture_menu = window->add_menu("&Texture"_string);
 
     auto texture_enabled_action = GUI::Action::create_checkable("&Enable Texture", [&widget](auto& action) {
         widget->set_texture_enabled(action.is_checked());
     });
     texture_enabled_action->set_checked(true);
-    texture_menu.add_action(texture_enabled_action);
+    texture_menu->add_action(texture_enabled_action);
 
-    auto& wrap_u_menu = texture_menu.add_submenu("Wrap &S");
+    auto wrap_u_menu = texture_menu->add_submenu("Wrap &S"_string);
     GUI::ActionGroup wrap_s_actions;
     wrap_s_actions.set_exclusive(true);
 
@@ -486,13 +479,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     wrap_s_actions.add_action(*wrap_u_mirrored_repeat_action);
     wrap_s_actions.add_action(*wrap_u_clamp_action);
 
-    wrap_u_menu.add_action(*wrap_u_repeat_action);
-    wrap_u_menu.add_action(*wrap_u_mirrored_repeat_action);
-    wrap_u_menu.add_action(*wrap_u_clamp_action);
+    wrap_u_menu->add_action(*wrap_u_repeat_action);
+    wrap_u_menu->add_action(*wrap_u_mirrored_repeat_action);
+    wrap_u_menu->add_action(*wrap_u_clamp_action);
 
     wrap_u_repeat_action->set_checked(true);
 
-    auto& wrap_t_menu = texture_menu.add_submenu("Wrap &T");
+    auto wrap_t_menu = texture_menu->add_submenu("Wrap &T"_string);
     GUI::ActionGroup wrap_t_actions;
     wrap_t_actions.set_exclusive(true);
 
@@ -510,13 +503,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     wrap_t_actions.add_action(*wrap_t_mirrored_repeat_action);
     wrap_t_actions.add_action(*wrap_t_clamp_action);
 
-    wrap_t_menu.add_action(*wrap_t_repeat_action);
-    wrap_t_menu.add_action(*wrap_t_mirrored_repeat_action);
-    wrap_t_menu.add_action(*wrap_t_clamp_action);
+    wrap_t_menu->add_action(*wrap_t_repeat_action);
+    wrap_t_menu->add_action(*wrap_t_mirrored_repeat_action);
+    wrap_t_menu->add_action(*wrap_t_clamp_action);
 
     wrap_t_repeat_action->set_checked(true);
 
-    auto& texture_scale_menu = texture_menu.add_submenu("S&cale");
+    auto texture_scale_menu = texture_menu->add_submenu("S&cale"_string);
     GUI::ActionGroup texture_scale_actions;
     texture_scale_actions.set_exclusive(true);
 
@@ -546,15 +539,15 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     texture_scale_actions.add_action(*texture_scale_2_action);
     texture_scale_actions.add_action(*texture_scale_4_action);
 
-    texture_scale_menu.add_action(*texture_scale_025_action);
-    texture_scale_menu.add_action(*texture_scale_05_action);
-    texture_scale_menu.add_action(*texture_scale_1_action);
-    texture_scale_menu.add_action(*texture_scale_2_action);
-    texture_scale_menu.add_action(*texture_scale_4_action);
+    texture_scale_menu->add_action(*texture_scale_025_action);
+    texture_scale_menu->add_action(*texture_scale_05_action);
+    texture_scale_menu->add_action(*texture_scale_1_action);
+    texture_scale_menu->add_action(*texture_scale_2_action);
+    texture_scale_menu->add_action(*texture_scale_4_action);
 
     texture_scale_1_action->set_checked(true);
 
-    auto& texture_mag_filter_menu = texture_menu.add_submenu("Mag Filter");
+    auto texture_mag_filter_menu = texture_menu->add_submenu("Mag Filter"_string);
     GUI::ActionGroup texture_mag_filter_actions;
     texture_mag_filter_actions.set_exclusive(true);
 
@@ -569,21 +562,27 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     texture_mag_filter_actions.add_action(*texture_mag_filter_nearest_action);
     texture_mag_filter_actions.add_action(*texture_mag_filter_linear_action);
 
-    texture_mag_filter_menu.add_action(*texture_mag_filter_nearest_action);
-    texture_mag_filter_menu.add_action(*texture_mag_filter_linear_action);
+    texture_mag_filter_menu->add_action(*texture_mag_filter_nearest_action);
+    texture_mag_filter_menu->add_action(*texture_mag_filter_linear_action);
 
     texture_mag_filter_nearest_action->set_checked(true);
 
-    auto& help_menu = window->add_menu("&Help");
-    help_menu.add_action(GUI::CommonActions::make_about_action("3D File Viewer", app_icon, window));
+    auto help_menu = window->add_menu("&Help"_string);
+    help_menu->add_action(GUI::CommonActions::make_command_palette_action(window));
+    help_menu->add_action(GUI::CommonActions::make_help_action([&man_file](auto&) {
+        Desktop::Launcher::open(URL::create_with_file_scheme(man_file), "/bin/Help");
+    }));
+    help_menu->add_action(GUI::CommonActions::make_about_action("3D File Viewer"_string, app_icon, window));
 
     window->show();
 
-    auto filename = arguments.argc > 1 ? arguments.argv[1] : "/home/anon/Documents/3D Models/teapot.obj";
-    if (widget->load_path(filename)) {
-        auto canonical_path = Core::File::absolute_path(filename);
-        window->set_title(String::formatted("{} - 3D File Viewer", canonical_path));
+    auto file = FileSystemAccessClient::Client::the().request_file_read_only_approved(window, filename);
+    if (file.is_error()) {
+        if (file.error().code() != ENOENT)
+            GUI::MessageBox::show(window, ByteString::formatted("Opening \"{}\" failed: {}", filename, strerror(errno)), "Error"sv, GUI::MessageBox::Type::Error);
+        return 1;
     }
+    widget->load_file(file.value().filename(), file.value().release_stream());
 
     return app->exec();
 }

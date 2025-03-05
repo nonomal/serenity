@@ -4,15 +4,16 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteString.h>
 #include <AK/GenericLexer.h>
 #include <AK/HashTable.h>
 #include <AK/OwnPtr.h>
 #include <AK/SourceGenerator.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Types.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
+#include <LibMain/Main.h>
 #include <ctype.h>
 
 struct Range {
@@ -21,8 +22,8 @@ struct Range {
 };
 
 struct StateTransition {
-    Optional<String> new_state;
-    Optional<String> action;
+    Optional<ByteString> new_state;
+    Optional<ByteString> action;
 };
 
 struct MatchedAction {
@@ -31,18 +32,18 @@ struct MatchedAction {
 };
 
 struct State {
-    String name;
+    ByteString name;
     Vector<MatchedAction> actions;
-    Optional<String> entry_action;
-    Optional<String> exit_action;
+    Optional<ByteString> entry_action;
+    Optional<ByteString> exit_action;
 };
 
 struct StateMachine {
-    String name;
-    String initial_state;
+    ByteString name;
+    ByteString initial_state;
     Vector<State> states;
     Optional<State> anywhere;
-    Optional<String> namespaces;
+    Optional<ByteString> namespaces;
 };
 
 static OwnPtr<StateMachine>
@@ -55,7 +56,7 @@ parse_state_machine(StringView input)
         bool consumed = true;
         while (consumed) {
             consumed = lexer.consume_while(isspace).length() > 0;
-            if (lexer.consume_specific("//")) {
+            if (lexer.consume_specific("//"sv)) {
                 lexer.consume_line();
                 consumed = true;
             }
@@ -77,7 +78,7 @@ parse_state_machine(StringView input)
     auto consume_number = [&] {
         int num = 0;
         consume_whitespace();
-        if (lexer.consume_specific("0x")) {
+        if (lexer.consume_specific("0x"sv)) {
             auto hex_digits = lexer.consume_while([](char c) {
                 if (isdigit(c)) return true;
             else {
@@ -91,7 +92,7 @@ parse_state_machine(StringView input)
             if (lexer.next_is('\\')) {
                 num = (int)lexer.consume_escaped_character('\\');
             } else {
-                num = lexer.consume_until('\'').to_int().value();
+                num = lexer.consume_until('\'').to_number<int>().value();
                 lexer.ignore();
             }
             lexer.consume_specific('\'');
@@ -106,7 +107,7 @@ parse_state_machine(StringView input)
             consume_whitespace();
             condition.begin = consume_number();
             consume_whitespace();
-            lexer.consume_specific("..");
+            lexer.consume_specific(".."sv);
             consume_whitespace();
             condition.end = consume_number();
             consume_whitespace();
@@ -122,16 +123,16 @@ parse_state_machine(StringView input)
     auto consume_action = [&]() {
         StateTransition action;
         consume_whitespace();
-        lexer.consume_specific("=>");
+        lexer.consume_specific("=>"sv);
         consume_whitespace();
         lexer.consume_specific('(');
         consume_whitespace();
-        if (!lexer.consume_specific("_"))
+        if (!lexer.consume_specific("_"sv))
             action.new_state = consume_identifier();
         consume_whitespace();
         lexer.consume_specific(',');
         consume_whitespace();
-        if (!lexer.consume_specific("_"))
+        if (!lexer.consume_specific("_"sv))
             action.action = consume_identifier();
         consume_whitespace();
         lexer.consume_specific(')');
@@ -151,14 +152,14 @@ parse_state_machine(StringView input)
                   if (lexer.consume_specific('}')) {
                       break;
                   }
-                  if (lexer.consume_specific("@entry")) {
+                  if (lexer.consume_specific("@entry"sv)) {
                       consume_whitespace();
                       state.entry_action = consume_identifier();
-                  } else if (lexer.consume_specific("@exit")) {
+                  } else if (lexer.consume_specific("@exit"sv)) {
                       consume_whitespace();
                       state.exit_action = consume_identifier();
                   } else if (lexer.next_is('@')) {
-                      auto directive = consume_identifier().to_string();
+                      auto directive = consume_identifier().to_byte_string();
                       fprintf(stderr, "Unimplemented @ directive %s\n", directive.characters());
                       exit(1);
                   } else {
@@ -175,20 +176,20 @@ parse_state_machine(StringView input)
         consume_whitespace();
         if (lexer.is_eof())
             break;
-        if (lexer.consume_specific("@namespace")) {
+        if (lexer.consume_specific("@namespace"sv)) {
             consume_whitespace();
             state_machine->namespaces = lexer.consume_while([](char c) { return isalpha(c) || c == ':'; });
-        } else if (lexer.consume_specific("@begin")) {
+        } else if (lexer.consume_specific("@begin"sv)) {
             consume_whitespace();
             state_machine->initial_state = consume_identifier();
-        } else if (lexer.consume_specific("@name")) {
+        } else if (lexer.consume_specific("@name"sv)) {
             consume_whitespace();
             state_machine->name = consume_identifier();
         } else if (lexer.next_is("@anywhere")) {
             lexer.consume_specific('@');
             state_machine->anywhere = consume_state_description();
         } else if (lexer.consume_specific('@')) {
-            auto directive = consume_identifier().to_string();
+            auto directive = consume_identifier().to_byte_string();
             fprintf(stderr, "Unimplemented @ directive %s\n", directive.characters());
             exit(1);
         } else {
@@ -213,31 +214,33 @@ parse_state_machine(StringView input)
 
 void output_header(StateMachine const&, SourceGenerator&);
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    Core::ArgsParser args_parser;
-    char const* path = nullptr;
-    args_parser.add_positional_argument(path, "Path to parser description", "input", Core::ArgsParser::Required::Yes);
-    args_parser.parse(argc, argv);
+    StringView path;
+    StringView output_file = "-"sv;
 
-    auto file_or_error = Core::File::open(path, Core::OpenMode::ReadOnly);
-    if (file_or_error.is_error()) {
-        fprintf(stderr, "Cannot open %s\n", path);
-    }
+    Core::ArgsParser parser;
+    parser.add_positional_argument(path, "Path to parser description", "input", Core::ArgsParser::Required::Yes);
+    parser.add_option(output_file, "Place to write file", "output", 'o', "output-file");
+    parser.parse(arguments);
 
-    auto content = file_or_error.value()->read_all();
+    auto output = TRY(Core::File::open_file_or_standard_stream(output_file, Core::File::OpenMode::Write));
+
+    auto file = TRY(Core::File::open(path, Core::File::OpenMode::Read));
+    auto content = TRY(file->read_until_eof());
     auto state_machine = parse_state_machine(content);
 
     StringBuilder builder;
     SourceGenerator generator { builder };
     output_header(*state_machine, generator);
-    outln("{}", generator.as_string_view());
+
+    TRY(output->write_until_depleted(generator.as_string_view().bytes()));
     return 0;
 }
 
-HashTable<String> actions(StateMachine const& machine)
+HashTable<ByteString> actions(StateMachine const& machine)
 {
-    HashTable<String> table;
+    HashTable<ByteString> table;
 
     auto do_state = [&](State const& state) {
         if (state.entry_action.has_value())
@@ -299,7 +302,7 @@ void output_header(StateMachine const& machine, SourceGenerator& generator)
 {
     generator.set("class_name", machine.name);
     generator.set("initial_state", machine.initial_state);
-    generator.set("state_count", String::number(machine.states.size() + 1));
+    generator.set("state_count", ByteString::number(machine.states.size() + 1));
 
     generator.append(R"~~~(
 #pragma once
@@ -401,11 +404,9 @@ private:
         _Anywhere,
 )~~~");
 
-    int largest_state_value = 0;
     for (auto s : machine.states) {
         auto state_generator = generator.fork();
         state_generator.set("state.name", s.name);
-        largest_state_value++;
         state_generator.append(R"~~~(
         @state.name@,
 )~~~");

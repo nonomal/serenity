@@ -1,3 +1,5 @@
+// https://svgwg.org/svg2-draft/types.html#InterfaceSVGLength
+[Exposed=Window]
 interface SVGLength {
     const unsigned short SVG_LENGTHTYPE_UNKNOWN = 0;
     const unsigned short SVG_LENGTHTYPE_NUMBER = 1;
@@ -13,12 +15,10 @@ interface SVGLength {
 
     readonly attribute unsigned short unitType;
 
-    // FIXME: Support setraises().
-    attribute float value; // setraises(DOMException);
+    attribute float value;
+    [FIXME] attribute float valueInSpecifiedUnits;
+    [FIXME] attribute DOMString valueAsString;
 
-    // attribute float valueInSpecifiedUnits setraises(DOMException);
-    // attribute DOMString valueAsString setraises(DOMException);
-
-    // void newValueSpecifiedUnits(in unsigned short unitType, in float valueInSpecifiedUnits) raises(DOMException);
-    // void convertToSpecifiedUnits(in unsigned short unitType) raises(DOMException);
+    [FIXME] undefined newValueSpecifiedUnits(unsigned short unitType, float valueInSpecifiedUnits);
+    [FIXME] undefined convertToSpecifiedUnits(unsigned short unitType);
 };

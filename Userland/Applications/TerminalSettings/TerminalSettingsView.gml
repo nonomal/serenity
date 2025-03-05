@@ -1,4 +1,4 @@
-@GUI::Widget {
+@TerminalSettings::ViewWidget {
     fill_with_background_color: true
     layout: @GUI::VerticalBoxLayout {
         margins: [10]
@@ -6,27 +6,11 @@
     }
 
     @GUI::GroupBox {
-        title: "Background Opacity"
+        title: "Terminal font"
         preferred_height: "fit"
         layout: @GUI::VerticalBoxLayout {
-            margins: [16, 8, 8]
-            spacing: 16
-        }
-
-        @GUI::OpacitySlider {
-            name: "background_opacity_slider"
-            min: 0
-            max: 255
-            orientation: "Horizontal"
-        }
-    }
-
-    @GUI::GroupBox {
-        title: "Terminal Font"
-        preferred_height: "fit"
-        layout: @GUI::VerticalBoxLayout {
-            margins: [16, 8, 8]
-            spacing: 16
+            margins: [8]
+            spacing: 8
         }
 
         @GUI::CheckBox {
@@ -43,9 +27,7 @@
 
             @GUI::Label {
                 background_role: "Base"
-                shape: "Container"
-                shadow: "Sunken"
-                thickness: 2
+                frame_style: "SunkenContainer"
                 fill_with_background_color: true
                 name: "terminal_font_label"
             }
@@ -59,43 +41,88 @@
     }
 
     @GUI::GroupBox {
-        title: "Cursor settings"
+        title: "Background opacity"
         preferred_height: "fit"
         layout: @GUI::VerticalBoxLayout {
-            margins: [16, 8, 8]
+            margins: [8]
+            spacing: 8
         }
 
-        @GUI::RadioButton {
-            name: "terminal_cursor_block"
-            text: "Block cursor"
+        @GUI::HorizontalOpacitySlider {
+            name: "background_opacity_slider"
+            min: 0
+            max: 255
+            orientation: "Horizontal"
+        }
+    }
+
+    @GUI::Widget {
+        preferred_height: "shrink"
+        layout: @GUI::HorizontalBoxLayout {}
+
+        @GUI::GroupBox {
+            title: "Cursor shape"
+            layout: @GUI::VerticalBoxLayout {
+                margins: [8]
+            }
+
+            @GUI::RadioButton {
+                name: "terminal_cursor_block"
+                text: "Block"
+            }
+
+            @GUI::RadioButton {
+                name: "terminal_cursor_underline"
+                text: "Underscore"
+            }
+
+            @GUI::RadioButton {
+                name: "terminal_cursor_bar"
+                text: "Vertical bar"
+            }
         }
 
-        @GUI::RadioButton {
-            name: "terminal_cursor_underline"
-            text: "Underline cursor"
-        }
+        @GUI::GroupBox {
+            title: "Cursor behavior"
+            layout: @GUI::VerticalBoxLayout {
+                margins: [8]
+            }
 
-        @GUI::RadioButton {
-            name: "terminal_cursor_bar"
-            text: "Bar cursor"
-        }
-
-        @GUI::CheckBox {
-            name: "terminal_cursor_blinking"
-            text: "Blinking cursor"
+            @GUI::CheckBox {
+                name: "terminal_cursor_blinking"
+                text: "Blink cursor"
+            }
         }
     }
 
     @GUI::GroupBox {
-        title: "Color Scheme"
+        title: "Scrollback"
         preferred_height: "fit"
         layout: @GUI::VerticalBoxLayout {
-            margins: [16, 8, 8]
-            spacing: 16
+            margins: [8]
+            spacing: 8
         }
 
-        @GUI::ComboBox {
-            name: "color_scheme_combo"
+        @GUI::Widget {
+            preferred_height: "shrink"
+            layout: @GUI::HorizontalBoxLayout {}
+
+            @GUI::SpinBox {
+                name: "history_size_spinbox"
+                min: 0
+                max: 40960
+                preferred_width: 100
+            }
+
+            @GUI::Label {
+                text: "lines"
+                autosize: true
+            }
+        }
+
+        @GUI::CheckBox {
+            name: "terminal_show_scrollbar"
+            text: "Show terminal scrollbar"
         }
     }
 }

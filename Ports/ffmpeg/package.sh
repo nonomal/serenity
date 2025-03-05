@@ -1,12 +1,22 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=ffmpeg
-version=5.0
-useconfigure=true
-depends=("libiconv" "libtiff" "xz" "bzip2" "SDL2" "x264" "x265")
-files="https://ffmpeg.org/releases/ffmpeg-${version}.tar.gz ffmpeg-${version}.tar.gz 7bf52bc242b5db8df67c62cb826df134d917dedcf6abf1289e15e4057bcc1750"
-auth_type="sha256"
-installopts=("INSTALL_TOP=${SERENITY_INSTALL_ROOT}/usr/local")
-configopts=("SRC_PATH=.")
+port='ffmpeg'
+version='7.0.2'
+useconfigure='true'
+depends=(
+    'bzip2'
+    'libiconv'
+    'libtiff'
+    'SDL2'
+    'x264'
+    'x265'
+    'xz'
+)
+files=(
+    "https://ffmpeg.org/releases/ffmpeg-${version}.tar.gz#1233b3a93dd7517cc3c56b72a67f64041c044848d981e3deff4bebffa25f1054"
+)
+installopts=(
+    "INSTALL_TOP=${SERENITY_INSTALL_ROOT}/usr/local"
+)
 
 configure() {
     run ./configure \
@@ -18,14 +28,11 @@ configure() {
         --enable-gpl \
         --enable-libx264 \
         --enable-libx265 \
+        --enable-shared \
         --disable-stripping \
         --disable-avx
 }
 
 install() {
     run make DESTDIR=${SERENITY_INSTALL_ROOT} "${installopts[@]}" install
-    for lib in libavcodec libavdevice libavfilter libavformat libavutil; do
-        ${CC} -shared -o ${SERENITY_INSTALL_ROOT}/usr/local/lib/${lib}.so -Wl,-soname,${lib}.so -Wl,--whole-archive ${SERENITY_INSTALL_ROOT}/usr/local/lib/${lib}.a -Wl,--no-whole-archive -liconv -ltiff -llzma -lbz2
-        rm -f ${SERENITY_INSTALL_ROOT}/usr/local/lib/$lib.la
-    done
 }

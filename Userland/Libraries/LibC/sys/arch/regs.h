@@ -8,8 +8,12 @@
 
 #include <AK/Platform.h>
 
-#if ARCH(I386)
-#    include "i386/regs.h"
-#elif ARCH(X86_64)
+#if ARCH(X86_64)
 #    include "x86_64/regs.h"
+#elif ARCH(AARCH64)
+#    include "aarch64/regs.h"
+#elif ARCH(RISCV64)
+#    include "riscv64/regs.h"
+#else
+#    error Unknown architecture
 #endif

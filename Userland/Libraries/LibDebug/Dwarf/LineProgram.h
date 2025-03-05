@@ -6,12 +6,14 @@
 
 #pragma once
 
-#include "DwarfInfo.h"
-#include <AK/FlyString.h>
-#include <AK/MemoryStream.h>
+#include <AK/DeprecatedFlyString.h>
+#include <AK/NonnullOwnPtr.h>
 #include <AK/Vector.h>
+#include <LibDebug/Dwarf/DwarfTypes.h>
 
 namespace Debug::Dwarf {
+
+class DwarfInfo;
 
 struct [[gnu::packed]] LineProgramUnitHeader32Common {
     u32 length;
@@ -63,6 +65,18 @@ struct [[gnu::packed]] LineProgramUnitHeader32 {
     i8 line_base() const { return (common.version <= 4) ? v4.line_base : v5.line_base; }
     u8 line_range() const { return (common.version <= 4) ? v4.line_range : v5.line_range; }
     u8 opcode_base() const { return (common.version <= 4) ? v4.opcode_base : v5.opcode_base; }
+
+    static ErrorOr<LineProgramUnitHeader32> read_from_stream(Stream& stream)
+    {
+        LineProgramUnitHeader32 header;
+        TRY(stream.read_until_filled(Bytes { &header.common, sizeof(header.common) }));
+        if (header.common.version <= 4)
+            TRY(stream.read_until_filled(Bytes { &header.v4, sizeof(header.v4) }));
+        else
+            TRY(stream.read_until_filled(Bytes { &header.v5, sizeof(header.v5) }));
+        TRY(stream.read_until_filled(Bytes { &header.std_opcode_lengths, min(sizeof(header.std_opcode_lengths), (header.opcode_base() - 1) * sizeof(header.std_opcode_lengths[0])) }));
+        return header;
+    }
 };
 
 enum class ContentType {
@@ -81,7 +95,7 @@ struct PathEntryFormat {
 };
 
 struct PathEntry {
-    String path;
+    ByteString path;
     size_t directory_index { 0 };
 };
 
@@ -90,58 +104,51 @@ enum class PathListType {
     Filenames,
 };
 
-inline InputStream& operator>>(InputStream& stream, LineProgramUnitHeader32& header)
-{
-    stream.read_or_error(Bytes { &header.common, sizeof(header.common) });
-    if (header.common.version <= 4)
-        stream.read_or_error(Bytes { &header.v4, sizeof(header.v4) });
-    else
-        stream.read_or_error(Bytes { &header.v5, sizeof(header.v5) });
-    stream.read_or_error(Bytes { &header.std_opcode_lengths, min(sizeof(header.std_opcode_lengths), (header.opcode_base() - 1) * sizeof(header.std_opcode_lengths[0])) });
-    return stream;
-}
-
 class LineProgram {
     AK_MAKE_NONCOPYABLE(LineProgram);
     AK_MAKE_NONMOVABLE(LineProgram);
 
 public:
-    explicit LineProgram(DwarfInfo& dwarf_info, InputMemoryStream& stream);
+    static ErrorOr<NonnullOwnPtr<LineProgram>> create(DwarfInfo const& dwarf_info, SeekableStream& stream);
 
     struct LineInfo {
         FlatPtr address { 0 };
-        FlyString file;
+        DeprecatedFlyString file;
         size_t line { 0 };
     };
 
     Vector<LineInfo> const& lines() const { return m_lines; }
 
     struct DirectoryAndFile {
-        FlyString directory;
-        FlyString filename;
+        DeprecatedFlyString directory;
+        DeprecatedFlyString filename;
     };
     DirectoryAndFile get_directory_and_file(size_t file_index) const;
 
     struct FileEntry {
-        FlyString name;
+        DeprecatedFlyString name;
         size_t directory_index { 0 };
     };
     Vector<FileEntry> const& source_files() const { return m_source_files; }
 
+    bool looks_like_embedded_resource() const;
+
 private:
-    void parse_unit_header();
-    void parse_source_directories();
-    void parse_source_files();
-    void run_program();
+    LineProgram(DwarfInfo const& dwarf_info, size_t unit_offset);
+
+    ErrorOr<void> parse_unit_header(SeekableStream& stream);
+    ErrorOr<void> parse_source_directories(SeekableStream& stream);
+    ErrorOr<void> parse_source_files(SeekableStream& stream);
+    ErrorOr<void> run_program(SeekableStream& stream);
 
     void append_to_line_info();
     void reset_registers();
 
-    void handle_extended_opcode();
-    void handle_standard_opcode(u8 opcode);
+    ErrorOr<void> handle_extended_opcode(SeekableStream& stream);
+    ErrorOr<void> handle_standard_opcode(SeekableStream& stream, u8 opcode);
     void handle_special_opcode(u8 opcode);
 
-    void parse_path_entries(Function<void(PathEntry& entry)> callback, PathListType list_type);
+    ErrorOr<void> parse_path_entries(SeekableStream& stream, Function<void(PathEntry& entry)> callback, PathListType list_type);
 
     enum StandardOpcodes {
         Copy = 1,
@@ -168,12 +175,11 @@ private:
     static constexpr u16 MIN_DWARF_VERSION = 3;
     static constexpr u16 MAX_DWARF_VERSION = 5;
 
-    DwarfInfo& m_dwarf_info;
-    InputMemoryStream& m_stream;
+    DwarfInfo const& m_dwarf_info;
 
     size_t m_unit_offset { 0 };
     LineProgramUnitHeader32 m_unit_header {};
-    Vector<String> m_source_directories;
+    Vector<ByteString> m_source_directories;
     Vector<FileEntry> m_source_files;
 
     // The registers of the "line program" virtual machine
@@ -183,6 +189,7 @@ private:
     bool m_is_statement { false };
     bool m_basic_block { false };
     bool m_prologue_end { false };
+    bool m_epilogue_begin { false };
 
     Vector<LineInfo> m_lines;
 };

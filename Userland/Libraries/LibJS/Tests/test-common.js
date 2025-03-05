@@ -1,6 +1,7 @@
 var describe;
 var test;
 var expect;
+var withinSameSecond;
 
 // Stores the results of each test and suite. Has a terrible
 // name to avoid name collision.
@@ -28,11 +29,11 @@ class ExpectationError extends Error {
 
 // Use an IIFE to avoid polluting the global namespace as much as possible
 (() => {
-    // FIXME: This is a very naive deepEquals algorithm
     const deepEquals = (a, b) => {
+        if (Object.is(a, b)) return true; // Handles identical references and primitives
+        if ((a !== null && b === null) || (a === null && b !== null)) return false;
         if (Array.isArray(a)) return Array.isArray(b) && deepArrayEquals(a, b);
         if (typeof a === "object") return typeof b === "object" && deepObjectEquals(a, b);
-        return Object.is(a, b);
     };
 
     const deepArrayEquals = (a, b) => {
@@ -40,14 +41,19 @@ class ExpectationError extends Error {
         for (let i = 0; i < a.length; ++i) {
             if (!deepEquals(a[i], b[i])) return false;
         }
+
         return true;
     };
 
     const deepObjectEquals = (a, b) => {
-        if (a === null) return b === null;
-        for (let key of Reflect.ownKeys(a)) {
+        const keysA = Reflect.ownKeys(a);
+        const keysB = Reflect.ownKeys(b);
+
+        if (keysA.length !== keysB.length) return false;
+        for (let key of keysA) {
             if (!deepEquals(a[key], b[key])) return false;
         }
+
         return true;
     };
 
@@ -85,19 +91,23 @@ class ExpectationError extends Error {
             });
         }
 
-        // FIXME: Take a precision argument like jest's toBeCloseTo matcher
-        toBeCloseTo(value) {
+        toBeCloseTo(value, precision = 5) {
             this.__expect(
                 typeof this.target === "number",
-                () => `toBeCloseTo: expected target of type number, got ${typeof value}`
+                () => `toBeCloseTo: expected target of type number, got ${typeof this.target}`
             );
             this.__expect(
                 typeof value === "number",
                 () => `toBeCloseTo: expected argument of type number, got ${typeof value}`
             );
+            this.__expect(
+                typeof precision === "number",
+                () => `toBeCloseTo: expected precision of type number, got ${typeof precision}`
+            );
 
+            const epsilon = 10 ** -precision / 2;
             this.__doMatcher(() => {
-                this.__expect(Math.abs(this.target - value) < 0.000001);
+                this.__expect(Math.abs(this.target - value) < epsilon);
             });
         }
 
@@ -144,15 +154,24 @@ class ExpectationError extends Error {
 
                 if (Array.isArray(property)) {
                     for (let key of property) {
-                        this.__expect(object !== undefined && object !== null);
+                        this.__expect(
+                            object !== undefined && object !== null,
+                            "got undefined or null as array key"
+                        );
                         object = object[key];
                     }
                 } else {
                     object = object[property];
                 }
 
-                this.__expect(object !== undefined);
-                if (value !== undefined) this.__expect(deepEquals(object, value));
+                this.__expect(object !== undefined, "should not be undefined");
+                if (value !== undefined)
+                    this.__expect(
+                        deepEquals(object, value),
+                        `value does not equal property ${valueToString(object)} vs ${valueToString(
+                            value
+                        )}`
+                    );
             });
         }
 
@@ -167,13 +186,19 @@ class ExpectationError extends Error {
 
         toBeInstanceOf(class_) {
             this.__doMatcher(() => {
-                this.__expect(this.target instanceof class_);
+                this.__expect(
+                    this.target instanceof class_,
+                    `Expected ${valueToString(this.target)} to be instance of ${class_.name}`
+                );
             });
         }
 
         toBeNull() {
             this.__doMatcher(() => {
-                this.__expect(this.target === null);
+                this.__expect(
+                    this.target === null,
+                    `Expected target to be null got ${valueToString(this.target)}`
+                );
             });
         }
 
@@ -198,24 +223,26 @@ class ExpectationError extends Error {
             });
         }
 
-        toBeTrue() {
+        toBeTrue(customDetails = undefined) {
             this.__doMatcher(() => {
                 this.__expect(
                     this.target === true,
                     () =>
-                        `toBeTrue: expected target to be true, got _${valueToString(this.target)}_`
+                        `toBeTrue: expected target to be true, got _${valueToString(this.target)}_${
+                            customDetails ? ` (${customDetails})` : ""
+                        }`
                 );
             });
         }
 
-        toBeFalse() {
+        toBeFalse(customDetails = undefined) {
             this.__doMatcher(() => {
                 this.__expect(
                     this.target === false,
                     () =>
                         `toBeFalse: expected target to be false, got _${valueToString(
                             this.target
-                        )}_`
+                        )}_${customDetails ?? ""}`
                 );
             });
         }
@@ -306,14 +333,30 @@ class ExpectationError extends Error {
                     threw = false;
                 } catch (e) {
                     if (typeof value === "string") {
-                        this.__expect(e.message.includes(value));
+                        this.__expect(
+                            e.message.includes(value),
+                            `Expected ${this.target.toString()} to throw and message to include "${value}" but message "${
+                                e.message
+                            }" did not contain it`
+                        );
                     } else if (typeof value === "function") {
-                        this.__expect(e instanceof value);
+                        this.__expect(
+                            e instanceof value,
+                            `Expected ${this.target.toString()} to throw and be of type ${value} but it threw ${e}`
+                        );
                     } else if (typeof value === "object") {
-                        this.__expect(e.message === value.message);
+                        this.__expect(
+                            e.message === value.message,
+                            `Expected ${this.target.toString()} to throw and message to be ${value} but it threw with message ${
+                                e.message
+                            }`
+                        );
                     }
                 }
-                this.__expect(threw);
+                this.__expect(
+                    threw,
+                    `Expected ${this.target.toString()} to throw but it didn't throw anything`
+                );
             });
         }
 
@@ -365,7 +408,7 @@ class ExpectationError extends Error {
             this.__expect(
                 this.inverted ? !success : success,
                 () =>
-                    `Expected _${valueToString(this.target)}_` +
+                    `Expected _${valueToString(this.target)}_ ` +
                     (this.inverted ? "not to eval but it did" : "to eval but it didn't")
             );
         }
@@ -594,5 +637,62 @@ class ExpectationError extends Error {
             result: "skip",
             duration: 0,
         };
+    };
+
+    test.xfail = (message, callback) => {
+        if (!__TestResults__[suiteMessage]) __TestResults__[suiteMessage] = {};
+
+        const suite = __TestResults__[suiteMessage];
+        if (Object.prototype.hasOwnProperty.call(suite, message)) {
+            suite[message] = {
+                result: "fail",
+                details: "Another test with the same message did already run",
+                duration: 0,
+            };
+            return;
+        }
+
+        const now = () => Temporal.Now.instant().epochNanoseconds;
+        const start = now();
+        const time_us = () => Number(BigInt.asIntN(53, (now() - start) / 1000n));
+        try {
+            callback();
+            suite[message] = {
+                result: "fail",
+                details: "Expected test to fail, but it passed",
+                duration: time_us(),
+            };
+        } catch (e) {
+            suite[message] = {
+                result: "xfail",
+                duration: time_us(),
+            };
+        }
+    };
+
+    test.xfailIf = (condition, message, callback) => {
+        condition ? test.xfail(message, callback) : test(message, callback);
+    };
+
+    withinSameSecond = callback => {
+        let callbackDuration;
+        for (let tries = 0; tries < 5; tries++) {
+            const start = Temporal.Now.instant();
+            const result = callback();
+            const end = Temporal.Now.instant();
+            if (start.epochSeconds !== end.epochSeconds) {
+                callbackDuration = start.until(end);
+                continue;
+            }
+            return result;
+        }
+        throw new ExpectationError(
+            `Tried to execute callback '${callback}' 5 times within the same second but ` +
+                `failed. Make sure the callback does as little work as possible (the last run ` +
+                `took ${callbackDuration.total(
+                    "milliseconds"
+                )} ms) and the machine is not overloaded. If you see this ` +
+                `error appearing in the CI it is most likely a flaky failure!`
+        );
     };
 })();

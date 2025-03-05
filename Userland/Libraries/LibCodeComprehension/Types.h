@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
-
 #pragma once
+
+#include <AK/ByteString.h>
 
 namespace CodeComprehension {
 
@@ -16,11 +16,11 @@ enum class Language {
 };
 
 struct AutocompleteResultEntry {
-    String completion;
+    ByteString completion;
     size_t partial_input_length { 0 };
     // TODO: Actually assign the value of this field in more places (when applicable).
     Language language { Language::Unspecified };
-    String display_text {};
+    ByteString display_text {};
 
     enum class HideAutocompleteAfterApplying {
         No,
@@ -30,7 +30,7 @@ struct AutocompleteResultEntry {
 };
 
 struct ProjectLocation {
-    String file;
+    ByteString file;
     size_t line { 0 };
     size_t column { 0 };
 
@@ -51,10 +51,10 @@ enum class DeclarationType {
 };
 
 struct Declaration {
-    String name;
+    ByteString name;
     ProjectLocation position;
     DeclarationType type;
-    String scope;
+    ByteString scope;
 
     bool operator==(Declaration const& other) const
     {
@@ -105,12 +105,12 @@ struct TokenInfo {
 #undef __SEMANTIC
         }
         VERIFY_NOT_REACHED();
-    };
+    }
 };
 
 struct TodoEntry {
-    String content;
-    String filename;
+    ByteString content;
+    ByteString filename;
     size_t line { 0 };
     size_t column { 0 };
 };

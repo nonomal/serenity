@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGUI/TextEditor.h>
 #include <LibGfx/Color.h>
 #include <LibSyntax/Highlighter.h>
 
@@ -75,7 +74,7 @@ void Highlighter::highlight_matching_token_pair()
     auto pairs = matching_token_pairs();
 
     for (size_t i = 0; i < document.spans().size(); ++i) {
-        auto& span = const_cast<GUI::TextDocumentSpan&>(document.spans().at(i));
+        auto& span = const_cast<TextDocumentSpan&>(document.spans().at(i));
         auto token_type = span.data;
 
         for (auto& pair : pairs) {
@@ -136,32 +135,6 @@ void Highlighter::register_nested_token_pairs(Vector<MatchingTokenPair> pairs)
 {
     for (auto& pair : pairs)
         m_nested_token_pairs.set(pair);
-}
-
-StringView Highlighter::language_string(Language language) const
-{
-    switch (language) {
-    case Language::Cpp:
-        return "C++"sv;
-    case Language::CSS:
-        return "CSS"sv;
-    case Language::GitCommit:
-        return "Git"sv;
-    case Language::GML:
-        return "GML"sv;
-    case Language::HTML:
-        return "HTML"sv;
-    case Language::INI:
-        return "INI"sv;
-    case Language::JavaScript:
-        return "JavaScript"sv;
-    case Language::Shell:
-        return "Shell"sv;
-    case Language::SQL:
-        return "SQL"sv;
-    default:
-        VERIFY_NOT_REACHED();
-    }
 }
 
 }

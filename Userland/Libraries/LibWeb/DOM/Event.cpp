@@ -1,19 +1,81 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/TypeCasts.h>
+#include <LibWeb/Bindings/EventPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/ShadowRoot.h>
+#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 
 namespace Web::DOM {
 
+JS_DEFINE_ALLOCATOR(Event);
+
+// https://dom.spec.whatwg.org/#concept-event-create
+JS::NonnullGCPtr<Event> Event::create(JS::Realm& realm, FlyString const& event_name, EventInit const& event_init)
+{
+    auto event = realm.heap().allocate<Event>(realm, realm, event_name, event_init);
+    // 4. Initialize event’s isTrusted attribute to true.
+    event->m_is_trusted = true;
+    return event;
+}
+
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Event>> Event::construct_impl(JS::Realm& realm, FlyString const& event_name, EventInit const& event_init)
+{
+    return realm.heap().allocate<Event>(realm, realm, event_name, event_init);
+}
+
+// https://dom.spec.whatwg.org/#inner-event-creation-steps
+Event::Event(JS::Realm& realm, FlyString const& type)
+    : PlatformObject(realm)
+    , m_type(type)
+    , m_initialized(true)
+    , m_time_stamp(HighResolutionTime::current_high_resolution_time(HTML::relevant_global_object(*this)))
+{
+}
+
+// https://dom.spec.whatwg.org/#inner-event-creation-steps
+Event::Event(JS::Realm& realm, FlyString const& type, EventInit const& event_init)
+    : PlatformObject(realm)
+    , m_type(type)
+    , m_bubbles(event_init.bubbles)
+    , m_cancelable(event_init.cancelable)
+    , m_composed(event_init.composed)
+    , m_initialized(true)
+    , m_time_stamp(HighResolutionTime::current_high_resolution_time(HTML::relevant_global_object(*this)))
+{
+}
+
+void Event::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(Event);
+}
+
+void Event::visit_edges(Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_target);
+    visitor.visit(m_related_target);
+    visitor.visit(m_current_target);
+    for (auto& it : m_path) {
+        visitor.visit(it.invocation_target);
+        visitor.visit(it.shadow_adjusted_target);
+        visitor.visit(it.related_target);
+        visitor.visit(it.touch_target_list);
+    }
+    visitor.visit(m_touch_target_list);
+}
+
 // https://dom.spec.whatwg.org/#concept-event-path-append
-void Event::append_to_path(EventTarget& invocation_target, RefPtr<EventTarget> shadow_adjusted_target, RefPtr<EventTarget> related_target, TouchTargetList& touch_targets, bool slot_in_closed_tree)
+void Event::append_to_path(EventTarget& invocation_target, JS::GCPtr<EventTarget> shadow_adjusted_target, JS::GCPtr<EventTarget> related_target, TouchTargetList& touch_targets, bool slot_in_closed_tree)
 {
     // 1. Let invocationTargetInShadowTree be false.
     bool invocation_target_in_shadow_tree = false;
@@ -29,7 +91,7 @@ void Event::append_to_path(EventTarget& invocation_target, RefPtr<EventTarget> s
         if (is<ShadowRoot>(invocation_target_node)) {
             auto& invocation_target_shadow_root = verify_cast<ShadowRoot>(invocation_target_node);
             // 4. If invocationTarget is a shadow root whose mode is "closed", then set root-of-closed-tree to true.
-            root_of_closed_tree = invocation_target_shadow_root.closed();
+            root_of_closed_tree = invocation_target_shadow_root.mode() == Bindings::ShadowRootMode::Closed;
         }
     }
 
@@ -46,7 +108,7 @@ void Event::set_cancelled_flag()
 }
 
 // https://dom.spec.whatwg.org/#concept-event-initialize
-void Event::initialize(String const& type, bool bubbles, bool cancelable)
+void Event::initialize_event(String const& type, bool bubbles, bool cancelable)
 {
     // 1. Set event’s initialized flag.
     m_initialized = true;
@@ -80,20 +142,14 @@ void Event::init_event(String const& type, bool bubbles, bool cancelable)
         return;
 
     // 2. Initialize this with type, bubbles, and cancelable.
-    initialize(type, bubbles, cancelable);
-}
-
-// https://dom.spec.whatwg.org/#dom-event-timestamp
-double Event::time_stamp() const
-{
-    return m_time_stamp;
+    initialize_event(type, bubbles, cancelable);
 }
 
 // https://dom.spec.whatwg.org/#dom-event-composedpath
-NonnullRefPtrVector<EventTarget> Event::composed_path() const
+Vector<JS::Handle<EventTarget>> Event::composed_path() const
 {
     // 1. Let composedPath be an empty list.
-    NonnullRefPtrVector<EventTarget> composed_path;
+    Vector<JS::Handle<EventTarget>> composed_path;
 
     // 2. Let path be this’s path. (NOTE: Not necessary)
 
@@ -106,7 +162,7 @@ NonnullRefPtrVector<EventTarget> Event::composed_path() const
     // 5. Append currentTarget to composedPath.
     // NOTE: If path is not empty, then the event is being dispatched and will have a currentTarget.
     VERIFY(m_current_target);
-    composed_path.append(*m_current_target);
+    composed_path.append(const_cast<EventTarget*>(m_current_target.ptr()));
 
     // 6. Let currentTargetIndex be 0.
     size_t current_target_index = 0;
@@ -152,7 +208,7 @@ NonnullRefPtrVector<EventTarget> Event::composed_path() const
         // 2. If currentHiddenLevel is less than or equal to maxHiddenLevel, then prepend path[index]'s invocation target to composedPath.
         if (current_hidden_level <= max_hidden_level) {
             VERIFY(path_entry.invocation_target);
-            composed_path.prepend(*path_entry.invocation_target);
+            composed_path.prepend(const_cast<EventTarget*>(path_entry.invocation_target.ptr()));
         }
 
         // 3. If path[index]'s slot-in-closed-tree is true, then:
@@ -184,7 +240,7 @@ NonnullRefPtrVector<EventTarget> Event::composed_path() const
         // 2. If currentHiddenLevel is less than or equal to maxHiddenLevel, then append path[index]'s invocation target to composedPath.
         if (current_hidden_level <= max_hidden_level) {
             VERIFY(path_entry.invocation_target);
-            composed_path.append(*path_entry.invocation_target);
+            composed_path.append(const_cast<EventTarget*>(path_entry.invocation_target.ptr()));
         }
 
         // 3. If path[index]'s root-of-closed-tree is true, then:

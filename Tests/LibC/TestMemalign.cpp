@@ -6,10 +6,10 @@
 
 #include <LibTest/TestCase.h>
 
-#include <LibC/mallocdefs.h>
+#include <mallocdefs.h>
 #include <stdlib.h>
 
-static constexpr size_t runs = 5000;
+static constexpr size_t runs = 500;
 static constexpr size_t ptrs_per_run = 20;
 
 static size_t random_alignment()
@@ -91,13 +91,13 @@ TEST_CASE(aligned_alloc_fuzz)
 
 TEST_CASE(aligned_alloc_not_power2)
 {
-#ifdef __clang__
+#if defined(AK_COMPILER_CLANG)
 #    pragma clang diagnostic push
 #    pragma clang diagnostic ignored "-Wnon-power-of-two-alignment"
 #endif
     EXPECT_EQ(aligned_alloc(7, 256), nullptr);
     EXPECT_EQ(errno, EINVAL);
-#ifdef __clang__
+#if defined(AK_COMPILER_CLANG)
 #    pragma clang diagnostic pop
 #endif
 }

@@ -12,24 +12,29 @@
 namespace Web::HTML {
 
 class HTMLTemplateElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLTemplateElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLTemplateElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLTemplateElement);
 
-    HTMLTemplateElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLTemplateElement() override;
 
-    NonnullRefPtr<DOM::DocumentFragment> content() { return *m_content; }
-    NonnullRefPtr<DOM::DocumentFragment> const content() const { return *m_content; }
+    JS::NonnullGCPtr<DOM::DocumentFragment> content() { return *m_content; }
+    JS::NonnullGCPtr<DOM::DocumentFragment> const content() const { return *m_content; }
+
+    void set_template_contents(JS::NonnullGCPtr<DOM::DocumentFragment>);
 
     virtual void adopted_from(DOM::Document&) override;
-    virtual void cloned(Node& copy, bool clone_children) override;
+    virtual WebIDL::ExceptionOr<void> cloned(Node& copy, bool clone_children) override;
 
 private:
+    HTMLTemplateElement(DOM::Document&, DOM::QualifiedName);
+
     virtual bool is_html_template_element() const final { return true; }
 
-    DOM::Document& appropriate_template_contents_owner_document(DOM::Document&);
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    RefPtr<DOM::DocumentFragment> m_content;
+    JS::GCPtr<DOM::DocumentFragment> m_content;
 };
 
 }

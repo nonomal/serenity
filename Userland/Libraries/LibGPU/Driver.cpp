@@ -1,34 +1,30 @@
 /*
  * Copyright (c) 2022, Stephan Unverwerth <s.unverwerth@serenityos.org>
+ * Copyright (c) 2023, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/HashMap.h>
-#include <AK/String.h>
 #include <AK/WeakPtr.h>
-#ifdef __serenity__
-#    include <LibDl/dlfcn.h>
-#else
-#    include <dlfcn.h>
-#endif
 #include <LibGPU/Driver.h>
+#include <dlfcn.h>
 
 namespace GPU {
 
 // FIXME: Think of a better way to configure these paths. Maybe use ConfigServer?
-static HashMap<String, String> const s_driver_path_map
-{
-#if defined(__serenity__)
-    { "softgpu", "libsoftgpu.so.serenity" },
-#elif defined(__APPLE__)
-    { "softgpu", "./liblagom-softgpu.dylib" },
+static HashMap<StringView, char const*> const s_driver_path_map {
+#if defined(AK_OS_SERENITY)
+    { "softgpu"sv, "libsoftgpu.so.serenity" },
+    { "virtgpu"sv, "libvirtgpu.so.serenity" },
+#elif defined(AK_OS_MACOS)
+    { "softgpu"sv, "liblagom-softgpu.dylib" },
 #else
-    { "softgpu", "./liblagom-softgpu.so" },
+    { "softgpu"sv, "liblagom-softgpu.so.0" },
 #endif
 };
 
-static HashMap<String, WeakPtr<Driver>> s_loaded_drivers;
+static HashMap<ByteString, WeakPtr<Driver>> s_loaded_drivers;
 
 ErrorOr<NonnullRefPtr<Driver>> Driver::try_create(StringView driver_name)
 {
@@ -42,7 +38,7 @@ ErrorOr<NonnullRefPtr<Driver>> Driver::try_create(StringView driver_name)
     if (it == s_driver_path_map.end())
         return Error::from_string_literal("The requested GPU driver was not found in the list of allowed driver libraries");
 
-    auto lib = dlopen(it->value.characters(), RTLD_NOW);
+    auto lib = dlopen(it->value, RTLD_NOW);
     if (!lib)
         return Error::from_string_literal("The library for the requested GPU driver could not be opened");
 

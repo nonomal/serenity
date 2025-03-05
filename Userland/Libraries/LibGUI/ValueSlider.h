@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/String.h>
 #include <LibGUI/AbstractSlider.h>
 
 namespace GUI {
@@ -36,12 +37,16 @@ protected:
     virtual void leave_event(Core::Event&) override;
 
 private:
-    explicit ValueSlider(Gfx::Orientation = Gfx::Orientation::Horizontal, String suffix = "");
+    explicit ValueSlider(Gfx::Orientation = Gfx::Orientation::Horizontal, String suffix = {});
 
-    String formatted_value() const;
-    int value_at(Gfx::IntPoint const& position) const;
+    ByteString formatted_value() const;
+    int value_at(Gfx::IntPoint position) const;
     Gfx::IntRect bar_rect() const;
     Gfx::IntRect knob_rect() const;
+    int knob_length() const;
+
+    virtual Optional<UISize> calculated_min_size() const override;
+    virtual Optional<UISize> calculated_preferred_size() const override;
 
     String m_suffix {};
     Orientation m_orientation { Orientation::Horizontal };

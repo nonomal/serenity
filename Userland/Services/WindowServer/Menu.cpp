@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Shannon Booth <shannon.ml.booth@gmail.com>
+ * Copyright (c) 2020, Shannon Booth <shannon@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -38,11 +38,12 @@ u32 find_ampersand_shortcut_character(StringView string)
     return 0;
 }
 
-Menu::Menu(ConnectionFromClient* client, int menu_id, String name)
-    : Core::Object(client)
+Menu::Menu(ConnectionFromClient* client, int menu_id, String name, int minimum_width)
+    : Core::EventReceiver(client)
     , m_client(client)
     , m_menu_id(menu_id)
     , m_name(move(name))
+    , m_minimum_width(minimum_width)
 {
     m_alt_shortcut_character = find_ampersand_shortcut_character(m_name);
 }
@@ -73,12 +74,14 @@ int Menu::content_width() const
     int widest_text = 0;
     int widest_shortcut = 0;
     for (auto& item : m_items) {
-        if (item.type() != MenuItem::Text)
+        if (!item->is_visible())
             continue;
-        auto& use_font = item.is_default() ? font().bold_variant() : font();
-        int text_width = use_font.width(Gfx::parse_ampersand_string(item.text()));
-        if (!item.shortcut_text().is_empty()) {
-            int shortcut_width = use_font.width(item.shortcut_text());
+        if (item->type() != MenuItem::Text)
+            continue;
+        auto& use_font = item->is_default() ? font().bold_variant() : font();
+        int text_width = use_font.width(Gfx::parse_ampersand_string(item->text()));
+        if (!item->shortcut_text().is_empty()) {
+            int shortcut_width = use_font.width(item->shortcut_text());
             widest_shortcut = max(shortcut_width, widest_shortcut);
         }
         widest_text = max(widest_text, text_width);
@@ -88,12 +91,12 @@ int Menu::content_width() const
     if (widest_shortcut)
         widest_item += padding_between_text_and_shortcut() + widest_shortcut;
 
-    return max(widest_item, rect_in_window_menubar().width()) + horizontal_padding() + frame_thickness() * 2;
+    return max(m_minimum_width, max(widest_item, rect_in_window_menubar().width()) + horizontal_padding() + frame_thickness() * 2);
 }
 
 int Menu::item_height() const
 {
-    return max(font().preferred_line_height(), s_item_icon_width + 2) + 4;
+    return max(static_cast<int>(ceilf(font().preferred_line_height())), s_item_icon_width + 2) + 4;
 }
 
 void Menu::redraw()
@@ -106,11 +109,20 @@ void Menu::redraw()
 
 void Menu::redraw(MenuItem const& menu_item)
 {
+    if (!menu_window())
+        return;
+    if (!menu_item.is_visible())
+        return;
     draw(menu_item);
     menu_window()->invalidate(menu_item.rect());
 }
 
-Window& Menu::ensure_menu_window(Gfx::IntPoint const& position)
+void Menu::invalidate_menu_window()
+{
+    m_menu_window = nullptr;
+}
+
+Window& Menu::ensure_menu_window(Gfx::IntPoint position)
 {
     auto& screen = Screen::closest_to_location(position);
     int width = this->content_width();
@@ -118,7 +130,14 @@ Window& Menu::ensure_menu_window(Gfx::IntPoint const& position)
     auto calculate_window_rect = [&]() -> Gfx::IntRect {
         int window_height_available = screen.height() - frame_thickness() * 2;
         int max_window_height = (window_height_available / item_height()) * item_height() + frame_thickness() * 2;
-        int content_height = m_items.is_empty() ? 0 : (m_items.last().rect().bottom() + 1) + frame_thickness();
+        int content_height = 0;
+        // find the last visible item to determine the required menu height
+        for (size_t i = m_items.size(); i > 0; i--) {
+            if (m_items[i - 1]->is_visible()) {
+                content_height = m_items[i - 1]->rect().bottom() + frame_thickness();
+                break;
+            }
+        }
         int window_height = min(max_window_height, content_height);
         if (window_height < content_height) {
             m_scrollable = true;
@@ -129,12 +148,14 @@ Window& Menu::ensure_menu_window(Gfx::IntPoint const& position)
 
     Gfx::IntPoint next_item_location(frame_thickness(), frame_thickness());
     for (auto& item : m_items) {
+        if (!item->is_visible())
+            continue;
         int height = 0;
-        if (item.type() == MenuItem::Text)
+        if (item->type() == MenuItem::Text)
             height = item_height();
-        else if (item.type() == MenuItem::Separator)
+        else if (item->type() == MenuItem::Separator)
             height = 8;
-        item.set_rect({ next_item_location, { width - frame_thickness() * 2, height } });
+        item->set_rect({ next_item_location, { width - frame_thickness() * 2, height } });
         next_item_location.translate_by(0, height);
     }
 
@@ -189,13 +210,6 @@ void Menu::draw()
     painter.draw_rect(rect, Color::Black);
     painter.fill_rect(rect.shrunken(2, 2), palette.menu_base());
 
-    bool has_checkable_items = false;
-    bool has_items_with_icon = false;
-    for (auto& item : m_items) {
-        has_checkable_items = has_checkable_items | item.is_checkable();
-        has_items_with_icon = has_items_with_icon | !!item.icon();
-    }
-
     // Draw the stripe first, which may extend outside of individual items. We can
     // skip this step when painting an individual item since we're drawing all of them
     painter.fill_rect(stripe_rect(), palette.menu_stripe());
@@ -211,11 +225,14 @@ void Menu::draw()
 
     int visible_item_count = this->visible_item_count();
     for (int i = 0; i < visible_item_count; ++i)
-        draw(m_items.at(m_scroll_offset + i), true);
+        draw(*m_items[m_scroll_offset + i], true);
 }
 
 void Menu::draw(MenuItem const& item, bool is_drawing_all)
 {
+    if (!item.is_visible())
+        return;
+
     auto palette = WindowManager::the().palette();
     int width = this->content_width();
     Gfx::Painter painter(*menu_window()->backing_store());
@@ -275,7 +292,7 @@ void Menu::draw(MenuItem const& item, bool is_drawing_all)
         painter.set_font(previous_font);
         if (item.is_submenu()) {
             Gfx::IntRect submenu_arrow_rect {
-                item.rect().right() - static_cast<int>(s_submenu_arrow_bitmap.width()) - 2,
+                item.rect().right() - static_cast<int>(s_submenu_arrow_bitmap.width()) - 3,
                 0,
                 s_submenu_arrow_bitmap.width(),
                 s_submenu_arrow_bitmap.height()
@@ -304,7 +321,7 @@ void Menu::update_for_new_hovered_item(bool make_input)
         if (hovered_item->is_submenu()) {
             VERIFY(menu_window());
             MenuManager::the().close_everyone_not_in_lineage(*hovered_item->submenu());
-            hovered_item->submenu()->do_popup(hovered_item->rect().top_right().translated(menu_window()->rect().location()), make_input, true);
+            hovered_item->submenu()->do_popup(hovered_item->rect().top_right().translated(-1, 0).translated(menu_window()->rect().location()), make_input, true);
         } else {
             MenuManager::the().close_everyone_not_in_lineage(*this);
             VERIFY(menu_window());
@@ -343,10 +360,15 @@ void Menu::handle_mouse_move_event(MouseEvent const& mouse_event)
     if (hovered_item() && hovered_item()->is_submenu()) {
 
         auto item = *hovered_item();
-        auto submenu_top_left = item.rect().location() + Gfx::IntPoint { item.rect().width(), 0 };
-        auto submenu_bottom_left = submenu_top_left + Gfx::IntPoint { 0, item.submenu()->menu_window()->height() };
+        auto submenu_top = item.submenu()->menu_window()->rect().top_left() - menu_window()->position();
+        auto submenu_bottom = item.submenu()->menu_window()->rect().bottom_left() - menu_window()->position();
 
-        auto safe_hover_triangle = Gfx::Triangle { m_last_position_in_hover, submenu_top_left, submenu_bottom_left };
+        if (item.submenu()->opens_to_the_left()) {
+            submenu_top = item.submenu()->menu_window()->rect().top_right() - menu_window()->position();
+            submenu_bottom = item.submenu()->menu_window()->rect().bottom_right() - menu_window()->position();
+        }
+
+        auto safe_hover_triangle = Gfx::Triangle { m_last_position_in_hover, submenu_top, submenu_bottom };
         m_last_position_in_hover = mouse_event.position();
 
         // Don't update the hovered item if mouse is moving towards a submenu
@@ -398,7 +420,9 @@ void Menu::event(Core::Event& event)
                 // Default to the last enabled, non-separator item on key press if one has not been selected yet
                 for (auto i = static_cast<int>(m_items.size()) - 1; i >= 0; i--) {
                     auto& item = m_items.at(i);
-                    if (item.type() != MenuItem::Separator && item.is_enabled()) {
+                    if (!item->is_visible())
+                        continue;
+                    if (item->type() != MenuItem::Separator && item->is_enabled()) {
                         set_hovered_index(i, key == Key_Right);
                         break;
                     }
@@ -407,7 +431,9 @@ void Menu::event(Core::Event& event)
                 // Default to the first enabled, non-separator item on key press if one has not been selected yet
                 int counter = 0;
                 for (auto const& item : m_items) {
-                    if (item.type() != MenuItem::Separator && item.is_enabled()) {
+                    if (!item->is_visible())
+                        continue;
+                    if (item->type() != MenuItem::Separator && item->is_enabled()) {
                         set_hovered_index(counter, key == Key_Right);
                         break;
                     }
@@ -432,7 +458,7 @@ void Menu::event(Core::Event& event)
                     --new_index;
                 if (new_index == original_index)
                     return;
-            } while (item(new_index).type() == MenuItem::Separator || !item(new_index).is_enabled());
+            } while (item(new_index).type() == MenuItem::Separator || !item(new_index).is_enabled() || !item(new_index).is_visible());
 
             VERIFY(new_index >= 0);
             VERIFY(new_index <= static_cast<int>(m_items.size()) - 1);
@@ -459,7 +485,7 @@ void Menu::event(Core::Event& event)
                     ++new_index;
                 if (new_index == original_index)
                     return;
-            } while (item(new_index).type() == MenuItem::Separator || !item(new_index).is_enabled());
+            } while (item(new_index).type() == MenuItem::Separator || !item(new_index).is_enabled() || !item(new_index).is_visible());
 
             VERIFY(new_index >= 0);
             VERIFY(new_index <= static_cast<int>(m_items.size()) - 1);
@@ -471,7 +497,7 @@ void Menu::event(Core::Event& event)
             return;
         }
     }
-    Core::Object::event(event);
+    Core::EventReceiver::event(event);
 }
 
 void Menu::clear_hovered_item()
@@ -481,12 +507,14 @@ void Menu::clear_hovered_item()
 
 void Menu::start_activation_animation(MenuItem& item)
 {
+    if (!WindowManager::the().system_effects().animate_menus())
+        return;
     VERIFY(menu_window());
     VERIFY(menu_window()->backing_store());
     auto window = Window::construct(*this, WindowType::Menu);
     window->set_frameless(true);
     window->set_hit_testing_enabled(false);
-    window->set_opacity(0.8f); // start out transparent so we don't have to recompute occlusions
+    window->set_has_alpha_channel(true);
     window->set_rect(item.rect().translated(m_menu_window->rect().location()));
     window->set_event_filter([](Core::Event&) {
         // ignore all events
@@ -494,8 +522,11 @@ void Menu::start_activation_animation(MenuItem& item)
     });
 
     VERIFY(window->backing_store());
+
+    NonnullRefPtr<Gfx::Bitmap> original_bitmap = *menu_window()->backing_store();
+    Gfx::IntRect item_rect = item.rect();
     Gfx::Painter painter(*window->backing_store());
-    painter.blit({}, *menu_window()->backing_store(), item.rect(), 1.0f, false);
+    painter.blit({}, original_bitmap, item_rect, 0.8f, true); // start out transparent so we don't have to recompute occlusions
     window->invalidate();
 
     struct AnimationInfo {
@@ -510,7 +541,7 @@ void Menu::start_activation_animation(MenuItem& item)
     };
     auto animation = adopt_own(*new AnimationInfo(move(window)));
     auto& timer = animation->timer;
-    timer = Core::Timer::create_repeating(50, [animation = animation.ptr(), animation_ref = move(animation)] {
+    timer = Core::Timer::create_repeating(50, [animation = animation.ptr(), animation_ref = move(animation), original_bitmap, item_rect] {
         VERIFY(animation->step % 2 == 0);
         animation->step -= 2;
         if (animation->step == 0) {
@@ -521,7 +552,10 @@ void Menu::start_activation_animation(MenuItem& item)
         }
 
         float opacity = (float)animation->step / 10.0f;
-        animation->window->set_opacity(opacity);
+        Gfx::Painter painter(*animation->window->backing_store());
+        painter.clear_rect({ {}, animation->window->rect().size() }, Color::Transparent);
+        painter.blit({}, original_bitmap, item_rect, opacity, true);
+        animation->window->invalidate();
     });
     timer->start();
 }
@@ -531,6 +565,9 @@ void Menu::did_activate(MenuItem& item, bool leave_menu_open)
     if (item.type() == MenuItem::Type::Separator)
         return;
 
+    if (m_client)
+        m_client->async_menu_item_activated(m_menu_id, item.identifier());
+
     if (!leave_menu_open)
         start_activation_animation(item);
 
@@ -539,18 +576,17 @@ void Menu::did_activate(MenuItem& item, bool leave_menu_open)
 
     if (!leave_menu_open)
         MenuManager::the().close_everyone();
-
-    if (m_client)
-        m_client->async_menu_item_activated(m_menu_id, item.identifier());
 }
 
 bool Menu::activate_default()
 {
     for (auto& item : m_items) {
-        if (item.type() == MenuItem::Type::Separator)
+        if (!item->is_visible())
             continue;
-        if (item.is_enabled() && item.is_default()) {
-            did_activate(item, false);
+        if (item->type() == MenuItem::Type::Separator)
+            continue;
+        if (item->is_enabled() && item->is_default()) {
+            did_activate(*item, false);
             return true;
         }
     }
@@ -560,8 +596,8 @@ bool Menu::activate_default()
 MenuItem* Menu::item_with_identifier(unsigned identifier)
 {
     for (auto& item : m_items) {
-        if (item.identifier() == identifier)
-            return &item;
+        if (item->identifier() == identifier)
+            return item;
     }
     return nullptr;
 }
@@ -571,13 +607,14 @@ bool Menu::remove_item_with_identifier(unsigned identifier)
     return m_items.remove_first_matching([&](auto& item) { return item->identifier() == identifier; });
 }
 
-int Menu::item_index_at(Gfx::IntPoint const& position)
+int Menu::item_index_at(Gfx::IntPoint position)
 {
-    int i = 0;
-    for (auto& item : m_items) {
-        if (item.rect().contains(position))
+    for (int i = 0; i < static_cast<int>(m_items.size()); ++i) {
+        auto const& item = m_items[i];
+        if (!item->is_visible())
+            continue;
+        if (item->rect().contains(position))
             return i;
-        ++i;
     }
     return -1;
 }
@@ -593,12 +630,33 @@ void Menu::redraw_if_theme_changed()
         redraw();
 }
 
-void Menu::popup(Gfx::IntPoint const& position)
+void Menu::open_button_menu(Gfx::IntPoint position, Gfx::IntRect const& button_rect)
+{
+    if (is_empty())
+        return;
+
+    auto& screen = Screen::closest_to_location(position);
+    auto& window = ensure_menu_window(position);
+    Gfx::IntPoint adjusted_pos = position;
+
+    if (window.rect().right() - 1 > screen.width())
+        adjusted_pos = adjusted_pos.translated(-(window.rect().right() - screen.width()), 0);
+
+    if (window.rect().bottom() - 1 > screen.height())
+        adjusted_pos = adjusted_pos.translated(0, -window.rect().height() - button_rect.height() + 1);
+
+    window.set_rect(adjusted_pos.x(), adjusted_pos.y(), window.rect().width(), window.rect().height());
+    window.move_to(adjusted_pos);
+    MenuManager::the().open_menu(*this, true);
+    WindowManager::the().did_popup_a_menu({});
+}
+
+void Menu::popup(Gfx::IntPoint position)
 {
     do_popup(position, true);
 }
 
-void Menu::do_popup(Gfx::IntPoint const& position, bool make_input, bool as_submenu)
+void Menu::do_popup(Gfx::IntPoint position, bool make_input, bool as_submenu)
 {
     if (is_empty()) {
         dbgln("Menu: Empty menu popup");
@@ -609,18 +667,25 @@ void Menu::do_popup(Gfx::IntPoint const& position, bool make_input, bool as_subm
     auto& window = ensure_menu_window(position);
     redraw_if_theme_changed();
 
-    int const margin = 30;
-    Gfx::IntPoint adjusted_pos = position;
+    constexpr auto margin = 10;
+    Gfx::IntPoint adjusted_pos = m_unadjusted_position = position;
+    m_opens_to_the_left = false;
 
-    if (adjusted_pos.x() + window.width() > screen.rect().right() - margin) {
-        // Vertically translate the window by its full width, i.e. flip it at its vertical axis.
+    if (adjusted_pos.x() + window.width() >= screen.rect().right() - margin) {
+        // Horizontally translate the window by its full width, i.e. flip it at its vertical axis.
         adjusted_pos = adjusted_pos.translated(-window.width(), 0);
+        // If the window is a submenu, translate to the opposite side of its immediate ancestor
+        if (auto* ancestor = MenuManager::the().closest_open_ancestor_of(*this); ancestor && as_submenu) {
+            constexpr auto offset = 1 + frame_thickness() * 2;
+            adjusted_pos = adjusted_pos.translated(-ancestor->menu_window()->width() + offset, 0);
+        }
+        m_opens_to_the_left = true;
     } else {
         // Even if no adjustment needs to be done, move the menu to the right by 1px so it's not
         // underneath the cursor and can be closed by another click at the same position.
         adjusted_pos.set_x(adjusted_pos.x() + 1);
     }
-    if (adjusted_pos.y() + window.height() > screen.rect().bottom() - margin) {
+    if (adjusted_pos.y() + window.height() >= screen.rect().bottom() - margin) {
         // Vertically translate the window by its full height, i.e. flip it at its horizontal axis.
         auto offset = window.height();
         // ...but if it's a submenu, go back by one menu item height to keep the menu aligned with
@@ -640,9 +705,9 @@ void Menu::do_popup(Gfx::IntPoint const& position, bool make_input, bool as_subm
 bool Menu::is_menu_ancestor_of(Menu const& other) const
 {
     for (auto& item : m_items) {
-        if (!item.is_submenu())
+        if (!item->is_submenu())
             continue;
-        auto& submenu = *item.submenu();
+        auto& submenu = *item->submenu();
         if (&submenu == &other)
             return true;
         if (submenu.is_menu_ancestor_of(other))
@@ -662,12 +727,22 @@ void Menu::set_visible(bool visible)
         m_client->async_menu_visibility_did_change(m_menu_id, visible);
 }
 
+void Menu::update_alt_shortcuts_for_items()
+{
+    m_alt_shortcut_character_to_item_indices.clear();
+    int i = 0;
+    for (auto& item : m_items) {
+        if (auto alt_shortcut = find_ampersand_shortcut_character(item->text())) {
+            m_alt_shortcut_character_to_item_indices.ensure(to_ascii_lowercase(alt_shortcut)).append(i);
+        }
+        ++i;
+    }
+}
+
 void Menu::add_item(NonnullOwnPtr<MenuItem> item)
 {
-    if (auto alt_shortcut = find_ampersand_shortcut_character(item->text())) {
-        m_alt_shortcut_character_to_item_indices.ensure(to_ascii_lowercase(alt_shortcut)).append(m_items.size());
-    }
     m_items.append(move(item));
+    update_alt_shortcuts_for_items();
 }
 
 Vector<size_t> const* Menu::items_with_alt_shortcut(u32 alt_shortcut) const
@@ -696,6 +771,16 @@ void Menu::set_hovered_index(int index, bool make_input)
     }
     if (old_hovered_item)
         redraw(*old_hovered_item);
+}
+
+void Menu::set_name(String name)
+{
+    m_name = move(name);
+}
+
+void Menu::set_minimum_width(int minimum_width)
+{
+    m_minimum_width = minimum_width;
 }
 
 bool Menu::is_open() const

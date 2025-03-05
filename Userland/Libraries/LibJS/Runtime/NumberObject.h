@@ -12,14 +12,17 @@ namespace JS {
 
 class NumberObject : public Object {
     JS_OBJECT(NumberObject, Object);
+    JS_DECLARE_ALLOCATOR(NumberObject);
 
 public:
-    static NumberObject* create(GlobalObject&, double);
+    static NonnullGCPtr<NumberObject> create(Realm&, double);
 
-    NumberObject(double, Object& prototype);
     virtual ~NumberObject() override = default;
 
     double number() const { return m_value; }
+
+protected:
+    NumberObject(double, Object& prototype);
 
 private:
     double m_value { 0 };

@@ -12,21 +12,36 @@ namespace JS::Intl {
 
 class DateTimeFormatConstructor final : public NativeFunction {
     JS_OBJECT(DateTimeFormatConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(DateTimeFormatConstructor);
 
 public:
-    explicit DateTimeFormatConstructor(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~DateTimeFormatConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 private:
+    explicit DateTimeFormatConstructor(Realm&);
+
     virtual bool has_constructor() const override { return true; }
 
     JS_DECLARE_NATIVE_FUNCTION(supported_locales_of);
 };
 
-ThrowCompletionOr<DateTimeFormat*> initialize_date_time_format(GlobalObject& global_object, DateTimeFormat& date_time_format, Value locales_value, Value options_value);
+enum class OptionRequired {
+    Any,
+    Date,
+    Time,
+};
+
+enum class OptionDefaults {
+    All,
+    Date,
+    Time,
+};
+
+ThrowCompletionOr<NonnullGCPtr<DateTimeFormat>> create_date_time_format(VM&, FunctionObject& new_target, Value locales_value, Value options_value, OptionRequired, OptionDefaults);
+String format_offset_time_zone_identifier(double offset_minutes);
 
 }

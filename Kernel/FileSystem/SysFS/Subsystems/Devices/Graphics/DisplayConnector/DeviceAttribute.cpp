@@ -4,9 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/Bus/PCI/API.h>
 #include <Kernel/Bus/PCI/Access.h>
-#include <Kernel/Debug.h>
 #include <Kernel/FileSystem/SysFS/Subsystems/Devices/Graphics/DisplayConnector/DeviceAttribute.h>
 #include <Kernel/Sections.h>
 

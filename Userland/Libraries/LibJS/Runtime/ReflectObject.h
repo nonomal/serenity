@@ -12,13 +12,15 @@ namespace JS {
 
 class ReflectObject final : public Object {
     JS_OBJECT(ReflectObject, Object);
+    JS_DECLARE_ALLOCATOR(ReflectObject);
 
 public:
-    explicit ReflectObject(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~ReflectObject() override = default;
 
 private:
+    explicit ReflectObject(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(apply);
     JS_DECLARE_NATIVE_FUNCTION(construct);
     JS_DECLARE_NATIVE_FUNCTION(define_property);

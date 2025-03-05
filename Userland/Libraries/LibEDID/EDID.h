@@ -8,6 +8,7 @@
 
 #include <AK/ByteBuffer.h>
 #include <AK/ByteReader.h>
+#include <AK/Concepts.h>
 #include <AK/Endian.h>
 #include <AK/Error.h>
 #include <AK/FixedPoint.h>
@@ -19,9 +20,9 @@
 #include <LibEDID/VIC.h>
 
 #ifdef KERNEL
-#    include <Kernel/KString.h>
+#    include <Kernel/Library/KString.h>
 #else
-#    include <AK/String.h>
+#    include <AK/ByteString.h>
 #endif
 
 namespace EDID {
@@ -85,13 +86,13 @@ public:
     static ErrorOr<Parser> from_bytes(ByteBuffer&&);
 
 #ifndef KERNEL
-    static ErrorOr<Parser> from_framebuffer_device(int, size_t);
-    static ErrorOr<Parser> from_framebuffer_device(String const&, size_t);
+    static ErrorOr<Parser> from_display_connector_device(int);
+    static ErrorOr<Parser> from_display_connector_device(ByteString const&);
 #endif
 
     StringView legacy_manufacturer_id() const;
 #ifndef KERNEL
-    String manufacturer_name() const;
+    ByteString manufacturer_name() const;
 #endif
 
     u16 product_code() const;
@@ -253,7 +254,7 @@ public:
         };
 
         ALWAYS_INLINE Source source() const { return m_source; }
-        ALWAYS_INLINE unsigned width() const { return m_width; };
+        ALWAYS_INLINE unsigned width() const { return m_width; }
         ALWAYS_INLINE unsigned height() const { return m_height; }
 
         ALWAYS_INLINE unsigned refresh_rate() const
@@ -366,8 +367,8 @@ public:
     Optional<DetailedTiming> detailed_timing(size_t) const;
 
 #ifndef KERNEL
-    String display_product_name() const;
-    String display_product_serial_number() const;
+    ByteString display_product_name() const;
+    ByteString display_product_serial_number() const;
 #endif
 
     ErrorOr<IterationDecision> for_each_short_video_descriptor(Function<IterationDecision(unsigned, bool, VIC::Details const&)>) const;
@@ -437,13 +438,13 @@ private:
     template<typename T>
     T read_host(T const*) const;
 
-    template<typename T>
-    requires(IsIntegral<T> && sizeof(T) > 1) T read_le(T const*)
-    const;
+    template<Integral T>
+    requires(sizeof(T) > 1)
+    T read_le(T const*) const;
 
-    template<typename T>
-    requires(IsIntegral<T> && sizeof(T) > 1) T read_be(T const*)
-    const;
+    template<Integral T>
+    requires(sizeof(T) > 1)
+    T read_be(T const*) const;
 
     Definitions::EDID const& raw_edid() const;
     ErrorOr<IterationDecision> for_each_display_descriptor(Function<IterationDecision(u8, Definitions::DisplayDescriptor const&)>) const;
@@ -454,7 +455,7 @@ private:
 #ifdef KERNEL
     OwnPtr<Kernel::KString> m_version;
 #else
-    String m_version;
+    ByteString m_version;
 #endif
     char m_legacy_manufacturer_id[4] {};
     bool m_legacy_manufacturer_id_valid { false };

@@ -8,24 +8,25 @@
 
 #include <AK/Bitmap.h>
 #include <AK/Vector.h>
-#include <Kernel/Bus/PCI/Controller/HostBridge.h>
+#include <Kernel/Bus/PCI/Controller/HostController.h>
 #include <Kernel/Locking/Spinlock.h>
+#include <Kernel/Memory/Region.h>
 
 namespace Kernel::PCI {
 
-class MemoryBackedHostBridge : public HostBridge {
+class MemoryBackedHostBridge : public HostController {
 public:
     static NonnullOwnPtr<MemoryBackedHostBridge> must_create(Domain const&, PhysicalAddress);
 
-    virtual void write8_field(BusNumber, DeviceNumber, FunctionNumber, u32 field, u8 value) override;
-    virtual void write16_field(BusNumber, DeviceNumber, FunctionNumber, u32 field, u16 value) override;
-    virtual void write32_field(BusNumber, DeviceNumber, FunctionNumber, u32 field, u32 value) override;
-
-    virtual u8 read8_field(BusNumber, DeviceNumber, FunctionNumber, u32 field) override;
-    virtual u16 read16_field(BusNumber, DeviceNumber, FunctionNumber, u32 field) override;
-    virtual u32 read32_field(BusNumber, DeviceNumber, FunctionNumber, u32 field) override;
-
 protected:
+    virtual void write8_field_locked(BusNumber, DeviceNumber, FunctionNumber, u32 field, u8 value) override;
+    virtual void write16_field_locked(BusNumber, DeviceNumber, FunctionNumber, u32 field, u16 value) override;
+    virtual void write32_field_locked(BusNumber, DeviceNumber, FunctionNumber, u32 field, u32 value) override;
+
+    virtual u8 read8_field_locked(BusNumber, DeviceNumber, FunctionNumber, u32 field) override;
+    virtual u16 read16_field_locked(BusNumber, DeviceNumber, FunctionNumber, u32 field) override;
+    virtual u32 read32_field_locked(BusNumber, DeviceNumber, FunctionNumber, u32 field) override;
+
     MemoryBackedHostBridge(PCI::Domain const&, PhysicalAddress);
 
     // Memory-mapped access operations

@@ -5,7 +5,6 @@
  */
 
 #include <AK/CharacterTypes.h>
-#include <AK/FileStream.h>
 #include <AK/ScopeGuard.h>
 #include <AK/ScopedValueRollback.h>
 #include <AK/StringBuilder.h>
@@ -15,10 +14,6 @@
 #include <stdio.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-namespace {
-constexpr u32 ctrl(char c) { return c & 0x3f; }
-}
 
 namespace Line {
 
@@ -38,7 +33,7 @@ void Editor::search_forwards()
     ScopedValueRollback inline_search_cursor_rollback { m_inline_search_cursor };
     StringBuilder builder;
     builder.append(Utf32View { m_buffer.data(), m_inline_search_cursor });
-    String search_phrase = builder.to_string();
+    auto search_phrase = builder.to_byte_string();
     if (m_search_offset_state == SearchOffsetState::Backwards)
         --m_search_offset;
     if (m_search_offset > 0) {
@@ -65,7 +60,7 @@ void Editor::search_backwards()
     ScopedValueRollback inline_search_cursor_rollback { m_inline_search_cursor };
     StringBuilder builder;
     builder.append(Utf32View { m_buffer.data(), m_inline_search_cursor });
-    String search_phrase = builder.to_string();
+    auto search_phrase = builder.to_byte_string();
     if (m_search_offset_state == SearchOffsetState::Forwards)
         ++m_search_offset;
     if (search(search_phrase, true)) {
@@ -79,40 +74,79 @@ void Editor::search_backwards()
 
 void Editor::cursor_left_word()
 {
-    if (m_cursor > 0) {
-        auto skipped_at_least_one_character = false;
-        for (;;) {
-            if (m_cursor == 0)
+    auto has_seen_alnum = false;
+    while (m_cursor) {
+        // after seeing at least one alnum, stop just before a non-alnum
+        if (not is_ascii_alphanumeric(m_buffer[m_cursor - 1])) {
+            if (has_seen_alnum)
                 break;
-            if (skipped_at_least_one_character && !is_ascii_alphanumeric(m_buffer[m_cursor - 1])) // stop *after* a non-alnum, but only if it changes the position
-                break;
-            skipped_at_least_one_character = true;
-            --m_cursor;
+        } else {
+            has_seen_alnum = true;
         }
+
+        --m_cursor;
+    }
+    m_inline_search_cursor = m_cursor;
+}
+
+void Editor::cursor_left_nonspace_word()
+{
+    auto has_seen_nonspace = false;
+    while (m_cursor) {
+        // after seeing at least one non-space, stop just before a space
+        if (is_ascii_space(m_buffer[m_cursor - 1])) {
+            if (has_seen_nonspace)
+                break;
+        } else {
+            has_seen_nonspace = true;
+        }
+
+        --m_cursor;
     }
     m_inline_search_cursor = m_cursor;
 }
 
 void Editor::cursor_left_character()
 {
-    if (m_cursor > 0)
-        --m_cursor;
+    if (m_cursor > 0) {
+        size_t closest_cursor_left_offset;
+        binary_search(m_cached_buffer_metrics.grapheme_breaks, m_cursor - 1, &closest_cursor_left_offset);
+        m_cursor = m_cached_buffer_metrics.grapheme_breaks[closest_cursor_left_offset];
+    }
     m_inline_search_cursor = m_cursor;
 }
 
 void Editor::cursor_right_word()
 {
-    if (m_cursor < m_buffer.size()) {
-        // Temporarily put a space at the end of our buffer,
-        // doing this greatly simplifies the logic below.
-        m_buffer.append(' ');
-        for (;;) {
-            if (m_cursor >= m_buffer.size())
+    auto has_seen_alnum = false;
+    while (m_cursor < m_buffer.size()) {
+        // after seeing at least one alnum, stop at the first non-alnum
+        if (not is_ascii_alphanumeric(m_buffer[m_cursor])) {
+            if (has_seen_alnum)
                 break;
-            if (!is_ascii_alphanumeric(m_buffer[++m_cursor]))
-                break;
+        } else {
+            has_seen_alnum = true;
         }
-        m_buffer.take_last();
+
+        ++m_cursor;
+    }
+    m_inline_search_cursor = m_cursor;
+    m_search_offset = 0;
+}
+
+void Editor::cursor_right_nonspace_word()
+{
+    auto has_seen_nonspace = false;
+    while (m_cursor < m_buffer.size()) {
+        // after seeing at least one non-space, stop at the first space
+        if (is_ascii_space(m_buffer[m_cursor])) {
+            if (has_seen_nonspace)
+                break;
+        } else {
+            has_seen_nonspace = true;
+        }
+
+        ++m_cursor;
     }
     m_inline_search_cursor = m_cursor;
     m_search_offset = 0;
@@ -121,7 +155,11 @@ void Editor::cursor_right_word()
 void Editor::cursor_right_character()
 {
     if (m_cursor < m_buffer.size()) {
-        ++m_cursor;
+        size_t closest_cursor_left_offset;
+        binary_search(m_cached_buffer_metrics.grapheme_breaks, m_cursor, &closest_cursor_left_offset);
+        m_cursor = closest_cursor_left_offset + 1 >= m_cached_buffer_metrics.grapheme_breaks.size()
+            ? m_buffer.size()
+            : m_cached_buffer_metrics.grapheme_breaks[closest_cursor_left_offset + 1];
     }
     m_inline_search_cursor = m_cursor;
     m_search_offset = 0;
@@ -137,8 +175,13 @@ void Editor::erase_character_backwards()
         fflush(stderr);
         return;
     }
-    remove_at_index(m_cursor - 1);
-    --m_cursor;
+
+    size_t closest_cursor_left_offset;
+    binary_search(m_cached_buffer_metrics.grapheme_breaks, m_cursor - 1, &closest_cursor_left_offset);
+    auto start_of_previous_grapheme = m_cached_buffer_metrics.grapheme_breaks[closest_cursor_left_offset];
+    for (; m_cursor > start_of_previous_grapheme; --m_cursor)
+        remove_at_index(m_cursor - 1);
+
     m_inline_search_cursor = m_cursor;
     // We will have to redraw :(
     m_refresh_needed = true;
@@ -151,7 +194,14 @@ void Editor::erase_character_forwards()
         fflush(stderr);
         return;
     }
-    remove_at_index(m_cursor);
+
+    size_t closest_cursor_left_offset;
+    binary_search(m_cached_buffer_metrics.grapheme_breaks, m_cursor, &closest_cursor_left_offset);
+    auto end_of_next_grapheme = closest_cursor_left_offset + 1 >= m_cached_buffer_metrics.grapheme_breaks.size()
+        ? m_buffer.size()
+        : m_cached_buffer_metrics.grapheme_breaks[closest_cursor_left_offset + 1];
+    for (auto cursor = m_cursor; cursor < end_of_next_grapheme; ++cursor)
+        remove_at_index(m_cursor);
     m_refresh_needed = true;
 }
 
@@ -161,14 +211,21 @@ void Editor::finish_edit()
     if (!m_always_refresh) {
         m_input_error = Error::Eof;
         finish();
-        really_quit_event_loop();
+        really_quit_event_loop().release_value_but_fixme_should_propagate_errors();
     }
 }
 
 void Editor::kill_line()
 {
-    for (size_t i = 0; i < m_cursor; ++i)
+    if (m_cursor == 0)
+        return;
+
+    m_last_erased.clear_with_capacity();
+
+    for (size_t i = 0; i < m_cursor; ++i) {
+        m_last_erased.append(m_buffer[0]);
         remove_at_index(0);
+    }
     m_cursor = 0;
     m_inline_search_cursor = m_cursor;
     m_refresh_needed = true;
@@ -176,6 +233,11 @@ void Editor::kill_line()
 
 void Editor::erase_word_backwards()
 {
+    if (m_cursor == 0)
+        return;
+
+    m_last_erased.clear_with_capacity();
+
     // A word here is space-separated. `foo=bar baz` is two words.
     bool has_seen_nonspace = false;
     while (m_cursor > 0) {
@@ -185,18 +247,34 @@ void Editor::erase_word_backwards()
         } else {
             has_seen_nonspace = true;
         }
+
+        m_last_erased.append(m_buffer[m_cursor - 1]);
         erase_character_backwards();
     }
+
+    m_last_erased.reverse();
 }
 
 void Editor::erase_to_end()
 {
-    while (m_cursor < m_buffer.size())
+    if (m_cursor == m_buffer.size())
+        return;
+
+    m_last_erased.clear_with_capacity();
+
+    while (m_cursor < m_buffer.size()) {
+        m_last_erased.append(m_buffer[m_cursor]);
         erase_character_forwards();
+    }
 }
 
 void Editor::erase_to_beginning()
 {
+}
+
+void Editor::insert_last_erased()
+{
+    insert(Utf32View { m_last_erased.data(), m_last_erased.size() });
 }
 
 void Editor::transpose_characters()
@@ -235,18 +313,18 @@ void Editor::enter_search()
 
         m_search_editor->on_display_refresh = [this](Editor& search_editor) {
             // Remove the search editor prompt before updating ourselves (this avoids artifacts when we move the search editor around).
-            search_editor.cleanup();
+            search_editor.cleanup().release_value_but_fixme_should_propagate_errors();
 
             StringBuilder builder;
             builder.append(Utf32View { search_editor.buffer().data(), search_editor.buffer().size() });
-            if (!search(builder.build(), false, false)) {
+            if (!search(builder.to_byte_string(), false, false)) {
                 m_chars_touched_in_the_middle = m_buffer.size();
                 m_refresh_needed = true;
                 m_buffer.clear();
                 m_cursor = 0;
             }
 
-            refresh_display();
+            refresh_display().release_value_but_fixme_should_propagate_errors();
 
             // Move the search prompt below ours and tell it to redraw itself.
             auto prompt_end_line = current_prompt_metrics().lines_with_addition(m_cached_buffer_metrics, m_num_columns);
@@ -266,7 +344,7 @@ void Editor::enter_search()
             search_editor.finish();
             m_reset_buffer_on_search_end = true;
             search_editor.end_search();
-            search_editor.deferred_invoke([&search_editor] { search_editor.really_quit_event_loop(); });
+            search_editor.deferred_invoke([&search_editor] { search_editor.really_quit_event_loop().release_value_but_fixme_should_propagate_errors(); });
             return false;
         });
 
@@ -285,7 +363,7 @@ void Editor::enter_search()
 
         // ^L - This is a source of issues, as the search editor refreshes first,
         // and we end up with the wrong order of prompts, so we will first refresh
-        // ourselves, then refresh the search editor, and then tell him not to process
+        // ourselves, then refresh the search editor, and then tell it not to process
         // this event.
         m_search_editor->register_key_input_callback(ctrl('L'), [this](auto& search_editor) {
             fprintf(stderr, "\033[3J\033[H\033[2J"); // Clear screen.
@@ -295,7 +373,7 @@ void Editor::enter_search()
                 TemporaryChange refresh_change { m_always_refresh, true };
                 set_origin(1, 1);
                 m_refresh_needed = true;
-                refresh_display();
+                refresh_display().release_value_but_fixme_should_propagate_errors();
             }
 
             // move the search prompt below ours
@@ -343,13 +421,13 @@ void Editor::enter_search()
         auto& search_string = search_string_result.value();
 
         // Manually cleanup the search line.
-        OutputFileStream stderr_stream { stderr };
-        reposition_cursor(stderr_stream);
+        auto stderr_stream = Core::File::standard_error().release_value_but_fixme_should_propagate_errors();
+        reposition_cursor(*stderr_stream).release_value_but_fixme_should_propagate_errors();
         auto search_metrics = actual_rendered_string_metrics(search_string, {});
         auto metrics = actual_rendered_string_metrics(search_prompt, {});
-        VT::clear_lines(0, metrics.lines_with_addition(search_metrics, m_num_columns) + search_end_row - m_origin_row - 1, stderr_stream);
+        VT::clear_lines(0, metrics.lines_with_addition(search_metrics, m_num_columns) + search_end_row - m_origin_row - 1, *stderr_stream).release_value_but_fixme_should_propagate_errors();
 
-        reposition_cursor(stderr_stream);
+        reposition_cursor(*stderr_stream).release_value_but_fixme_should_propagate_errors();
 
         m_refresh_needed = true;
         m_cached_prompt_valid = false;
@@ -365,6 +443,69 @@ void Editor::enter_search()
         // Return the string,
         finish();
     }
+}
+
+namespace {
+Optional<u32> read_unicode_char()
+{
+    // FIXME: It would be ideal to somehow communicate that the line editor is
+    // not operating in a normal mode and expects a character during the unicode
+    // read (cursor mode? change current cell? change prompt? Something else?)
+    StringBuilder builder;
+
+    for (int i = 0; i < 4; ++i) {
+        char c = 0;
+        auto nread = read(0, &c, 1);
+
+        if (nread <= 0)
+            return {};
+
+        builder.append(c);
+
+        Utf8View search_char_utf8_view { builder.string_view() };
+
+        if (search_char_utf8_view.validate())
+            return *search_char_utf8_view.begin();
+    }
+
+    return {};
+}
+}
+
+void Editor::search_character_forwards()
+{
+    auto optional_search_char = read_unicode_char();
+    if (not optional_search_char.has_value())
+        return;
+    u32 search_char = optional_search_char.value();
+
+    for (auto index = m_cursor + 1; index < m_buffer.size(); ++index) {
+        if (m_buffer[index] == search_char) {
+            m_cursor = index;
+            return;
+        }
+    }
+
+    fputc('\a', stderr);
+    fflush(stderr);
+}
+
+void Editor::search_character_backwards()
+{
+    auto optional_search_char = read_unicode_char();
+    if (not optional_search_char.has_value())
+        return;
+    u32 search_char = optional_search_char.value();
+
+    for (auto index = m_cursor; index > 0; --index) {
+        if (m_buffer[index - 1] == search_char) {
+            m_cursor = index - 1;
+            return;
+        }
+    }
+
+    fputc('\a', stderr);
+    fflush(stderr);
 }
 
 void Editor::transpose_words()
@@ -435,8 +576,8 @@ void Editor::go_end()
 void Editor::clear_screen()
 {
     warn("\033[3J\033[H\033[2J");
-    OutputFileStream stream { stderr };
-    VT::move_absolute(1, 1, stream);
+    auto stream = Core::File::standard_error().release_value_but_fixme_should_propagate_errors();
+    VT::move_absolute(1, 1, *stream).release_value_but_fixme_should_propagate_errors();
     set_origin(1, 1);
     m_refresh_needed = true;
     m_cached_prompt_valid = false;
@@ -453,6 +594,11 @@ void Editor::insert_last_words()
 
 void Editor::erase_alnum_word_backwards()
 {
+    if (m_cursor == 0)
+        return;
+
+    m_last_erased.clear_with_capacity();
+
     // A word here is contiguous alnums. `foo=bar baz` is three words.
     bool has_seen_alnum = false;
     while (m_cursor > 0) {
@@ -462,12 +608,21 @@ void Editor::erase_alnum_word_backwards()
         } else {
             has_seen_alnum = true;
         }
+
+        m_last_erased.append(m_buffer[m_cursor - 1]);
         erase_character_backwards();
     }
+
+    m_last_erased.reverse();
 }
 
 void Editor::erase_alnum_word_forwards()
 {
+    if (m_cursor == m_buffer.size())
+        return;
+
+    m_last_erased.clear_with_capacity();
+
     // A word here is contiguous alnums. `foo=bar baz` is three words.
     bool has_seen_alnum = false;
     while (m_cursor < m_buffer.size()) {
@@ -477,7 +632,26 @@ void Editor::erase_alnum_word_forwards()
         } else {
             has_seen_alnum = true;
         }
+
+        m_last_erased.append(m_buffer[m_cursor]);
         erase_character_forwards();
+    }
+}
+
+void Editor::erase_spaces()
+{
+    while (m_cursor < m_buffer.size()) {
+        if (is_ascii_space(m_buffer[m_cursor]))
+            erase_character_forwards();
+        else
+            break;
+    }
+
+    while (m_cursor > 0) {
+        if (is_ascii_space(m_buffer[m_cursor - 1]))
+            erase_character_backwards();
+        else
+            break;
     }
 }
 
@@ -495,8 +669,10 @@ void Editor::case_change_word(Editor::CaseChangeOp change_op)
             m_buffer[m_cursor] = to_ascii_lowercase(m_buffer[m_cursor]);
         }
         ++m_cursor;
-        m_refresh_needed = true;
     }
+
+    m_refresh_needed = true;
+    m_chars_touched_in_the_middle = 1;
 }
 
 void Editor::capitalize_word()
@@ -530,12 +706,12 @@ void Editor::edit_in_external_editor()
 
     {
         auto write_fd = dup(fd);
-        OutputFileStream stream { write_fd };
+        auto stream = Core::File::adopt_fd(write_fd, Core::File::OpenMode::Write).release_value_but_fixme_should_propagate_errors();
         StringBuilder builder;
         builder.append(Utf32View { m_buffer.data(), m_buffer.size() });
         auto bytes = builder.string_view().bytes();
         while (!bytes.is_empty()) {
-            auto nwritten = stream.write(bytes);
+            auto nwritten = stream->write_some(bytes).release_value_but_fixme_should_propagate_errors();
             bytes = bytes.slice(nwritten);
         }
         lseek(fd, 0, SEEK_SET);
@@ -571,12 +747,8 @@ void Editor::edit_in_external_editor()
     }
 
     {
-        auto file_or_error = Core::File::open(file_path, Core::OpenMode::ReadOnly);
-        if (file_or_error.is_error())
-            return;
-
-        auto file = file_or_error.release_value();
-        auto contents = file->read_all();
+        auto file = Core::File::open({ file_path, strlen(file_path) }, Core::File::OpenMode::Read).release_value_but_fixme_should_propagate_errors();
+        auto contents = file->read_until_eof().release_value_but_fixme_should_propagate_errors();
         StringView data { contents };
         while (data.ends_with('\n'))
             data = data.substring_view(0, data.length() - 1);

@@ -8,9 +8,8 @@ serenity_component(
 add_subdirectory(LanguageServers)
 add_subdirectory(LanguageClients)
 
-compile_gml(Dialogs/NewProjectDialog.gml Dialogs/NewProjectDialogGML.h new_project_dialog_gml)
-compile_gml(Dialogs/Git/GitCommitDialog.gml Dialogs/Git/GitCommitDialogGML.h git_commit_dialog_gml)
-compile_gml(FindWidget.gml FindWidgetGML.h find_widget_gml)
+stringify_gml(Dialogs/NewProjectDialog.gml Dialogs/NewProjectDialogGML.h new_project_dialog_gml)
+stringify_gml(Dialogs/Git/GitCommitDialog.gml Dialogs/Git/GitCommitDialogGML.h git_commit_dialog_gml)
 
 set(SOURCES
     CodeDocument.cpp
@@ -22,16 +21,13 @@ set(SOURCES
     Debugger/DisassemblyWidget.cpp
     Debugger/RegistersModel.cpp
     Debugger/VariablesModel.cpp
+    DeclarationsModel.cpp
     Dialogs/Git/GitCommitDialog.cpp
-    Dialogs/Git/GitCommitDialogGML.h
     Dialogs/NewProjectDialog.cpp
-    Dialogs/NewProjectDialogGML.h
     Dialogs/ProjectTemplatesModel.cpp
     Editor.cpp
     EditorWrapper.cpp
     FindInFilesWidget.cpp
-    FindWidget.cpp
-    FindWidgetGML.h
     Git/DiffViewer.cpp
     Git/GitFilesModel.cpp
     Git/GitFilesView.cpp
@@ -39,7 +35,6 @@ set(SOURCES
     Git/GitWidget.cpp
     GMLPreviewWidget.cpp
     HackStudioWidget.cpp
-    Language.cpp
     LanguageClient.cpp
     Locator.cpp
     Project.cpp
@@ -54,7 +49,11 @@ set(SOURCES
     main.cpp
 )
 
+set(GENERATED_SOURCES
+    Dialogs/Git/GitCommitDialogGML.h
+    Dialogs/NewProjectDialogGML.h
+)
+
 serenity_app(HackStudio ICON app-hack-studio)
-target_link_libraries(HackStudio LibWebView LibWeb LibMarkdown LibGUI LibCpp LibGfx LibCore LibVT LibDebug LibX86 LibDiff LibShell LibSymbolication LibRegex LibSQL LibCoredump LibMain)
-link_with_unicode_data(HackStudio)
+target_link_libraries(HackStudio PRIVATE LibELF LibWebView LibWeb LibMarkdown LibGUI LibCpp LibCMake LibGfx LibCore LibVT LibDebug LibX86 LibDiff LibShell LibSymbolication LibSyntax LibRegex LibSQL LibConfig LibCore LibCoredump LibDesktop LibFileSystem LibIPC LibJS LibMain LibThreading LibURL)
 add_dependencies(HackStudio CppLanguageServer)

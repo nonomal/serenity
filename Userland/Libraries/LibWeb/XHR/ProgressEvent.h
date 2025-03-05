@@ -6,50 +6,40 @@
 
 #pragma once
 
+#include <AK/FlyString.h>
 #include <LibWeb/DOM/Event.h>
+#include <LibWeb/WebIDL/Types.h>
 
 namespace Web::XHR {
 
-// FIXME: All the "u32"s should be "u64"s, however LibJS doesn't currently support constructing values with u64,
-//        and the IDL parser doesn't properly parse "unsigned long long".
-
 struct ProgressEventInit : public DOM::EventInit {
     bool length_computable { false };
-    u32 loaded { 0 };
-    u32 total { 0 };
+    WebIDL::UnsignedLongLong loaded { 0 };
+    WebIDL::UnsignedLongLong total { 0 };
 };
 
-class ProgressEvent : public DOM::Event {
+class ProgressEvent final : public DOM::Event {
+    WEB_PLATFORM_OBJECT(ProgressEvent, DOM::Event);
+    JS_DECLARE_ALLOCATOR(ProgressEvent);
+
 public:
-    using WrapperType = Bindings::ProgressEventWrapper;
+    [[nodiscard]] static JS::NonnullGCPtr<ProgressEvent> create(JS::Realm&, FlyString const& event_name, ProgressEventInit const& event_init);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<ProgressEvent>> construct_impl(JS::Realm&, FlyString const& event_name, ProgressEventInit const& event_init);
 
-    static NonnullRefPtr<ProgressEvent> create(FlyString const& event_name, ProgressEventInit const& event_init)
-    {
-        return adopt_ref(*new ProgressEvent(event_name, event_init));
-    }
-    static NonnullRefPtr<ProgressEvent> create_with_global_object(Bindings::WindowObject&, FlyString const& event_name, ProgressEventInit const& event_init)
-    {
-        return ProgressEvent::create(event_name, event_init);
-    }
-
-    virtual ~ProgressEvent() override = default;
+    virtual ~ProgressEvent() override;
 
     bool length_computable() const { return m_length_computable; }
-    u64 loaded() const { return m_loaded; }
-    u64 total() const { return m_total; }
+    WebIDL::UnsignedLongLong loaded() const { return m_loaded; }
+    WebIDL::UnsignedLongLong total() const { return m_total; }
 
-protected:
-    ProgressEvent(FlyString const& event_name, ProgressEventInit const& event_init)
-        : Event(event_name, event_init)
-        , m_length_computable(event_init.length_computable)
-        , m_loaded(event_init.loaded)
-        , m_total(event_init.total)
-    {
-    }
+private:
+    ProgressEvent(JS::Realm&, FlyString const& event_name, ProgressEventInit const& event_init);
+
+    virtual void initialize(JS::Realm&) override;
 
     bool m_length_computable { false };
-    u64 m_loaded { 0 };
-    u64 m_total { 0 };
+    WebIDL::UnsignedLongLong m_loaded { 0 };
+    WebIDL::UnsignedLongLong m_total { 0 };
 };
 
 }

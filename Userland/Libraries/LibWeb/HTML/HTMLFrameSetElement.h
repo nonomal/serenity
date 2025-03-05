@@ -15,20 +15,23 @@ namespace Web::HTML {
 class HTMLFrameSetElement final
     : public HTMLElement
     , public WindowEventHandlers {
-public:
-    using WrapperType = Bindings::HTMLFrameSetElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLFrameSetElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLFrameSetElement);
 
-    HTMLFrameSetElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLFrameSetElement() override;
 
-    virtual void parse_attribute(FlyString const&, String const&) override;
-
 private:
+    HTMLFrameSetElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void attribute_changed(FlyString const&, Optional<String> const& old_value, Optional<String> const&) override;
+
     // ^HTML::GlobalEventHandlers
-    virtual EventTarget& global_event_handlers_to_event_target(FlyString const& event_name) override;
+    virtual JS::GCPtr<EventTarget> global_event_handlers_to_event_target(FlyString const& event_name) override;
 
     // ^HTML::WindowEventHandlers
-    virtual EventTarget& window_event_handlers_to_event_target() override;
+    virtual JS::GCPtr<EventTarget> window_event_handlers_to_event_target() override;
 };
 
 }

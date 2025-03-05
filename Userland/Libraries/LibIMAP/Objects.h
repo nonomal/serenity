@@ -6,12 +6,11 @@
 
 #pragma once
 
-#include <AK/Format.h>
 #include <AK/Function.h>
 #include <AK/Tuple.h>
 #include <AK/Variant.h>
 #include <LibCore/DateTime.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 
 namespace IMAP {
 enum class CommandType {
@@ -116,8 +115,8 @@ public:
         m_status_items |= static_cast<unsigned>(type);
     }
 
-    void set_mailbox(String&& mailbox) { m_mailbox = move(mailbox); }
-    String& mailbox() { return m_mailbox; }
+    void set_mailbox(ByteString&& mailbox) { m_mailbox = move(mailbox); }
+    ByteString& mailbox() { return m_mailbox; }
 
     unsigned get(StatusItemType type) const
     {
@@ -166,62 +165,62 @@ private:
     unsigned m_uid_next { 0 };
     unsigned m_uid_validity { 0 };
     unsigned m_unseen { 0 };
-    String m_mailbox;
+    ByteString m_mailbox;
 };
 
 struct Address {
-    Optional<String> name;
-    Optional<String> source_route;
-    Optional<String> mailbox;
-    Optional<String> host;
+    ByteString name;
+    ByteString source_route;
+    ByteString mailbox;
+    ByteString host;
 };
 
 struct Envelope {
-    Optional<String> date; // Format of date not specified.
-    Optional<String> subject;
-    Optional<Vector<Address>> from;
-    Optional<Vector<Address>> sender;
-    Optional<Vector<Address>> reply_to;
-    Optional<Vector<Address>> to;
-    Optional<Vector<Address>> cc;
-    Optional<Vector<Address>> bcc;
-    Optional<String> in_reply_to;
-    Optional<String> message_id;
+    ByteString date; // Format of date not specified.
+    ByteString subject;
+    Vector<Address> from;
+    Vector<Address> sender;
+    Vector<Address> reply_to;
+    Vector<Address> to;
+    Vector<Address> cc;
+    Vector<Address> bcc;
+    ByteString in_reply_to;
+    ByteString message_id;
 };
 
 class BodyStructure;
 
 struct BodyExtension {
-    AK::Variant<Optional<String>, unsigned, Vector<OwnPtr<BodyExtension>>> data;
+    AK::Variant<Optional<ByteString>, unsigned, Vector<OwnPtr<BodyExtension>>> data;
 };
 
 struct MultiPartBodyStructureData {
-    Optional<Tuple<String, HashMap<String, String>>> disposition;
+    Optional<Tuple<ByteString, HashMap<ByteString, ByteString>>> disposition;
     Vector<OwnPtr<BodyStructure>> bodies;
-    Vector<String> langs;
-    String media_type;
-    Optional<HashMap<String, String>> params;
-    Optional<String> location;
-    Optional<Vector<BodyExtension>> extensions;
+    Vector<ByteString> langs;
+    ByteString multipart_subtype;
+    HashMap<ByteString, ByteString> params;
+    ByteString location;
+    Vector<BodyExtension> extensions;
 };
 
 struct BodyStructureData {
-    String type;
-    String subtype;
-    Optional<String> id {};
-    Optional<String> desc {};
-    String encoding;
-    HashMap<String, String> fields;
+    ByteString type;
+    ByteString subtype;
+    ByteString id {};
+    ByteString desc {};
+    ByteString encoding;
+    HashMap<ByteString, ByteString> fields;
     unsigned bytes { 0 };
     unsigned lines { 0 };
-    Optional<Envelope> envelope;
+    Optional<Tuple<Envelope, NonnullOwnPtr<BodyStructure>>> contanied_message;
 
-    Optional<String> md5 {};
-    Optional<Tuple<String, HashMap<String, String>>> disposition {};
-    Optional<Vector<String>> langs {};
-    Optional<String> location {};
+    ByteString md5 {};
+    Optional<Tuple<ByteString, HashMap<ByteString, ByteString>>> disposition {};
+    Optional<Vector<ByteString>> langs {};
+    ByteString location {};
 
-    Optional<Vector<BodyExtension>> extensions {};
+    Vector<BodyExtension> extensions {};
 };
 
 class BodyStructure {
@@ -249,7 +248,7 @@ struct Sequence {
     int start;
     int end;
 
-    [[nodiscard]] String serialize() const;
+    [[nodiscard]] ByteString serialize() const;
 };
 
 struct FetchCommand {
@@ -277,9 +276,9 @@ struct FetchCommand {
             Optional<Vector<unsigned>> parts {};
             bool ends_with_mime {};
 
-            Optional<Vector<String>> headers {};
+            Optional<Vector<ByteString>> headers {};
 
-            [[nodiscard]] String serialize() const;
+            [[nodiscard]] ByteString serialize() const;
         };
 
         DataItemType type;
@@ -289,19 +288,19 @@ struct FetchCommand {
         int start { 0 };
         int octets { 0 };
 
-        [[nodiscard]] String serialize() const;
+        [[nodiscard]] ByteString serialize() const;
     };
 
     Vector<Sequence> sequence_set;
     Vector<DataItem> data_items;
 
-    String serialize();
+    ByteString serialize();
 };
 struct Command {
 public:
     CommandType type;
     int tag;
-    Vector<String> args;
+    Vector<ByteString> args;
 };
 
 enum class ResponseStatus {
@@ -312,8 +311,8 @@ enum class ResponseStatus {
 
 struct ListItem {
     unsigned flags;
-    String reference;
-    String name;
+    ByteString reference;
+    ByteString name;
 };
 
 class FetchResponseData {
@@ -333,13 +332,13 @@ public:
         m_response_type |= static_cast<unsigned>(type);
     }
 
-    void add_body_data(FetchCommand::DataItem&& data_item, Optional<String>&& body)
+    void add_body_data(FetchCommand::DataItem&& data_item, ByteString&& body)
     {
         add_response_type(FetchResponseType::Body);
         m_bodies.append({ move(data_item), move(body) });
     }
 
-    Vector<Tuple<FetchCommand::DataItem, Optional<String>>>& body_data()
+    Vector<Tuple<FetchCommand::DataItem, ByteString>>& body_data()
     {
         VERIFY(contains_response_type(FetchResponseType::Body));
         return m_bodies;
@@ -381,13 +380,13 @@ public:
         return m_envelope;
     }
 
-    void set_flags(Vector<String>&& flags)
+    void set_flags(Vector<ByteString>&& flags)
     {
         add_response_type(FetchResponseType::Flags);
         m_flags = move(flags);
     }
 
-    Vector<String>& flags()
+    Vector<ByteString>& flags()
     {
         VERIFY(contains_response_type(FetchResponseType::Flags));
         return m_flags;
@@ -411,8 +410,8 @@ public:
     }
 
 private:
-    Vector<String> m_flags;
-    Vector<Tuple<FetchCommand::DataItem, Optional<String>>> m_bodies;
+    Vector<ByteString> m_flags;
+    Vector<Tuple<FetchCommand::DataItem, ByteString>> m_bodies;
     Core::DateTime m_internal_date;
     Envelope m_envelope;
     unsigned m_uid { 0 };
@@ -420,20 +419,20 @@ private:
     BodyStructure m_body_structure;
 };
 
-String serialize_astring(StringView string);
+ByteString serialize_astring(StringView string);
 
 struct SearchKey {
 public:
     // clang-format off
     struct All { };
     struct Answered { };
-    struct Bcc { String bcc; };
-    struct Cc { String cc; };
+    struct Bcc { ByteString bcc; };
+    struct Cc { ByteString cc; };
     struct Deleted { };
     struct Draft { };
-    struct From { String from; };
-    struct Header { String header; String value; };
-    struct Keyword { String keyword; };
+    struct From { ByteString from; };
+    struct Header { ByteString header; ByteString value; };
+    struct Keyword { ByteString keyword; };
     struct Larger { unsigned number; };
     struct New { };
     struct Not { OwnPtr<SearchKey> operand; };
@@ -449,14 +448,14 @@ public:
     struct SequenceSet { Sequence sequence; };
     struct Since { Core::DateTime date; };
     struct Smaller { unsigned number; };
-    struct Subject { String subject; };
-    struct Text { String text; };
-    struct To { String to; };
+    struct Subject { ByteString subject; };
+    struct Text { ByteString text; };
+    struct To { ByteString to; };
     struct UID { unsigned  uid; };
     struct Unanswered { };
     struct Undeleted { };
     struct Undraft { };
-    struct Unkeyword { String flag_keyword; };
+    struct Unkeyword { ByteString flag_keyword; };
     struct Unseen { };
     // clang-format on
 
@@ -488,7 +487,7 @@ public:
         return *this;
     }
 
-    [[nodiscard]] String serialize() const;
+    [[nodiscard]] ByteString serialize() const;
 };
 
 class ResponseData {
@@ -518,13 +517,13 @@ public:
         m_response_type = m_response_type | static_cast<unsigned>(response_type);
     }
 
-    void add_capabilities(Vector<String>&& capabilities)
+    void add_capabilities(Vector<ByteString>&& capabilities)
     {
         m_capabilities = move(capabilities);
         add_response_type(ResponseType::Capability);
     }
 
-    Vector<String>& capabilities()
+    Vector<ByteString>& capabilities()
     {
         VERIFY(contains_response_type(ResponseType::Capability));
         return m_capabilities;
@@ -614,25 +613,25 @@ public:
         return m_unseen;
     }
 
-    void set_flags(Vector<String>&& flags)
+    void set_flags(Vector<ByteString>&& flags)
     {
         m_response_type |= static_cast<unsigned>(ResponseType::Flags);
         m_flags = move(flags);
     }
 
-    Vector<String>& flags()
+    Vector<ByteString>& flags()
     {
         VERIFY(contains_response_type(ResponseType::Flags));
         return m_flags;
     }
 
-    void set_permanent_flags(Vector<String>&& flags)
+    void set_permanent_flags(Vector<ByteString>&& flags)
     {
         add_response_type(ResponseType::PermanentFlags);
         m_permanent_flags = move(flags);
     }
 
-    Vector<String>& permanent_flags()
+    Vector<ByteString>& permanent_flags()
     {
         VERIFY(contains_response_type(ResponseType::PermanentFlags));
         return m_permanent_flags;
@@ -674,35 +673,37 @@ public:
         return m_expunged;
     }
 
-    void set_bye(Optional<String> message)
+    void set_bye(Optional<ByteString> message)
     {
         add_response_type(ResponseType::Bye);
         m_bye_message = move(message);
     }
 
-    Optional<String>& bye_message()
+    Optional<ByteString>& bye_message()
     {
         VERIFY(contains_response_type(ResponseType::Bye));
         return m_bye_message;
     }
 
-    void set_status(StatusItem&& status_item)
+    void add_status_item(StatusItem&& item)
     {
         add_response_type(ResponseType::Status);
-        m_status_item = move(status_item);
+        m_status_items.append(move(item));
     }
 
-    StatusItem& status_item()
+    Vector<StatusItem>& status_items()
     {
-        return m_status_item;
+        VERIFY(contains_response_type(ResponseType::Status));
+        return m_status_items;
     }
 
 private:
     unsigned m_response_type;
 
-    Vector<String> m_capabilities;
+    Vector<ByteString> m_capabilities;
     Vector<ListItem> m_list_items;
     Vector<ListItem> m_lsub_items;
+    Vector<StatusItem> m_status_items;
     Vector<unsigned> m_expunged;
 
     unsigned m_recent {};
@@ -711,12 +712,11 @@ private:
     unsigned m_uid_next {};
     unsigned m_uid_validity {};
     unsigned m_unseen {};
-    Vector<String> m_permanent_flags;
-    Vector<String> m_flags;
+    Vector<ByteString> m_permanent_flags;
+    Vector<ByteString> m_flags;
     Vector<Tuple<unsigned, FetchResponseData>> m_fetch_responses;
     Vector<unsigned> m_search_results;
-    Optional<String> m_bye_message;
-    StatusItem m_status_item;
+    Optional<ByteString> m_bye_message;
 };
 
 enum class StoreMethod {
@@ -736,7 +736,7 @@ public:
 
     ResponseData& data() { return m_data; }
 
-    String response_text() { return m_response_text; };
+    ByteString response_text() { return m_response_text; }
 
     SolidResponse()
         : SolidResponse(ResponseStatus::Bad, -1)
@@ -752,14 +752,14 @@ public:
 
 private:
     ResponseStatus m_status;
-    String m_response_text;
+    ByteString m_response_text;
     unsigned m_tag;
 
     ResponseData m_data;
 };
 
 struct ContinueRequest {
-    String data;
+    ByteString data;
 };
 
 using Response = Variant<SolidResponse, ContinueRequest>;
@@ -768,5 +768,5 @@ using Response = Variant<SolidResponse, ContinueRequest>;
 // An RFC 2822 message
 // https://datatracker.ietf.org/doc/html/rfc2822
 struct Message {
-    String data;
+    ByteString data;
 };

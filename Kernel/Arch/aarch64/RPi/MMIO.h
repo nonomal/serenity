@@ -7,6 +7,9 @@
 #pragma once
 
 #include <AK/Types.h>
+#include <Kernel/Memory/PhysicalAddress.h>
+#include <Kernel/Memory/TypedMapping.h>
+#include <Kernel/Sections.h>
 
 namespace Kernel::RPi {
 
@@ -18,20 +21,16 @@ class MMIO {
 public:
     static MMIO& the();
 
-    u32 read(FlatPtr offset) { return *peripheral_address(offset); }
-    void write(FlatPtr offset, u32 value) { *peripheral_address(offset) = value; }
-
-    u32 volatile* peripheral_address(FlatPtr offset) { return (u32 volatile*)(m_base_address + offset); }
-    template<class T>
-    T volatile* peripheral(FlatPtr offset) { return (T volatile*)peripheral_address(offset); }
-
-    FlatPtr peripheral_base_address() const { return m_base_address; }
-    FlatPtr peripheral_end_address() const { return m_base_address + 0x00FFFFFF; }
+    template<typename T>
+    ErrorOr<Memory::TypedMapping<T volatile>> peripheral(FlatPtr offset)
+    {
+        return Memory::map_typed_writable<T volatile>(PhysicalAddress { m_base_address.offset(offset) });
+    }
 
 private:
     MMIO();
 
-    unsigned int m_base_address;
+    PhysicalAddress m_base_address;
 };
 
 }

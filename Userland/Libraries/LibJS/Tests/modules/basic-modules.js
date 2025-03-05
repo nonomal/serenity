@@ -182,6 +182,43 @@ describe("in- and exports", () => {
     test("can import with (useless) assertions", () => {
         expectModulePassed("./import-with-assertions.mjs");
     });
+
+    test("namespace has expected ordering", () => {
+        expectModulePassed("./namespace-order.mjs");
+    });
+
+    test("can have multiple star imports even from the same file", () => {
+        expectModulePassed("./multiple-star-imports.mjs");
+    });
+
+    test("can export namespace via binding", () => {
+        expectModulePassed("./re-export-namespace-via-binding.mjs");
+    });
+
+    test("import variable before import statement behaves as undefined and non mutable variable", () => {
+        expectModulePassed("./accessing-var-import-before-decl.mjs");
+    });
+
+    test("import lexical binding before import statement behaves as initialized but non mutable binding", () => {
+        expectModulePassed("./accessing-lex-import-before-decl.mjs");
+    });
+
+    test("exporting anonymous function", () => {
+        expectModulePassed("./anon-func-decl-default-export.mjs");
+    });
+
+    test.xfail(
+        "can have top level using declarations which trigger at the end of running a module",
+        () => {
+            expectModulePassed("./top-level-dispose.mjs");
+        }
+    );
+
+    test("can export default a RegExp", () => {
+        const result = expectModulePassed("./default-regexp-export.mjs");
+        expect(result.default).toBeInstanceOf(RegExp);
+        expect(result.default.toString()).toBe(/foo/.toString());
+    });
 });
 
 describe("loops", () => {
@@ -191,5 +228,33 @@ describe("loops", () => {
 
     test("import something which imports a cycle", () => {
         expectModulePassed("./loop-entry.mjs");
+    });
+});
+
+describe("failing modules cascade", () => {
+    let failingModuleError = "Left-hand side of postfix";
+    test("importing a file with a SyntaxError results in a SyntaxError", () => {
+        expectedModuleToThrowSyntaxError("./failing.mjs", failingModuleError);
+    });
+
+    test("importing a file without a syntax error which imports a file with a syntax error fails", () => {
+        expectedModuleToThrowSyntaxError("./importing-failing-module.mjs", failingModuleError);
+    });
+
+    test("importing a file which re exports a file with a syntax error fails", () => {
+        expectedModuleToThrowSyntaxError("./exporting-from-failing.mjs", failingModuleError);
+    });
+
+    test("importing a file re exports nothing from a file with a syntax error fails", () => {
+        expectedModuleToThrowSyntaxError(
+            "./exporting-nothing-from-failing.mjs",
+            failingModuleError
+        );
+    });
+});
+
+describe("scoping in modules", () => {
+    test("functions within functions", () => {
+        expectModulePassed("./function-in-function.mjs");
     });
 });

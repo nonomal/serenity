@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/String.h>
 #include <LibGUI/AbstractThemePreview.h>
 #include <LibGUI/Widget.h>
 #include <LibGfx/Bitmap.h>
@@ -18,7 +19,7 @@ class ThemePreviewWidget final : public GUI::AbstractThemePreview {
     C_OBJECT(ThemePreviewWidget);
 
 public:
-    void set_theme(String path);
+    ErrorOr<void> set_theme(String path);
 
 private:
     explicit ThemePreviewWidget(Gfx::Palette const& palette);

@@ -6,18 +6,18 @@
 
 #include "OutOfProcessWebView.h"
 #include "WebContentClient.h"
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibFileSystemAccessClient/Client.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Desktop.h>
-#include <LibGUI/InputBox.h>
-#include <LibGUI/MessageBox.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
+#include <LibWeb/Crypto/Crypto.h>
+#include <LibWeb/Worker/WebWorkerClient.h>
 
 REGISTER_WIDGET(WebView, OutOfProcessWebView)
 
@@ -25,40 +25,57 @@ namespace WebView {
 
 OutOfProcessWebView::OutOfProcessWebView()
 {
-    set_should_hide_unnecessary_scrollbars(true);
     set_focus_policy(GUI::FocusPolicy::StrongFocus);
 
-    create_client();
+    initialize_client(CreateNewClient::Yes);
+
+    on_ready_to_paint = [this]() {
+        update();
+    };
+
+    on_request_file = [this](auto const& path, auto request_id) {
+        auto file = FileSystemAccessClient::Client::the().request_file_read_only_approved(window(), path);
+
+        if (file.is_error())
+            client().async_handle_file_return(m_client_state.page_index, file.error().code(), {}, request_id);
+        else
+            client().async_handle_file_return(m_client_state.page_index, 0, IPC::File::adopt_file(file.release_value().release_stream()), request_id);
+    };
+
+    on_cursor_change = [this](auto cursor) {
+        set_override_cursor(cursor);
+    };
+
+    // FIXME: Set on_request_tooltip_override, on_stop_tooltip_override.
+
+    on_enter_tooltip_area = [](auto tooltip) {
+        GUI::Application::the()->show_tooltip(MUST(String::from_byte_string(tooltip)), nullptr);
+    };
+
+    on_leave_tooltip_area = []() {
+        GUI::Application::the()->hide_tooltip();
+    };
+
+    on_finish_handling_key_event = [this](auto const& event) {
+        finish_handling_key_event(event);
+    };
+
+    on_finish_handling_drag_event = [this](auto const& event) {
+        finish_handling_drag_event(event);
+    };
+
+    on_request_worker_agent = []() {
+        auto worker_client = MUST(Web::HTML::WebWorkerClient::try_create());
+        return worker_client->dup_socket();
+    };
 }
 
 OutOfProcessWebView::~OutOfProcessWebView() = default;
 
-void OutOfProcessWebView::handle_web_content_process_crash()
+void OutOfProcessWebView::initialize_client(WebView::ViewImplementation::CreateNewClient)
 {
-    create_client();
-    VERIFY(m_client_state.client);
-
-    // Don't keep a stale backup bitmap around.
-    m_backup_bitmap = nullptr;
-
-    handle_resize();
-    StringBuilder builder;
-    builder.append("<html><head><title>Crashed: "sv);
-    builder.append(escape_html_entities(m_url.to_string()));
-    builder.append("</title></head><body>"sv);
-    builder.append("<h1>Web page crashed"sv);
-    if (!m_url.host().is_empty()) {
-        builder.appendff(" on {}", escape_html_entities(m_url.host()));
-    }
-    builder.append("</h1>"sv);
-    auto escaped_url = escape_html_entities(m_url.to_string());
-    builder.appendff("The web page <a href=\"{}\">{}</a> has crashed.<br><br>You can reload the page to try again.", escaped_url, escaped_url);
-    builder.append("</body></html>"sv);
-    load_html(builder.to_string(), m_url);
-}
-
-void OutOfProcessWebView::create_client()
-{
+    // FIXME: Don't create a new process when CreateNewClient is false
+    //        We should create a new tab/window in the UI instead, and re-use the existing WebContentClient object.
     m_client_state = {};
 
     m_client_state.client = WebContentClient::try_create(*this).release_value_but_fixme_should_propagate_errors();
@@ -68,35 +85,25 @@ void OutOfProcessWebView::create_client()
         });
     };
 
-    client().async_update_system_theme(Gfx::current_system_theme_buffer());
-    client().async_update_system_fonts(Gfx::FontDatabase::default_font_query(), Gfx::FontDatabase::fixed_width_font_query());
-    client().async_update_screen_rects(GUI::Desktop::the().rects(), GUI::Desktop::the().main_screen_index());
-}
+    m_client_state.client_handle = Web::Crypto::generate_random_uuid().release_value_but_fixme_should_propagate_errors();
+    client().async_set_window_handle(m_client_state.page_index, m_client_state.client_handle);
 
-void OutOfProcessWebView::load(const AK::URL& url)
-{
-    m_url = url;
-    client().async_load_url(url);
-}
+    client().async_update_system_theme(m_client_state.page_index, Gfx::current_system_theme_buffer());
+    client().async_update_system_fonts(m_client_state.page_index, Gfx::FontDatabase::default_font_query(), Gfx::FontDatabase::fixed_width_font_query(), Gfx::FontDatabase::window_title_font_query());
 
-void OutOfProcessWebView::load_html(StringView html, const AK::URL& url)
-{
-    m_url = url;
-    client().async_load_html(html, url);
-}
-
-void OutOfProcessWebView::load_empty_document()
-{
-    m_url = {};
-    client().async_load_html("", {});
+    Vector<Web::DevicePixelRect> screen_rects;
+    for (auto const& screen_rect : GUI::Desktop::the().rects()) {
+        screen_rects.append(screen_rect.to_type<Web::DevicePixels>());
+    }
+    client().async_update_screen_rects(m_client_state.page_index, screen_rects, GUI::Desktop::the().main_screen_index());
 }
 
 void OutOfProcessWebView::paint_event(GUI::PaintEvent& event)
 {
-    GUI::AbstractScrollableWidget::paint_event(event);
+    Super::paint_event(event);
 
-    // If the available size is empty, we don't have a front or back bitmap to draw.
-    if (available_size().is_empty())
+    // If the content size is empty, we don't have a front or back bitmap to draw.
+    if (content_size().is_empty())
         return;
 
     GUI::Painter painter(*this);
@@ -105,7 +112,17 @@ void OutOfProcessWebView::paint_event(GUI::PaintEvent& event)
     if (auto* bitmap = m_client_state.has_usable_bitmap ? m_client_state.front_bitmap.bitmap.ptr() : m_backup_bitmap.ptr()) {
         painter.add_clip_rect(frame_inner_rect());
         painter.translate(frame_thickness(), frame_thickness());
-        painter.blit({ 0, 0 }, *bitmap, bitmap->rect());
+        if (m_content_scales_to_viewport) {
+            auto bitmap_rect = Gfx::IntRect {
+                {},
+                m_client_state.has_usable_bitmap
+                    ? m_client_state.front_bitmap.last_painted_size
+                    : m_backup_bitmap_size
+            };
+            painter.draw_scaled_bitmap(rect(), *bitmap, bitmap_rect);
+        } else {
+            painter.blit({ 0, 0 }, *bitmap, bitmap->rect());
+        }
         return;
     }
 
@@ -114,430 +131,347 @@ void OutOfProcessWebView::paint_event(GUI::PaintEvent& event)
 
 void OutOfProcessWebView::resize_event(GUI::ResizeEvent& event)
 {
-    GUI::AbstractScrollableWidget::resize_event(event);
+    Super::resize_event(event);
+    client().async_set_viewport_size(m_client_state.page_index, content_size().to_type<Web::DevicePixels>());
     handle_resize();
 }
 
-void OutOfProcessWebView::handle_resize()
+Web::DevicePixelSize OutOfProcessWebView::viewport_size() const
 {
-    client().async_set_viewport_rect(Gfx::IntRect({ horizontal_scrollbar().value(), vertical_scrollbar().value() }, available_size()));
+    return content_size().to_type<Web::DevicePixels>();
+}
 
-    if (m_client_state.has_usable_bitmap) {
-        // NOTE: We keep the outgoing front bitmap as a backup so we have something to paint until we get a new one.
-        m_backup_bitmap = m_client_state.front_bitmap.bitmap;
-    }
+Gfx::IntPoint OutOfProcessWebView::to_content_position(Gfx::IntPoint widget_position) const
+{
+    return widget_position;
+}
 
-    if (m_client_state.front_bitmap.bitmap)
-        client().async_remove_backing_store(m_client_state.front_bitmap.id);
+Gfx::IntPoint OutOfProcessWebView::to_widget_position(Gfx::IntPoint content_position) const
+{
+    return content_position;
+}
 
-    if (m_client_state.back_bitmap.bitmap)
-        client().async_remove_backing_store(m_client_state.back_bitmap.id);
-
-    m_client_state.front_bitmap = {};
-    m_client_state.back_bitmap = {};
-    m_client_state.has_usable_bitmap = false;
-
-    if (available_size().is_empty())
-        return;
-
-    if (auto new_bitmap_or_error = Gfx::Bitmap::try_create_shareable(Gfx::BitmapFormat::BGRx8888, available_size()); !new_bitmap_or_error.is_error()) {
-        m_client_state.front_bitmap.bitmap = new_bitmap_or_error.release_value();
-        m_client_state.front_bitmap.id = m_client_state.next_bitmap_id++;
-        client().async_add_backing_store(m_client_state.front_bitmap.id, m_client_state.front_bitmap.bitmap->to_shareable_bitmap());
-    }
-
-    if (auto new_bitmap_or_error = Gfx::Bitmap::try_create_shareable(Gfx::BitmapFormat::BGRx8888, available_size()); !new_bitmap_or_error.is_error()) {
-        m_client_state.back_bitmap.bitmap = new_bitmap_or_error.release_value();
-        m_client_state.back_bitmap.id = m_client_state.next_bitmap_id++;
-        client().async_add_backing_store(m_client_state.back_bitmap.id, m_client_state.back_bitmap.bitmap->to_shareable_bitmap());
-    }
-
-    request_repaint();
+void OutOfProcessWebView::update_zoom()
+{
+    client().async_set_device_pixels_per_css_pixel(m_client_state.page_index, m_device_pixel_ratio * m_zoom_level);
+    // FIXME: Refactor this into separate update_viewport_rect() + request_repaint() like in Ladybird
+    handle_resize();
 }
 
 void OutOfProcessWebView::keydown_event(GUI::KeyEvent& event)
 {
-    client().async_key_down(event.key(), event.modifiers(), event.code_point());
+    enqueue_native_event(Web::KeyEvent::Type::KeyDown, event);
 }
 
 void OutOfProcessWebView::keyup_event(GUI::KeyEvent& event)
 {
-    client().async_key_up(event.key(), event.modifiers(), event.code_point());
+    enqueue_native_event(Web::KeyEvent::Type::KeyUp, event);
 }
 
 void OutOfProcessWebView::mousedown_event(GUI::MouseEvent& event)
 {
-    client().async_mouse_down(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers());
+    enqueue_native_event(Web::MouseEvent::Type::MouseDown, event);
 }
 
 void OutOfProcessWebView::mouseup_event(GUI::MouseEvent& event)
 {
-    client().async_mouse_up(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers());
+    enqueue_native_event(Web::MouseEvent::Type::MouseUp, event);
+
+    if (event.button() == GUI::MouseButton::Backward) {
+        if (on_navigate_back)
+            on_navigate_back();
+    } else if (event.button() == GUI::MouseButton::Forward) {
+        if (on_navigate_forward)
+            on_navigate_forward();
+    }
 }
 
 void OutOfProcessWebView::mousemove_event(GUI::MouseEvent& event)
 {
-    client().async_mouse_move(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers());
+    enqueue_native_event(Web::MouseEvent::Type::MouseMove, event);
 }
 
 void OutOfProcessWebView::mousewheel_event(GUI::MouseEvent& event)
 {
-    client().async_mouse_wheel(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y());
+    enqueue_native_event(Web::MouseEvent::Type::MouseWheel, event);
 }
 
 void OutOfProcessWebView::doubleclick_event(GUI::MouseEvent& event)
 {
-    client().async_doubleclick(to_content_position(event.position()), event.button(), event.buttons(), event.modifiers());
+    enqueue_native_event(Web::MouseEvent::Type::DoubleClick, event);
 }
 
 void OutOfProcessWebView::theme_change_event(GUI::ThemeChangeEvent& event)
 {
-    GUI::AbstractScrollableWidget::theme_change_event(event);
-    client().async_update_system_theme(Gfx::current_system_theme_buffer());
-    request_repaint();
+    Super::theme_change_event(event);
+    client().async_update_system_theme(m_client_state.page_index, Gfx::current_system_theme_buffer());
 }
 
 void OutOfProcessWebView::screen_rects_change_event(GUI::ScreenRectsChangeEvent& event)
 {
-    client().async_update_screen_rects(event.rects(), event.main_screen_index());
-}
-
-void OutOfProcessWebView::notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id)
-{
-    if (m_client_state.back_bitmap.id == bitmap_id) {
-        m_client_state.has_usable_bitmap = true;
-        m_client_state.back_bitmap.pending_paints--;
-        swap(m_client_state.back_bitmap, m_client_state.front_bitmap);
-        // We don't need the backup bitmap anymore, so drop it.
-        m_backup_bitmap = nullptr;
-        update();
-
-        if (m_client_state.got_repaint_requests_while_painting) {
-            m_client_state.got_repaint_requests_while_painting = false;
-            request_repaint();
-        }
+    Vector<Web::DevicePixelRect> screen_rects;
+    for (auto const& screen_rect : event.rects()) {
+        screen_rects.append(screen_rect.to_type<Web::DevicePixels>());
     }
-}
-
-void OutOfProcessWebView::notify_server_did_invalidate_content_rect(Badge<WebContentClient>, [[maybe_unused]] Gfx::IntRect const& content_rect)
-{
-    request_repaint();
-}
-
-void OutOfProcessWebView::notify_server_did_change_selection(Badge<WebContentClient>)
-{
-    request_repaint();
-}
-
-void OutOfProcessWebView::notify_server_did_request_cursor_change(Badge<WebContentClient>, Gfx::StandardCursor cursor)
-{
-    set_override_cursor(cursor);
-}
-
-void OutOfProcessWebView::notify_server_did_layout(Badge<WebContentClient>, Gfx::IntSize const& content_size)
-{
-    set_content_size(content_size);
-}
-
-void OutOfProcessWebView::notify_server_did_change_title(Badge<WebContentClient>, String const& title)
-{
-    if (on_title_change)
-        on_title_change(title);
-}
-
-void OutOfProcessWebView::notify_server_did_request_scroll(Badge<WebContentClient>, i32 x_delta, i32 y_delta)
-{
-    horizontal_scrollbar().increase_slider_by(x_delta);
-    vertical_scrollbar().increase_slider_by(y_delta);
-}
-
-void OutOfProcessWebView::notify_server_did_request_scroll_to(Badge<WebContentClient>, Gfx::IntPoint const& scroll_position)
-{
-    horizontal_scrollbar().set_value(scroll_position.x());
-    vertical_scrollbar().set_value(scroll_position.y());
-}
-
-void OutOfProcessWebView::notify_server_did_request_scroll_into_view(Badge<WebContentClient>, Gfx::IntRect const& rect)
-{
-    scroll_into_view(rect, true, true);
-}
-
-void OutOfProcessWebView::notify_server_did_enter_tooltip_area(Badge<WebContentClient>, Gfx::IntPoint const&, String const& title)
-{
-    GUI::Application::the()->show_tooltip(title, nullptr);
-}
-
-void OutOfProcessWebView::notify_server_did_leave_tooltip_area(Badge<WebContentClient>)
-{
-    GUI::Application::the()->hide_tooltip();
-}
-
-void OutOfProcessWebView::notify_server_did_hover_link(Badge<WebContentClient>, const AK::URL& url)
-{
-    if (on_link_hover)
-        on_link_hover(url);
-}
-
-void OutOfProcessWebView::notify_server_did_unhover_link(Badge<WebContentClient>)
-{
-    set_override_cursor(Gfx::StandardCursor::None);
-    if (on_link_hover)
-        on_link_hover({});
-}
-
-void OutOfProcessWebView::notify_server_did_click_link(Badge<WebContentClient>, const AK::URL& url, String const& target, unsigned int modifiers)
-{
-    if (on_link_click)
-        on_link_click(url, target, modifiers);
-}
-
-void OutOfProcessWebView::notify_server_did_middle_click_link(Badge<WebContentClient>, const AK::URL& url, String const& target, unsigned int modifiers)
-{
-    if (on_link_middle_click)
-        on_link_middle_click(url, target, modifiers);
-}
-
-void OutOfProcessWebView::notify_server_did_start_loading(Badge<WebContentClient>, const AK::URL& url)
-{
-    if (on_load_start)
-        on_load_start(url);
-}
-
-void OutOfProcessWebView::notify_server_did_finish_loading(Badge<WebContentClient>, const AK::URL& url)
-{
-    if (on_load_finish)
-        on_load_finish(url);
-}
-
-void OutOfProcessWebView::notify_server_did_request_context_menu(Badge<WebContentClient>, Gfx::IntPoint const& content_position)
-{
-    if (on_context_menu_request)
-        on_context_menu_request(screen_relative_rect().location().translated(to_widget_position(content_position)));
-}
-
-void OutOfProcessWebView::notify_server_did_request_link_context_menu(Badge<WebContentClient>, Gfx::IntPoint const& content_position, const AK::URL& url, String const&, unsigned)
-{
-    if (on_link_context_menu_request)
-        on_link_context_menu_request(url, screen_relative_rect().location().translated(to_widget_position(content_position)));
-}
-
-void OutOfProcessWebView::notify_server_did_request_image_context_menu(Badge<WebContentClient>, Gfx::IntPoint const& content_position, const AK::URL& url, String const&, unsigned, Gfx::ShareableBitmap const& bitmap)
-{
-    if (on_image_context_menu_request)
-        on_image_context_menu_request(url, screen_relative_rect().location().translated(to_widget_position(content_position)), bitmap);
-}
-
-void OutOfProcessWebView::notify_server_did_request_alert(Badge<WebContentClient>, String const& message)
-{
-    GUI::MessageBox::show(window(), message, "Alert"sv, GUI::MessageBox::Type::Information);
-}
-
-bool OutOfProcessWebView::notify_server_did_request_confirm(Badge<WebContentClient>, String const& message)
-{
-    auto confirm_result = GUI::MessageBox::show(window(), message, "Confirm"sv, GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel);
-    return confirm_result == GUI::Dialog::ExecResult::OK;
-}
-
-String OutOfProcessWebView::notify_server_did_request_prompt(Badge<WebContentClient>, String const& message, String const& default_)
-{
-    String response { default_ };
-    if (GUI::InputBox::show(window(), response, message, "Prompt"sv) == GUI::InputBox::ExecResult::OK)
-        return response;
-    return {};
-}
-
-void OutOfProcessWebView::notify_server_did_get_source(const AK::URL& url, String const& source)
-{
-    if (on_get_source)
-        on_get_source(url, source);
-}
-
-void OutOfProcessWebView::notify_server_did_get_dom_tree(String const& dom_tree)
-{
-    if (on_get_dom_tree)
-        on_get_dom_tree(dom_tree);
-}
-
-void OutOfProcessWebView::notify_server_did_get_dom_node_properties(i32 node_id, String const& specified_style, String const& computed_style, String const& custom_properties, String const& node_box_sizing)
-{
-    if (on_get_dom_node_properties)
-        on_get_dom_node_properties(node_id, specified_style, computed_style, custom_properties, node_box_sizing);
-}
-
-void OutOfProcessWebView::notify_server_did_output_js_console_message(i32 message_index)
-{
-    if (on_js_console_new_message)
-        on_js_console_new_message(message_index);
-}
-
-void OutOfProcessWebView::notify_server_did_get_js_console_messages(i32 start_index, Vector<String> const& message_types, Vector<String> const& messages)
-{
-    if (on_get_js_console_messages)
-        on_get_js_console_messages(start_index, message_types, messages);
-}
-
-void OutOfProcessWebView::notify_server_did_change_favicon(Gfx::Bitmap const& favicon)
-{
-    if (on_favicon_change)
-        on_favicon_change(favicon);
-}
-
-String OutOfProcessWebView::notify_server_did_request_cookie(Badge<WebContentClient>, const AK::URL& url, Web::Cookie::Source source)
-{
-    if (on_get_cookie)
-        return on_get_cookie(url, source);
-    return {};
-}
-
-void OutOfProcessWebView::notify_server_did_set_cookie(Badge<WebContentClient>, const AK::URL& url, Web::Cookie::ParsedCookie const& cookie, Web::Cookie::Source source)
-{
-    if (on_set_cookie)
-        on_set_cookie(url, cookie, source);
-}
-
-void OutOfProcessWebView::notify_server_did_update_resource_count(i32 count_waiting)
-{
-    if (on_resource_status_change)
-        on_resource_status_change(count_waiting);
-}
-
-void OutOfProcessWebView::notify_server_did_request_file(Badge<WebContentClient>, String const& path, i32 request_id)
-{
-    auto file = FileSystemAccessClient::Client::the().try_request_file_read_only_approved(window(), path);
-    if (file.is_error())
-        client().async_handle_file_return(file.error().code(), {}, request_id);
-    else
-        client().async_handle_file_return(0, IPC::File(file.value()->leak_fd()), request_id);
-}
-
-void OutOfProcessWebView::did_scroll()
-{
-    client().async_set_viewport_rect(visible_content_rect());
-    request_repaint();
-}
-
-void OutOfProcessWebView::request_repaint()
-{
-    // If this widget was instantiated but not yet added to a window,
-    // it won't have a back bitmap yet, so we can just skip repaint requests.
-    if (!m_client_state.back_bitmap.bitmap)
-        return;
-    // Don't request a repaint until pending paint requests have finished.
-    if (m_client_state.back_bitmap.pending_paints) {
-        m_client_state.got_repaint_requests_while_painting = true;
-        return;
-    }
-    m_client_state.back_bitmap.pending_paints++;
-    client().async_paint(m_client_state.back_bitmap.bitmap->rect().translated(horizontal_scrollbar().value(), vertical_scrollbar().value()), m_client_state.back_bitmap.id);
-}
-
-WebContentClient& OutOfProcessWebView::client()
-{
-    VERIFY(m_client_state.client);
-    return *m_client_state.client;
-}
-
-void OutOfProcessWebView::debug_request(String const& request, String const& argument)
-{
-    client().async_debug_request(request, argument);
-}
-
-void OutOfProcessWebView::get_source()
-{
-    client().async_get_source();
-}
-
-void OutOfProcessWebView::inspect_dom_tree()
-{
-    client().async_inspect_dom_tree();
-}
-
-Optional<OutOfProcessWebView::DOMNodeProperties> OutOfProcessWebView::inspect_dom_node(i32 node_id, Optional<Web::CSS::Selector::PseudoElement> pseudo_element)
-{
-    auto response = client().inspect_dom_node(node_id, pseudo_element);
-    if (!response.has_style())
-        return {};
-    return DOMNodeProperties {
-        .specified_values_json = response.specified_style(),
-        .computed_values_json = response.computed_style(),
-        .custom_properties_json = response.custom_properties(),
-        .node_box_sizing_json = response.node_box_sizing()
-    };
-}
-
-void OutOfProcessWebView::clear_inspected_dom_node()
-{
-    client().inspect_dom_node(0, {});
-}
-
-i32 OutOfProcessWebView::get_hovered_node_id()
-{
-    return client().get_hovered_node_id();
-}
-
-void OutOfProcessWebView::js_console_input(String const& js_source)
-{
-    client().async_js_console_input(js_source);
-}
-
-void OutOfProcessWebView::js_console_request_messages(i32 start_index)
-{
-    client().async_js_console_request_messages(start_index);
-}
-
-void OutOfProcessWebView::run_javascript(StringView js_source)
-{
-    client().async_run_javascript(js_source);
-}
-
-String OutOfProcessWebView::selected_text()
-{
-    return client().get_selected_text();
-}
-
-void OutOfProcessWebView::select_all()
-{
-    client().async_select_all();
-}
-
-String OutOfProcessWebView::dump_layout_tree()
-{
-    return client().dump_layout_tree();
+    client().async_update_screen_rects(m_client_state.page_index, screen_rects, event.main_screen_index());
 }
 
 OrderedHashMap<String, String> OutOfProcessWebView::get_local_storage_entries()
 {
-    return client().get_local_storage_entries();
+    return client().get_local_storage_entries(m_client_state.page_index);
 }
 
 OrderedHashMap<String, String> OutOfProcessWebView::get_session_storage_entries()
 {
-    return client().get_session_storage_entries();
+    return client().get_session_storage_entries(m_client_state.page_index);
 }
 
 void OutOfProcessWebView::set_content_filters(Vector<String> filters)
 {
-    client().async_set_content_filters(filters);
+    client().async_set_content_filters(m_client_state.page_index, move(filters));
 }
 
-void OutOfProcessWebView::set_proxy_mappings(Vector<String> proxies, HashMap<String, size_t> mappings)
+void OutOfProcessWebView::set_autoplay_allowed_on_all_websites()
 {
-    client().async_set_proxy_mappings(move(proxies), move(mappings));
+    client().async_set_autoplay_allowed_on_all_websites(m_client_state.page_index);
 }
 
-void OutOfProcessWebView::set_preferred_color_scheme(Web::CSS::PreferredColorScheme color_scheme)
+void OutOfProcessWebView::set_autoplay_allowlist(Vector<String> allowlist)
 {
-    client().async_set_preferred_color_scheme(color_scheme);
+    client().async_set_autoplay_allowlist(m_client_state.page_index, move(allowlist));
+}
+
+void OutOfProcessWebView::set_proxy_mappings(Vector<ByteString> proxies, HashMap<ByteString, size_t> mappings)
+{
+    client().async_set_proxy_mappings(m_client_state.page_index, move(proxies), move(mappings));
+}
+
+void OutOfProcessWebView::connect_to_webdriver(ByteString const& webdriver_ipc_path)
+{
+    client().async_connect_to_webdriver(m_client_state.page_index, webdriver_ipc_path);
+}
+
+void OutOfProcessWebView::set_window_position(Gfx::IntPoint position)
+{
+    client().async_set_window_position(m_client_state.page_index, position.to_type<Web::DevicePixels>());
+}
+
+void OutOfProcessWebView::set_window_size(Gfx::IntSize size)
+{
+    client().async_set_window_size(m_client_state.page_index, size.to_type<Web::DevicePixels>());
 }
 
 void OutOfProcessWebView::focusin_event(GUI::FocusEvent&)
 {
-    client().async_set_has_focus(true);
+    client().async_set_has_focus(m_client_state.page_index, true);
 }
 
 void OutOfProcessWebView::focusout_event(GUI::FocusEvent&)
 {
-    client().async_set_has_focus(false);
+    client().async_set_has_focus(m_client_state.page_index, false);
+}
+
+void OutOfProcessWebView::set_system_visibility_state(bool visible)
+{
+    client().async_set_system_visibility_state(m_client_state.page_index, visible);
+}
+
+void OutOfProcessWebView::show_event(GUI::ShowEvent&)
+{
+    set_system_visibility_state(true);
+}
+
+void OutOfProcessWebView::hide_event(GUI::HideEvent&)
+{
+    set_system_visibility_state(false);
+}
+
+void OutOfProcessWebView::drag_enter_event(GUI::DragEvent& event)
+{
+    if (!event.mime_data().has_urls())
+        return;
+
+    enqueue_native_event(Web::DragEvent::Type::DragStart, event);
+    event.accept();
+}
+
+void OutOfProcessWebView::drag_move_event(GUI::DragEvent& event)
+{
+    enqueue_native_event(Web::DragEvent::Type::DragMove, event);
+    event.accept();
+}
+
+void OutOfProcessWebView::drag_leave_event(GUI::Event&)
+{
+    Web::DragEvent event {};
+    event.type = Web::DragEvent::Type::DragEnd;
+
+    enqueue_input_event(move(event));
+}
+
+void OutOfProcessWebView::drop_event(GUI::DropEvent& event)
+{
+    enqueue_native_event(Web::DragEvent::Type::Drop, event);
+    event.accept();
+}
+
+static constexpr Web::UIEvents::MouseButton web_button_from_gui_button(GUI::MouseButton button)
+{
+    switch (button) {
+    case GUI::MouseButton::None:
+        return Web::UIEvents::MouseButton::None;
+    case GUI::MouseButton::Primary:
+        return Web::UIEvents::MouseButton::Primary;
+    case GUI::MouseButton::Secondary:
+        return Web::UIEvents::MouseButton::Secondary;
+    case GUI::MouseButton::Middle:
+        return Web::UIEvents::MouseButton::Middle;
+    case GUI::MouseButton::Backward:
+        return Web::UIEvents::MouseButton::Backward;
+    case GUI::MouseButton::Forward:
+        return Web::UIEvents::MouseButton::Forward;
+    }
+    VERIFY_NOT_REACHED();
+}
+
+static constexpr Web::UIEvents::MouseButton web_buttons_from_gui_buttons(unsigned buttons)
+{
+    auto result = Web::UIEvents::MouseButton::None;
+
+    if ((buttons & GUI::MouseButton::Primary) != 0)
+        result |= Web::UIEvents::MouseButton::Primary;
+    if ((buttons & GUI::MouseButton::Secondary) != 0)
+        result |= Web::UIEvents::MouseButton::Secondary;
+    if ((buttons & GUI::MouseButton::Middle) != 0)
+        result |= Web::UIEvents::MouseButton::Middle;
+    if ((buttons & GUI::MouseButton::Backward) != 0)
+        result |= Web::UIEvents::MouseButton::Backward;
+    if ((buttons & GUI::MouseButton::Forward) != 0)
+        result |= Web::UIEvents::MouseButton::Forward;
+
+    return result;
+}
+
+static constexpr Web::UIEvents::KeyModifier web_modifiers_from_gui_modifiers(unsigned modifiers)
+{
+    static_assert(IsSame<KeyModifier, Web::UIEvents::KeyModifier>);
+    return static_cast<Web::UIEvents::KeyModifier>(modifiers);
+}
+
+void OutOfProcessWebView::enqueue_native_event(Web::MouseEvent::Type type, GUI::MouseEvent const& event)
+{
+    auto position = to_content_position(event.position()).to_type<Web::DevicePixels>();
+    auto screen_position = (event.position() + (window()->position() + relative_position())).to_type<Web::DevicePixels>();
+
+    auto button = web_button_from_gui_button(event.button());
+    auto buttons = web_buttons_from_gui_buttons(event.buttons());
+    auto modifiers = web_modifiers_from_gui_modifiers(event.modifiers());
+
+    // FIXME: This wheel delta step size multiplier is used to remain the old scroll behaviour, in future use system step size.
+    static constexpr int SCROLL_STEP_SIZE = 24;
+    auto wheel_delta_x = event.wheel_delta_x() * SCROLL_STEP_SIZE;
+    auto wheel_delta_y = event.wheel_delta_y() * SCROLL_STEP_SIZE;
+
+    enqueue_input_event(Web::MouseEvent { type, position, screen_position, button, buttons, modifiers, wheel_delta_x, wheel_delta_y, nullptr });
+}
+
+struct DragData : Web::ChromeInputData {
+    explicit DragData(GUI::DropEvent const& event)
+        : event(make<GUI::DropEvent>(event))
+    {
+    }
+
+    NonnullOwnPtr<GUI::DropEvent> event;
+};
+
+void OutOfProcessWebView::enqueue_native_event(Web::DragEvent::Type type, GUI::DropEvent const& event)
+{
+    auto position = to_content_position(event.position()).to_type<Web::DevicePixels>();
+    auto screen_position = (event.position() + (window()->position() + relative_position())).to_type<Web::DevicePixels>();
+
+    auto button = web_button_from_gui_button(event.button());
+    auto buttons = web_buttons_from_gui_buttons(event.buttons());
+    auto modifiers = web_modifiers_from_gui_modifiers(event.modifiers());
+
+    Vector<Web::HTML::SelectedFile> files;
+    OwnPtr<DragData> chrome_data;
+
+    if (type == Web::DragEvent::Type::DragStart) {
+        VERIFY(event.mime_data().has_urls());
+
+        for (auto const& url : event.mime_data().urls()) {
+            auto file_path = URL::percent_decode(url.serialize_path());
+
+            if (auto file = Web::HTML::SelectedFile::from_file_path(file_path); file.is_error())
+                warnln("Unable to open file {} for drag-and-drop: {}", file_path, file.error());
+            else
+                files.append(file.release_value());
+        }
+    } else if (type == Web::DragEvent::Type::Drop) {
+        chrome_data = make<DragData>(event);
+    } else {
+        VERIFY(type == Web::DragEvent::Type::DragMove);
+    }
+
+    enqueue_input_event(Web::DragEvent { type, position, screen_position, button, buttons, modifiers, move(files), move(chrome_data) });
+}
+
+void OutOfProcessWebView::finish_handling_drag_event(Web::DragEvent const& event)
+{
+    if (event.type != Web::DragEvent::Type::Drop)
+        return;
+
+    // FIXME: Implement opening the event URLs in the Browser.
+    [[maybe_unused]] auto const& chrome_data = verify_cast<DragData>(*event.chrome_data);
+}
+
+struct KeyData : Web::ChromeInputData {
+    explicit KeyData(GUI::KeyEvent const& event)
+        : event(make<GUI::KeyEvent>(event))
+    {
+    }
+
+    NonnullOwnPtr<GUI::KeyEvent> event;
+};
+
+void OutOfProcessWebView::enqueue_native_event(Web::KeyEvent::Type type, GUI::KeyEvent const& event)
+{
+    enqueue_input_event(Web::KeyEvent { type, event.key(), static_cast<KeyModifier>(event.modifiers()), event.code_point(), make<KeyData>(event) });
+}
+
+void OutOfProcessWebView::finish_handling_key_event(Web::KeyEvent const& key_event)
+{
+    // First, we give our superclass a chance to handle the event.
+    //
+    // If it does not, we dispatch the event to our parent widget, but limited such that it will never bubble up to the
+    // Window. (Otherwise, it would then dispatch the event to us since we are the focused widget, and it would go around
+    // indefinitely.)
+    //
+    // Finally, any unhandled KeyDown events are propagated to trigger any shortcut Actions.
+    auto& chrome_data = verify_cast<KeyData>(*key_event.chrome_data);
+    auto& event = *chrome_data.event;
+
+    switch (key_event.type) {
+    case Web::KeyEvent::Type::KeyDown:
+        Super::keydown_event(event);
+        break;
+    case Web::KeyEvent::Type::KeyUp:
+        Super::keyup_event(event);
+        break;
+    }
+
+    if (!event.is_accepted()) {
+        parent_widget()->dispatch_event(event, window());
+
+        // NOTE: If other events can ever trigger shortcuts, propagate those here.
+        if (!event.is_accepted() && event.type() == GUI::Event::Type::KeyDown)
+            window()->propagate_shortcuts(static_cast<GUI::KeyEvent&>(event), this);
+    }
+}
+
+void OutOfProcessWebView::set_content_scales_to_viewport(bool b)
+{
+    m_content_scales_to_viewport = b;
 }
 
 }

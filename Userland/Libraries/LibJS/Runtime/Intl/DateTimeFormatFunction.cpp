@@ -10,13 +10,16 @@
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Intl/DateTimeFormat.h>
 #include <LibJS/Runtime/Intl/DateTimeFormatFunction.h>
+#include <LibJS/Runtime/ValueInlines.h>
 
 namespace JS::Intl {
 
-// 11.5.5 DateTime Format Functions, https://tc39.es/ecma402/#sec-datetime-format-functions
-DateTimeFormatFunction* DateTimeFormatFunction::create(GlobalObject& global_object, DateTimeFormat& date_time_format)
+JS_DEFINE_ALLOCATOR(DateTimeFormatFunction);
+
+// 11.5.4 DateTime Format Functions, https://tc39.es/ecma402/#sec-datetime-format-functions
+NonnullGCPtr<DateTimeFormatFunction> DateTimeFormatFunction::create(Realm& realm, DateTimeFormat& date_time_format)
 {
-    return global_object.heap().allocate<DateTimeFormatFunction>(global_object, date_time_format, *global_object.function_prototype());
+    return realm.heap().allocate<DateTimeFormatFunction>(realm, date_time_format, realm.intrinsics().function_prototype());
 }
 
 DateTimeFormatFunction::DateTimeFormatFunction(DateTimeFormat& date_time_format, Object& prototype)
@@ -25,19 +28,19 @@ DateTimeFormatFunction::DateTimeFormatFunction(DateTimeFormat& date_time_format,
 {
 }
 
-void DateTimeFormatFunction::initialize(GlobalObject& global_object)
+void DateTimeFormatFunction::initialize(Realm& realm)
 {
     auto& vm = this->vm();
 
-    Base::initialize(global_object);
+    Base::initialize(realm);
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-    define_direct_property(vm.names.name, js_string(vm, String::empty()), Attribute::Configurable);
+    define_direct_property(vm.names.name, PrimitiveString::create(vm, String {}), Attribute::Configurable);
 }
 
 ThrowCompletionOr<Value> DateTimeFormatFunction::call()
 {
-    auto& global_object = this->global_object();
-    auto& vm = global_object.vm();
+    auto& vm = this->vm();
+    auto& realm = *vm.current_realm();
 
     auto date = vm.argument(0);
 
@@ -49,23 +52,23 @@ ThrowCompletionOr<Value> DateTimeFormatFunction::call()
     // 3. If date is not provided or is undefined, then
     if (date.is_undefined()) {
         // a. Let x be ! Call(%Date.now%, undefined).
-        date_value = MUST(JS::call(global_object, global_object.date_constructor_now_function(), js_undefined())).as_double();
+        date_value = MUST(JS::call(vm, *realm.intrinsics().date_constructor_now_function(), js_undefined())).as_double();
     }
     // 4. Else,
     else {
         // a. Let x be ? ToNumber(date).
-        date_value = TRY(date.to_number(global_object)).as_double();
+        date_value = TRY(date.to_number(vm)).as_double();
     }
 
     // 5. Return ? FormatDateTime(dtf, x).
-    auto formatted = TRY(format_date_time(global_object, m_date_time_format, date_value));
-    return js_string(vm, move(formatted));
+    auto formatted = TRY(format_date_time(vm, m_date_time_format, date_value));
+    return PrimitiveString::create(vm, move(formatted));
 }
 
 void DateTimeFormatFunction::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_date_time_format);
+    visitor.visit(m_date_time_format);
 }
 
 }

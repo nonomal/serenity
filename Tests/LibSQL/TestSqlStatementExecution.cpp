@@ -21,24 +21,30 @@ namespace {
 
 constexpr char const* db_name = "/tmp/test.db";
 
-SQL::ResultOr<SQL::ResultSet> try_execute(NonnullRefPtr<SQL::Database> database, String const& sql)
+SQL::ResultOr<SQL::ResultSet> try_execute(NonnullRefPtr<SQL::Database> database, ByteString const& sql, Vector<SQL::Value> placeholder_values = {})
 {
     auto parser = SQL::AST::Parser(SQL::AST::Lexer(sql));
     auto statement = parser.next_statement();
     EXPECT(!parser.has_errors());
     if (parser.has_errors())
-        outln("{}", parser.errors()[0].to_string());
-    return statement->execute(move(database));
+        outln("{}", parser.errors()[0].to_byte_string());
+    return statement->execute(move(database), placeholder_values);
 }
 
-SQL::ResultSet execute(NonnullRefPtr<SQL::Database> database, String const& sql)
+SQL::ResultSet execute(NonnullRefPtr<SQL::Database> database, ByteString const& sql, Vector<SQL::Value> placeholder_values = {})
 {
-    auto result = try_execute(move(database), sql);
+    auto result = try_execute(move(database), sql, move(placeholder_values));
     if (result.is_error()) {
         outln("{}", result.release_error().error_string());
         VERIFY_NOT_REACHED();
     }
     return result.release_value();
+}
+
+template<typename... Args>
+Vector<SQL::Value> placeholders(Args&&... args)
+{
+    return { SQL::Value(forward<Args>(args))... };
 }
 
 void create_schema(NonnullRefPtr<SQL::Database> database)
@@ -66,44 +72,37 @@ void create_two_tables(NonnullRefPtr<SQL::Database> database)
 TEST_CASE(create_schema)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_schema(database);
-    auto schema_or_error = database->get_schema("TESTSCHEMA");
-    EXPECT(!schema_or_error.is_error());
-    EXPECT(schema_or_error.value());
+    auto schema = MUST(database->get_schema("TESTSCHEMA"));
 }
 
 TEST_CASE(create_table)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
-    auto table_or_error = database->get_table("TESTSCHEMA", "TESTTABLE");
-    EXPECT(!table_or_error.is_error());
-    EXPECT(table_or_error.value());
+    auto table = MUST(database->get_table("TESTSCHEMA", "TESTTABLE"));
 }
 
 TEST_CASE(insert_into_table)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database, "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test', 42 );");
     EXPECT(result.size() == 1);
 
-    auto table_or_error = database->get_table("TESTSCHEMA", "TESTTABLE");
-    EXPECT(!table_or_error.is_error());
-    auto table = table_or_error.value();
+    auto table = MUST(database->get_table("TESTSCHEMA", "TESTTABLE"));
 
     int count = 0;
-    auto rows_or_error = database->select_all(*table);
-    EXPECT(!rows_or_error.is_error());
-    for (auto& row : rows_or_error.value()) {
-        EXPECT_EQ(row["TEXTCOLUMN"].to_string(), "Test");
-        EXPECT_EQ(row["INTCOLUMN"].to_int().value(), 42);
+    auto rows = TRY_OR_FAIL(database->select_all(*table));
+    for (auto& row : rows) {
+        EXPECT_EQ(row["TEXTCOLUMN"].to_byte_string(), "Test");
+        EXPECT_EQ(row["INTCOLUMN"].to_int<i32>(), 42);
         count++;
     }
     EXPECT_EQ(count, 1);
@@ -112,8 +111,8 @@ TEST_CASE(insert_into_table)
 TEST_CASE(insert_into_table_wrong_data_types)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = try_execute(database, "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES (43, 'Test_2');");
     EXPECT(result.is_error());
@@ -123,8 +122,8 @@ TEST_CASE(insert_into_table_wrong_data_types)
 TEST_CASE(insert_into_table_multiple_tuples_wrong_data_types)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = try_execute(database, "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ('Test_1', 42), (43, 'Test_2');");
     EXPECT(result.is_error());
@@ -134,8 +133,8 @@ TEST_CASE(insert_into_table_multiple_tuples_wrong_data_types)
 TEST_CASE(insert_wrong_number_of_values)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = try_execute(database, "INSERT INTO TestSchema.TestTable VALUES ( 42 );");
     EXPECT(result.is_error());
@@ -145,8 +144,8 @@ TEST_CASE(insert_wrong_number_of_values)
 TEST_CASE(insert_identifier_as_value)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = try_execute(database, "INSERT INTO TestSchema.TestTable VALUES ( identifier, 42 );");
     EXPECT(result.is_error());
@@ -156,8 +155,8 @@ TEST_CASE(insert_identifier_as_value)
 TEST_CASE(insert_quoted_identifier_as_value)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = try_execute(database, "INSERT INTO TestSchema.TestTable VALUES ( \"QuotedIdentifier\", 42 );");
     EXPECT(result.is_error());
@@ -167,24 +166,75 @@ TEST_CASE(insert_quoted_identifier_as_value)
 TEST_CASE(insert_without_column_names)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database, "INSERT INTO TestSchema.TestTable VALUES ('Test_1', 42), ('Test_2', 43);");
     EXPECT(result.size() == 2);
 
-    auto table_or_error = database->get_table("TESTSCHEMA", "TESTTABLE");
-    EXPECT(!table_or_error.is_error());
-    auto rows_or_error = database->select_all(*(table_or_error.value()));
-    EXPECT(!rows_or_error.is_error());
-    EXPECT_EQ(rows_or_error.value().size(), 2u);
+    auto table = MUST(database->get_table("TESTSCHEMA", "TESTTABLE"));
+    auto rows = TRY_OR_FAIL(database->select_all(*table));
+    EXPECT_EQ(rows.size(), 2u);
+}
+
+TEST_CASE(insert_with_placeholders)
+{
+    ScopeGuard guard([]() { unlink(db_name); });
+
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
+    create_table(database);
+
+    {
+        auto result = try_execute(database, "INSERT INTO TestSchema.TestTable VALUES (?, ?);");
+        EXPECT(result.is_error());
+        EXPECT_EQ(result.error().error(), SQL::SQLErrorCode::InvalidNumberOfPlaceholderValues);
+
+        result = try_execute(database, "INSERT INTO TestSchema.TestTable VALUES (?, ?);", placeholders("Test_1"sv));
+        EXPECT(result.is_error());
+        EXPECT_EQ(result.error().error(), SQL::SQLErrorCode::InvalidNumberOfPlaceholderValues);
+
+        result = try_execute(database, "INSERT INTO TestSchema.TestTable VALUES (?, ?);", placeholders(42, 42));
+        EXPECT(result.is_error());
+        EXPECT_EQ(result.error().error(), SQL::SQLErrorCode::InvalidValueType);
+
+        result = try_execute(database, "INSERT INTO TestSchema.TestTable VALUES (?, ?);", placeholders("Test_1"sv, "Test_2"sv));
+        EXPECT(result.is_error());
+        EXPECT_EQ(result.error().error(), SQL::SQLErrorCode::InvalidValueType);
+    }
+    {
+        auto result = execute(database, "INSERT INTO TestSchema.TestTable VALUES (?, ?);", placeholders("Test_1"sv, 42));
+        EXPECT_EQ(result.size(), 1u);
+
+        result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable ORDER BY TextColumn;");
+        EXPECT_EQ(result.size(), 1u);
+
+        EXPECT_EQ(result[0].row[0], "Test_1"sv);
+        EXPECT_EQ(result[0].row[1], 42);
+    }
+    {
+        auto result = execute(database, "INSERT INTO TestSchema.TestTable VALUES (?, ?), (?, ?);", placeholders("Test_2"sv, 43, "Test_3"sv, 44));
+        EXPECT_EQ(result.size(), 2u);
+
+        result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable ORDER BY TextColumn;");
+        EXPECT_EQ(result.size(), 3u);
+
+        EXPECT_EQ(result[0].row[0], "Test_1"sv);
+        EXPECT_EQ(result[0].row[1], 42);
+
+        EXPECT_EQ(result[1].row[0], "Test_2"sv);
+        EXPECT_EQ(result[1].row[1], 43);
+
+        EXPECT_EQ(result[2].row[0], "Test_3"sv);
+        EXPECT_EQ(result[2].row[1], 44);
+    }
 }
 
 TEST_CASE(select_from_empty_table)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database, "SELECT * FROM TestSchema.TestTable;");
     EXPECT(result.is_empty());
@@ -193,8 +243,8 @@ TEST_CASE(select_from_empty_table)
 TEST_CASE(select_from_table)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -211,8 +261,8 @@ TEST_CASE(select_from_table)
 TEST_CASE(select_with_column_names)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -230,8 +280,8 @@ TEST_CASE(select_with_column_names)
 TEST_CASE(select_with_nonexisting_column_name)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -250,8 +300,8 @@ TEST_CASE(select_with_nonexisting_column_name)
 TEST_CASE(select_with_where)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -264,15 +314,15 @@ TEST_CASE(select_with_where)
     result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable WHERE IntColumn > 44;");
     EXPECT_EQ(result.size(), 2u);
     for (auto& row : result) {
-        EXPECT(row.row[1].to_int().value() > 44);
+        EXPECT(row.row[1].to_int<i32>().value() > 44);
     }
 }
 
 TEST_CASE(select_cross_join)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_two_tables(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable1 ( TextColumn1, IntColumn ) VALUES "
@@ -294,18 +344,18 @@ TEST_CASE(select_cross_join)
     EXPECT_EQ(result.size(), 25u);
     for (auto& row : result) {
         EXPECT(row.row.size() == 4);
-        EXPECT(row.row[1].to_int().value() >= 42);
-        EXPECT(row.row[1].to_int().value() <= 46);
-        EXPECT(row.row[3].to_int().value() >= 40);
-        EXPECT(row.row[3].to_int().value() <= 48);
+        EXPECT(row.row[1].to_int<i32>().value() >= 42);
+        EXPECT(row.row[1].to_int<i32>().value() <= 46);
+        EXPECT(row.row[3].to_int<i32>().value() >= 40);
+        EXPECT(row.row[3].to_int<i32>().value() <= 48);
     }
 }
 
 TEST_CASE(select_inner_join)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_two_tables(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable1 ( TextColumn1, IntColumn ) VALUES "
@@ -329,16 +379,16 @@ TEST_CASE(select_inner_join)
         "WHERE TestTable1.IntColumn = TestTable2.IntColumn;");
     EXPECT_EQ(result.size(), 1u);
     EXPECT_EQ(result[0].row.size(), 3u);
-    EXPECT_EQ(result[0].row[0].to_int().value(), 42);
-    EXPECT_EQ(result[0].row[1].to_string(), "Test_1");
-    EXPECT_EQ(result[0].row[2].to_string(), "Test_12");
+    EXPECT_EQ(result[0].row[0].to_int<i32>(), 42);
+    EXPECT_EQ(result[0].row[1].to_byte_string(), "Test_1");
+    EXPECT_EQ(result[0].row[2].to_byte_string(), "Test_12");
 }
 
 TEST_CASE(select_with_like)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -395,8 +445,8 @@ TEST_CASE(select_with_like)
 TEST_CASE(select_with_order)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -409,26 +459,26 @@ TEST_CASE(select_with_order)
 
     result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
     EXPECT_EQ(result.size(), 5u);
-    EXPECT_EQ(result[0].row[1].to_int().value(), 40);
-    EXPECT_EQ(result[1].row[1].to_int().value(), 41);
-    EXPECT_EQ(result[2].row[1].to_int().value(), 42);
-    EXPECT_EQ(result[3].row[1].to_int().value(), 44);
-    EXPECT_EQ(result[4].row[1].to_int().value(), 47);
+    EXPECT_EQ(result[0].row[1].to_int<i32>(), 40);
+    EXPECT_EQ(result[1].row[1].to_int<i32>(), 41);
+    EXPECT_EQ(result[2].row[1].to_int<i32>(), 42);
+    EXPECT_EQ(result[3].row[1].to_int<i32>(), 44);
+    EXPECT_EQ(result[4].row[1].to_int<i32>(), 47);
 
     result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable ORDER BY TextColumn;");
     EXPECT_EQ(result.size(), 5u);
-    EXPECT_EQ(result[0].row[0].to_string(), "Test_1");
-    EXPECT_EQ(result[1].row[0].to_string(), "Test_2");
-    EXPECT_EQ(result[2].row[0].to_string(), "Test_3");
-    EXPECT_EQ(result[3].row[0].to_string(), "Test_4");
-    EXPECT_EQ(result[4].row[0].to_string(), "Test_5");
+    EXPECT_EQ(result[0].row[0].to_byte_string(), "Test_1");
+    EXPECT_EQ(result[1].row[0].to_byte_string(), "Test_2");
+    EXPECT_EQ(result[2].row[0].to_byte_string(), "Test_3");
+    EXPECT_EQ(result[3].row[0].to_byte_string(), "Test_4");
+    EXPECT_EQ(result[4].row[0].to_byte_string(), "Test_5");
 }
 
 TEST_CASE(select_with_regexp)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -462,8 +512,8 @@ TEST_CASE(select_with_regexp)
 TEST_CASE(handle_regexp_errors)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -478,8 +528,8 @@ TEST_CASE(handle_regexp_errors)
 TEST_CASE(select_with_order_two_columns)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -492,23 +542,23 @@ TEST_CASE(select_with_order_two_columns)
 
     result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable ORDER BY TextColumn, IntColumn;");
     EXPECT_EQ(result.size(), 5u);
-    EXPECT_EQ(result[0].row[0].to_string(), "Test_1");
-    EXPECT_EQ(result[0].row[1].to_int().value(), 47);
-    EXPECT_EQ(result[1].row[0].to_string(), "Test_2");
-    EXPECT_EQ(result[1].row[1].to_int().value(), 40);
-    EXPECT_EQ(result[2].row[0].to_string(), "Test_2");
-    EXPECT_EQ(result[2].row[1].to_int().value(), 42);
-    EXPECT_EQ(result[3].row[0].to_string(), "Test_4");
-    EXPECT_EQ(result[3].row[1].to_int().value(), 41);
-    EXPECT_EQ(result[4].row[0].to_string(), "Test_5");
-    EXPECT_EQ(result[4].row[1].to_int().value(), 44);
+    EXPECT_EQ(result[0].row[0].to_byte_string(), "Test_1");
+    EXPECT_EQ(result[0].row[1].to_int<i32>(), 47);
+    EXPECT_EQ(result[1].row[0].to_byte_string(), "Test_2");
+    EXPECT_EQ(result[1].row[1].to_int<i32>(), 40);
+    EXPECT_EQ(result[2].row[0].to_byte_string(), "Test_2");
+    EXPECT_EQ(result[2].row[1].to_int<i32>(), 42);
+    EXPECT_EQ(result[3].row[0].to_byte_string(), "Test_4");
+    EXPECT_EQ(result[3].row[1].to_int<i32>(), 41);
+    EXPECT_EQ(result[4].row[0].to_byte_string(), "Test_5");
+    EXPECT_EQ(result[4].row[1].to_int<i32>(), 44);
 }
 
 TEST_CASE(select_with_order_by_column_not_in_result)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database,
         "INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES "
@@ -521,22 +571,22 @@ TEST_CASE(select_with_order_by_column_not_in_result)
 
     result = execute(database, "SELECT TextColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
     EXPECT_EQ(result.size(), 5u);
-    EXPECT_EQ(result[0].row[0].to_string(), "Test_3");
-    EXPECT_EQ(result[1].row[0].to_string(), "Test_4");
-    EXPECT_EQ(result[2].row[0].to_string(), "Test_2");
-    EXPECT_EQ(result[3].row[0].to_string(), "Test_5");
-    EXPECT_EQ(result[4].row[0].to_string(), "Test_1");
+    EXPECT_EQ(result[0].row[0].to_byte_string(), "Test_3");
+    EXPECT_EQ(result[1].row[0].to_byte_string(), "Test_4");
+    EXPECT_EQ(result[2].row[0].to_byte_string(), "Test_2");
+    EXPECT_EQ(result[3].row[0].to_byte_string(), "Test_5");
+    EXPECT_EQ(result[4].row[0].to_byte_string(), "Test_1");
 }
 
 TEST_CASE(select_with_limit)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     for (auto count = 0; count < 100; count++) {
         auto result = execute(database,
-            String::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
+            ByteString::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
         EXPECT(result.size() == 1);
     }
     auto result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable LIMIT 10;");
@@ -547,12 +597,12 @@ TEST_CASE(select_with_limit)
 TEST_CASE(select_with_limit_and_offset)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     for (auto count = 0; count < 100; count++) {
         auto result = execute(database,
-            String::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
+            ByteString::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
         EXPECT(result.size() == 1);
     }
     auto result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable LIMIT 10 OFFSET 10;");
@@ -562,37 +612,37 @@ TEST_CASE(select_with_limit_and_offset)
 TEST_CASE(select_with_order_limit_and_offset)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     for (auto count = 0; count < 100; count++) {
         auto result = execute(database,
-            String::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
+            ByteString::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
         EXPECT(result.size() == 1);
     }
     auto result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable ORDER BY IntColumn LIMIT 10 OFFSET 10;");
     EXPECT_EQ(result.size(), 10u);
-    EXPECT_EQ(result[0].row[1].to_int().value(), 10);
-    EXPECT_EQ(result[1].row[1].to_int().value(), 11);
-    EXPECT_EQ(result[2].row[1].to_int().value(), 12);
-    EXPECT_EQ(result[3].row[1].to_int().value(), 13);
-    EXPECT_EQ(result[4].row[1].to_int().value(), 14);
-    EXPECT_EQ(result[5].row[1].to_int().value(), 15);
-    EXPECT_EQ(result[6].row[1].to_int().value(), 16);
-    EXPECT_EQ(result[7].row[1].to_int().value(), 17);
-    EXPECT_EQ(result[8].row[1].to_int().value(), 18);
-    EXPECT_EQ(result[9].row[1].to_int().value(), 19);
+    EXPECT_EQ(result[0].row[1].to_int<i32>(), 10);
+    EXPECT_EQ(result[1].row[1].to_int<i32>(), 11);
+    EXPECT_EQ(result[2].row[1].to_int<i32>(), 12);
+    EXPECT_EQ(result[3].row[1].to_int<i32>(), 13);
+    EXPECT_EQ(result[4].row[1].to_int<i32>(), 14);
+    EXPECT_EQ(result[5].row[1].to_int<i32>(), 15);
+    EXPECT_EQ(result[6].row[1].to_int<i32>(), 16);
+    EXPECT_EQ(result[7].row[1].to_int<i32>(), 17);
+    EXPECT_EQ(result[8].row[1].to_int<i32>(), 18);
+    EXPECT_EQ(result[9].row[1].to_int<i32>(), 19);
 }
 
 TEST_CASE(select_with_limit_out_of_bounds)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     for (auto count = 0; count < 100; count++) {
         auto result = execute(database,
-            String::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
+            ByteString::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
         EXPECT(result.size() == 1);
     }
     auto result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable LIMIT 500;");
@@ -602,12 +652,12 @@ TEST_CASE(select_with_limit_out_of_bounds)
 TEST_CASE(select_with_offset_out_of_bounds)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     for (auto count = 0; count < 100; count++) {
         auto result = execute(database,
-            String::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
+            ByteString::formatted("INSERT INTO TestSchema.TestTable ( TextColumn, IntColumn ) VALUES ( 'Test_{}', {} );", count, count));
         EXPECT(result.size() == 1);
     }
     auto result = execute(database, "SELECT TextColumn, IntColumn FROM TestSchema.TestTable LIMIT 10 OFFSET 200;");
@@ -617,28 +667,28 @@ TEST_CASE(select_with_offset_out_of_bounds)
 TEST_CASE(describe_table)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
     auto result = execute(database, "DESCRIBE TABLE TestSchema.TestTable;");
     EXPECT_EQ(result.size(), 2u);
 
-    EXPECT_EQ(result[0].row[0].to_string(), "TEXTCOLUMN");
-    EXPECT_EQ(result[0].row[1].to_string(), "text");
+    EXPECT_EQ(result[0].row[0].to_byte_string(), "TEXTCOLUMN");
+    EXPECT_EQ(result[0].row[1].to_byte_string(), "text");
 
-    EXPECT_EQ(result[1].row[0].to_string(), "INTCOLUMN");
-    EXPECT_EQ(result[1].row[1].to_string(), "int");
+    EXPECT_EQ(result[1].row[0].to_byte_string(), "INTCOLUMN");
+    EXPECT_EQ(result[1].row[1].to_byte_string(), "int");
 }
 
 TEST_CASE(binary_operator_execution)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
 
     for (auto count = 0; count < 10; ++count) {
-        auto result = execute(database, String::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
+        auto result = execute(database, ByteString::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
         EXPECT_EQ(result.size(), 1u);
     }
 
@@ -653,7 +703,7 @@ TEST_CASE(binary_operator_execution)
             auto const& result_row = result.at(i).row;
             EXPECT_EQ(result_row.size(), 1u);
 
-            auto result_column = result_row[0].to_int();
+            auto result_column = result_row[0].to_int<i32>();
             result_values.append(result_column.value());
         }
 
@@ -707,12 +757,12 @@ TEST_CASE(binary_operator_execution)
 TEST_CASE(binary_operator_failure)
 {
     ScopeGuard guard([]() { unlink(db_name); });
-    auto database = SQL::Database::construct(db_name);
-    EXPECT(!database->open().is_error());
+    auto database = MUST(SQL::Database::create(db_name));
+    MUST(database->open());
     create_table(database);
 
     for (auto count = 0; count < 10; ++count) {
-        auto result = execute(database, String::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
+        auto result = execute(database, ByteString::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
         EXPECT_EQ(result.size(), 1u);
     }
 
@@ -722,7 +772,7 @@ TEST_CASE(binary_operator_failure)
         auto error = result.release_error();
         EXPECT_EQ(error.error(), SQL::SQLErrorCode::NumericOperatorTypeMismatch);
 
-        auto message = String::formatted("NumericOperatorTypeMismatch: Cannot apply '{}' operator to non-numeric operands", op);
+        auto message = ByteString::formatted("NumericOperatorTypeMismatch: Cannot apply '{}' operator to non-numeric operands", op);
         EXPECT_EQ(error.error_string(), message);
     };
 
@@ -752,6 +802,262 @@ TEST_CASE(binary_operator_failure)
 
     result = try_execute(database, "SELECT * FROM TestSchema.TestTable WHERE ((IntColumn & TextColumn) < 5);");
     expect_failure(move(result), '&');
+}
+
+TEST_CASE(describe_large_table_after_persist)
+{
+    ScopeGuard guard([]() { unlink(db_name); });
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        auto result = execute(database, "CREATE TABLE Cookies ( name TEXT, value TEXT, same_site INTEGER, creation_time INTEGER, last_access_time INTEGER, expiry_time INTEGER, domain TEXT, path TEXT, secure INTEGER, http_only INTEGER, host_only INTEGER, persistent INTEGER );");
+        EXPECT_EQ(result.command(), SQL::SQLCommand::Create);
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        auto result = execute(database, "DESCRIBE TABLE Cookies;");
+        EXPECT_EQ(result.size(), 12u);
+    }
+}
+
+TEST_CASE(delete_single_row)
+{
+    ScopeGuard guard([]() { unlink(db_name); });
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        create_table(database);
+        for (auto count = 0; count < 10; ++count) {
+            auto result = execute(database, ByteString::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
+            EXPECT_EQ(result.size(), 1u);
+        }
+
+        auto result = execute(database, "SELECT * FROM TestSchema.TestTable;");
+        EXPECT_EQ(result.size(), 10u);
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        execute(database, "DELETE FROM TestSchema.TestTable WHERE (IntColumn = 4);");
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 9u);
+
+        for (auto i = 0u; i < 4; ++i)
+            EXPECT_EQ(result[i].row[0], i);
+        for (auto i = 5u; i < 9; ++i)
+            EXPECT_EQ(result[i].row[0], i + 1);
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 9u);
+
+        for (auto i = 0u; i < 4; ++i)
+            EXPECT_EQ(result[i].row[0], i);
+        for (auto i = 5u; i < 9; ++i)
+            EXPECT_EQ(result[i].row[0], i + 1);
+    }
+}
+
+TEST_CASE(delete_multiple_rows)
+{
+    ScopeGuard guard([]() { unlink(db_name); });
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        create_table(database);
+        for (auto count = 0; count < 10; ++count) {
+            auto result = execute(database, ByteString::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
+            EXPECT_EQ(result.size(), 1u);
+        }
+
+        auto result = execute(database, "SELECT * FROM TestSchema.TestTable;");
+        EXPECT_EQ(result.size(), 10u);
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        execute(database, "DELETE FROM TestSchema.TestTable WHERE (IntColumn >= 4);");
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 4u);
+
+        for (auto i = 0u; i < result.size(); ++i)
+            EXPECT_EQ(result[i].row[0], i);
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 4u);
+
+        for (auto i = 0u; i < result.size(); ++i)
+            EXPECT_EQ(result[i].row[0], i);
+    }
+}
+
+TEST_CASE(delete_all_rows)
+{
+    ScopeGuard guard([]() { unlink(db_name); });
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        create_table(database);
+        for (auto count = 0; count < 10; ++count) {
+            auto result = execute(database, ByteString::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
+            EXPECT_EQ(result.size(), 1u);
+        }
+
+        auto result = execute(database, "SELECT * FROM TestSchema.TestTable;");
+        EXPECT_EQ(result.size(), 10u);
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        execute(database, "DELETE FROM TestSchema.TestTable;");
+
+        auto result = execute(database, "SELECT * FROM TestSchema.TestTable;");
+        EXPECT(result.is_empty());
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        auto result = execute(database, "SELECT * FROM TestSchema.TestTable;");
+        EXPECT(result.is_empty());
+    }
+}
+
+TEST_CASE(update_single_row)
+{
+    ScopeGuard guard([]() { unlink(db_name); });
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        create_table(database);
+        for (auto count = 0; count < 10; ++count) {
+            auto result = execute(database, ByteString::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
+            EXPECT_EQ(result.size(), 1u);
+        }
+
+        execute(database, "UPDATE TestSchema.TestTable SET IntColumn=123456 WHERE (TextColumn = 'T3');");
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 10u);
+
+        for (auto i = 0u; i < 10; ++i) {
+            if (i < 3)
+                EXPECT_EQ(result[i].row[0], i);
+            else if (i < 9)
+                EXPECT_EQ(result[i].row[0], i + 1);
+            else
+                EXPECT_EQ(result[i].row[0], 123456);
+        }
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 10u);
+
+        for (auto i = 0u; i < 10; ++i) {
+            if (i < 3)
+                EXPECT_EQ(result[i].row[0], i);
+            else if (i < 9)
+                EXPECT_EQ(result[i].row[0], i + 1);
+            else
+                EXPECT_EQ(result[i].row[0], 123456);
+        }
+    }
+}
+
+TEST_CASE(update_multiple_rows)
+{
+    ScopeGuard guard([]() { unlink(db_name); });
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        create_table(database);
+        for (auto count = 0; count < 10; ++count) {
+            auto result = execute(database, ByteString::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
+            EXPECT_EQ(result.size(), 1u);
+        }
+
+        execute(database, "UPDATE TestSchema.TestTable SET IntColumn=123456 WHERE (IntColumn > 4);");
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 10u);
+
+        for (auto i = 0u; i < 10; ++i) {
+            if (i < 5)
+                EXPECT_EQ(result[i].row[0], i);
+            else
+                EXPECT_EQ(result[i].row[0], 123456);
+        }
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 10u);
+
+        for (auto i = 0u; i < 10; ++i) {
+            if (i < 5)
+                EXPECT_EQ(result[i].row[0], i);
+            else
+                EXPECT_EQ(result[i].row[0], 123456);
+        }
+    }
+}
+
+TEST_CASE(update_all_rows)
+{
+    ScopeGuard guard([]() { unlink(db_name); });
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        create_table(database);
+        for (auto count = 0; count < 10; ++count) {
+            auto result = execute(database, ByteString::formatted("INSERT INTO TestSchema.TestTable VALUES ( 'T{}', {} );", count, count));
+            EXPECT_EQ(result.size(), 1u);
+        }
+
+        execute(database, "UPDATE TestSchema.TestTable SET IntColumn=123456;");
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 10u);
+
+        for (auto i = 0u; i < 10; ++i)
+            EXPECT_EQ(result[i].row[0], 123456);
+    }
+    {
+        auto database = MUST(SQL::Database::create(db_name));
+        MUST(database->open());
+
+        auto result = execute(database, "SELECT IntColumn FROM TestSchema.TestTable ORDER BY IntColumn;");
+        EXPECT_EQ(result.size(), 10u);
+
+        for (auto i = 0u; i < 10; ++i)
+            EXPECT_EQ(result[i].row[0], 123456);
+    }
 }
 
 }

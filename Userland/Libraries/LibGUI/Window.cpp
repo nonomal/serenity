@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,6 +10,7 @@
 #include <AK/JsonObject.h>
 #include <AK/NeverDestroyed.h>
 #include <AK/ScopeGuard.h>
+#include <LibConfig/Client.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/MimeData.h>
 #include <LibGUI/Action.h>
@@ -24,6 +25,7 @@
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/Palette.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +41,7 @@ public:
     explicit WindowBackingStore(NonnullRefPtr<Gfx::Bitmap> bitmap)
         : m_bitmap(move(bitmap))
         , m_serial(++s_next_backing_store_serial)
+        , m_visible_size(m_bitmap->size())
     {
     }
 
@@ -49,9 +52,55 @@ public:
 
     i32 serial() const { return m_serial; }
 
+    Gfx::IntSize visible_size() const { return m_visible_size; }
+    void set_visible_size(Gfx::IntSize visible_size) { m_visible_size = visible_size; }
+
+    [[nodiscard]] bool is_volatile() const { return m_volatile; }
+
+    void set_volatile()
+    {
+        if (m_volatile)
+            return;
+#ifdef AK_OS_SERENITY
+        int rc = madvise(m_bitmap->scanline_u8(0), m_bitmap->data_size(), MADV_SET_VOLATILE);
+        if (rc < 0) {
+            perror("madvise(MADV_SET_VOLATILE)");
+            VERIFY_NOT_REACHED();
+        }
+#endif
+        m_volatile = true;
+    }
+
+    // Returns true if making the bitmap non-volatile succeeded. `was_purged` indicates status of contents.
+    // Returns false if there was not enough memory.
+    [[nodiscard]] bool set_nonvolatile(bool& was_purged)
+    {
+        if (!m_volatile) {
+            was_purged = false;
+            return true;
+        }
+
+#ifdef AK_OS_SERENITY
+        int rc = madvise(m_bitmap->scanline_u8(0), m_bitmap->data_size(), MADV_SET_NONVOLATILE);
+        if (rc < 0) {
+            if (errno == ENOMEM) {
+                was_purged = true;
+                return false;
+            }
+            perror("madvise(MADV_SET_NONVOLATILE)");
+            VERIFY_NOT_REACHED();
+        }
+        was_purged = rc != 0;
+#endif
+        m_volatile = false;
+        return true;
+    }
+
 private:
     NonnullRefPtr<Gfx::Bitmap> m_bitmap;
-    const i32 m_serial;
+    i32 const m_serial;
+    Gfx::IntSize m_visible_size;
+    bool m_volatile { false };
 };
 
 static NeverDestroyed<HashTable<Window*>> all_windows;
@@ -65,24 +114,25 @@ Window* Window::from_window_id(int window_id)
     return nullptr;
 }
 
-Window::Window(Core::Object* parent)
-    : Core::Object(parent)
+Window::Window(Core::EventReceiver* parent)
+    : GUI::Object(parent)
     , m_menubar(Menubar::construct())
+    , m_pid(getpid())
 {
+    if (parent)
+        set_window_mode(WindowMode::Passive);
+
     all_windows->set(this);
-    m_rect_when_windowless = { -5000, -5000, 140, 140 };
+    m_rect_when_windowless = { -5000, -5000, 0, 0 };
+    m_floating_rect = { -5000, -5000, 0, 0 };
     m_title_when_windowless = "GUI::Window";
 
-    register_property(
-        "title",
-        [this] { return title(); },
-        [this](auto& value) {
-            set_title(value.to_string());
-            return true;
-        });
+    REGISTER_DEPRECATED_STRING_PROPERTY("title", title, set_title)
 
-    register_property("visible", [this] { return is_visible(); });
-    register_property("active", [this] { return is_active(); });
+    register_property(
+        "visible"sv, [this] { return is_visible(); }, nullptr, nullptr);
+    register_property(
+        "active"sv, [this] { return is_active(); }, nullptr, nullptr);
 
     REGISTER_BOOL_PROPERTY("minimizable", is_minimizable, set_minimizable);
     REGISTER_BOOL_PROPERTY("resizable", is_resizable, set_resizable);
@@ -102,6 +152,8 @@ Window::~Window()
 void Window::close()
 {
     hide();
+    if (m_save_size_and_position_on_close)
+        save_size_and_position(m_save_domain, m_save_group);
     if (on_close)
         on_close();
 }
@@ -128,10 +180,10 @@ void Window::show()
         auto parts = StringView { launch_origin_rect_string, strlen(launch_origin_rect_string) }.split_view(',');
         if (parts.size() == 4) {
             launch_origin_rect = Gfx::IntRect {
-                parts[0].to_int().value_or(0),
-                parts[1].to_int().value_or(0),
-                parts[2].to_int().value_or(0),
-                parts[3].to_int().value_or(0),
+                parts[0].to_number<int>().value_or(0),
+                parts[1].to_number<int>().value_or(0),
+                parts[2].to_number<int>().value_or(0),
+                parts[3].to_number<int>().value_or(0),
             };
         }
         unsetenv("__libgui_launch_origin_rect");
@@ -141,28 +193,28 @@ void Window::show()
 
     ConnectionToWindowServer::the().async_create_window(
         m_window_id,
+        m_pid,
         m_rect_when_windowless,
         !m_moved_by_client,
         m_has_alpha_channel,
-        m_modal,
         m_minimizable,
         m_closeable,
         m_resizable,
         m_fullscreen,
         m_frameless,
         m_forced_shadow,
-        m_accessory,
-        m_opacity_when_windowless,
         m_alpha_hit_threshold,
         m_base_size,
         m_size_increment,
         m_minimum_size_when_windowless,
         m_resize_aspect_ratio,
         (i32)m_window_type,
+        (i32)m_window_mode,
         m_title_when_windowless,
         parent_window ? parent_window->window_id() : 0,
         launch_origin_rect);
     m_visible = true;
+    m_visible_for_timer_purposes = true;
 
     apply_icon();
 
@@ -208,6 +260,9 @@ void Window::hide()
     if (GUI::Application::in_teardown())
         return;
 
+    m_rect_when_windowless = rect();
+    m_floating_rect = floating_rect();
+
     auto destroyed_window_ids = ConnectionToWindowServer::the().destroy_window(m_window_id);
     server_did_destroy();
 
@@ -230,7 +285,7 @@ void Window::hide()
     }
 }
 
-void Window::set_title(String title)
+void Window::set_title(ByteString title)
 {
     m_title_when_windowless = move(title);
     if (!is_visible())
@@ -238,7 +293,7 @@ void Window::set_title(String title)
     ConnectionToWindowServer::the().async_set_window_title(m_window_id, m_title_when_windowless);
 }
 
-String Window::title() const
+ByteString Window::title() const
 {
     if (!is_visible())
         return m_title_when_windowless;
@@ -258,6 +313,13 @@ Gfx::IntRect Window::rect() const
     return ConnectionToWindowServer::the().get_window_rect(m_window_id);
 }
 
+Gfx::IntRect Window::floating_rect() const
+{
+    if (!is_visible())
+        return m_floating_rect;
+    return ConnectionToWindowServer::the().get_window_floating_rect(m_window_id);
+}
+
 void Window::set_rect(Gfx::IntRect const& a_rect)
 {
     if (a_rect.location() != m_rect_when_windowless.location()) {
@@ -265,6 +327,8 @@ void Window::set_rect(Gfx::IntRect const& a_rect)
     }
 
     m_rect_when_windowless = a_rect;
+    m_floating_rect = a_rect;
+
     if (!is_visible()) {
         if (m_main_widget)
             m_main_widget->resize(m_rect_when_windowless.size());
@@ -287,9 +351,10 @@ Gfx::IntSize Window::minimum_size() const
     return ConnectionToWindowServer::the().get_window_minimum_size(m_window_id);
 }
 
-void Window::set_minimum_size(Gfx::IntSize const& size)
+void Window::set_minimum_size(Gfx::IntSize size)
 {
-    m_minimum_size_modified = true;
+    VERIFY(size.width() >= 0 && size.height() >= 0);
+    VERIFY(!is_obeying_widget_min_size());
     m_minimum_size_when_windowless = size;
 
     if (is_visible())
@@ -308,17 +373,36 @@ void Window::center_within(Window const& other)
     set_rect(rect().centered_within(other.rect()));
 }
 
+void Window::center_within(Gfx::IntRect const& other)
+{
+    set_rect(rect().centered_within(other));
+}
+
+void Window::constrain_to_desktop()
+{
+    auto desktop_rect = Desktop::the().rect().shrunken(0, 0, Desktop::the().taskbar_height(), 0);
+    auto titlebar = Application::the()->palette().window_title_height();
+    auto border = Application::the()->palette().window_border_thickness();
+    auto constexpr margin = 1;
+
+    auto framed_rect = rect().inflated(border + titlebar + margin, border, border, border);
+    if (desktop_rect.contains(framed_rect))
+        return;
+
+    auto constrained = framed_rect.constrained_to(desktop_rect);
+    constrained.shrink(border + titlebar + margin, border, border, border);
+    set_rect(constrained.x(), constrained.y(), rect().width(), rect().height());
+}
+
 void Window::set_window_type(WindowType window_type)
 {
     m_window_type = window_type;
+}
 
-    if (!m_minimum_size_modified) {
-        // Apply minimum size defaults.
-        if (m_window_type == WindowType::Normal || m_window_type == WindowType::ToolWindow)
-            m_minimum_size_when_windowless = { 50, 50 };
-        else
-            m_minimum_size_when_windowless = { 1, 1 };
-    }
+void Window::set_window_mode(WindowMode mode)
+{
+    VERIFY(!is_visible());
+    m_window_mode = mode;
 }
 
 void Window::make_window_manager(unsigned event_mask)
@@ -327,26 +411,17 @@ void Window::make_window_manager(unsigned event_mask)
     GUI::ConnectionToWindowManagerServer::the().async_set_manager_window(m_window_id);
 }
 
-bool Window::are_cursors_the_same(AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const& left, AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const& right) const
-{
-    if (left.has<Gfx::StandardCursor>() != right.has<Gfx::StandardCursor>())
-        return false;
-    if (left.has<Gfx::StandardCursor>())
-        return left.get<Gfx::StandardCursor>() == right.get<Gfx::StandardCursor>();
-    return left.get<NonnullRefPtr<Gfx::Bitmap>>().ptr() == right.get<NonnullRefPtr<Gfx::Bitmap>>().ptr();
-}
-
 void Window::set_cursor(Gfx::StandardCursor cursor)
 {
-    if (are_cursors_the_same(m_cursor, cursor))
+    if (m_cursor == cursor)
         return;
     m_cursor = cursor;
     update_cursor();
 }
 
-void Window::set_cursor(NonnullRefPtr<Gfx::Bitmap> cursor)
+void Window::set_cursor(NonnullRefPtr<Gfx::Bitmap const> cursor)
 {
-    if (are_cursors_the_same(m_cursor, cursor))
+    if (m_cursor == cursor)
         return;
     m_cursor = cursor;
     update_cursor();
@@ -357,7 +432,7 @@ void Window::handle_drop_event(DropEvent& event)
     if (!m_main_widget)
         return;
     auto result = m_main_widget->hit_test(event.position());
-    auto local_event = make<DropEvent>(result.local_position, event.text(), event.mime_data());
+    auto local_event = make<DropEvent>(Event::Type::Drop, result.local_position, event.button(), event.buttons(), event.modifiers(), event.text(), event.mime_data());
     VERIFY(result.widget);
     result.widget->dispatch_event(*local_event, this);
 
@@ -366,24 +441,38 @@ void Window::handle_drop_event(DropEvent& event)
 
 void Window::handle_mouse_event(MouseEvent& event)
 {
+    if (!m_main_widget)
+        return;
+    auto result = m_main_widget->hit_test(event.position());
+    VERIFY(result.widget);
+
     if (m_automatic_cursor_tracking_widget) {
         auto window_relative_rect = m_automatic_cursor_tracking_widget->window_relative_rect();
         Gfx::IntPoint local_point { event.x() - window_relative_rect.x(), event.y() - window_relative_rect.y() };
         auto local_event = MouseEvent((Event::Type)event.type(), local_point, event.buttons(), event.button(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y(), event.wheel_raw_delta_x(), event.wheel_raw_delta_y());
         m_automatic_cursor_tracking_widget->dispatch_event(local_event, this);
-        if (event.buttons() == 0)
+        if (event.buttons() == 0) {
             m_automatic_cursor_tracking_widget = nullptr;
+        } else {
+            auto is_hovered = m_automatic_cursor_tracking_widget.ptr() == result.widget.ptr();
+            set_hovered_widget(is_hovered ? m_automatic_cursor_tracking_widget.ptr() : nullptr);
+        }
         return;
     }
-    if (!m_main_widget)
-        return;
-    auto result = m_main_widget->hit_test(event.position());
-    auto local_event = MouseEvent((Event::Type)event.type(), result.local_position, event.buttons(), event.button(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y(), event.wheel_raw_delta_x(), event.wheel_raw_delta_y());
-    VERIFY(result.widget);
     set_hovered_widget(result.widget);
     if (event.buttons() != 0 && !m_automatic_cursor_tracking_widget)
         m_automatic_cursor_tracking_widget = *result.widget;
+    auto local_event = MouseEvent((Event::Type)event.type(), result.local_position, event.buttons(), event.button(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y(), event.wheel_raw_delta_x(), event.wheel_raw_delta_y());
     result.widget->dispatch_event(local_event, this);
+}
+
+Gfx::IntSize Window::backing_store_size(Gfx::IntSize window_size) const
+{
+    if (!m_resizing)
+        return window_size;
+
+    int const backing_margin_during_resize = 64;
+    return { window_size.width() + backing_margin_during_resize, window_size.height() + backing_margin_during_resize };
 }
 
 void Window::handle_multi_paint_event(MultiPaintEvent& event)
@@ -400,19 +489,25 @@ void Window::handle_multi_paint_event(MultiPaintEvent& event)
         rects.extend(move(m_pending_paint_event_rects));
     }
     VERIFY(!rects.is_empty());
-    if (m_back_store && m_back_store->size() != event.window_size()) {
-        // Eagerly discard the backing store if we learn from this paint event that it needs to be bigger.
-        // Otherwise we would have to wait for a resize event to tell us. This way we don't waste the
-        // effort on painting into an undersized bitmap that will be thrown away anyway.
+
+    // Throw away our backing store if its size is different, and we've stopped resizing or double buffering is disabled.
+    // This ensures that we shrink the backing store after a resize, and that we do not get flickering artifacts when
+    // directly painting into a shared active backing store.
+    if (m_back_store && (!m_resizing || !m_double_buffering_enabled) && m_back_store->size() != event.window_size())
         m_back_store = nullptr;
-    }
-    bool created_new_backing_store = !m_back_store;
+
+    // Discard our backing store if it's unable to contain the new window size. Smaller is fine though, that prevents
+    // lots of backing store allocations during a resize.
+    if (m_back_store && !m_back_store->size().contains(event.window_size()))
+        m_back_store = nullptr;
+
+    bool created_new_backing_store = false;
     if (!m_back_store) {
-        m_back_store = create_backing_store(event.window_size());
-        VERIFY(m_back_store);
+        m_back_store = create_backing_store(backing_store_size(event.window_size())).release_value_but_fixme_should_propagate_errors();
+        created_new_backing_store = true;
     } else if (m_double_buffering_enabled) {
         bool was_purged = false;
-        bool bitmap_has_memory = m_back_store->bitmap().set_nonvolatile(was_purged);
+        bool bitmap_has_memory = m_back_store->set_nonvolatile(was_purged);
         if (!bitmap_has_memory) {
             // We didn't have enough memory to make the bitmap non-volatile!
             // Fall back to single-buffered mode for this window.
@@ -430,8 +525,7 @@ void Window::handle_multi_paint_event(MultiPaintEvent& event)
         }
     }
 
-    auto rect = rects.first();
-    if (rect.is_empty() || created_new_backing_store) {
+    if (created_new_backing_store) {
         rects.clear();
         rects.append({ {}, event.window_size() });
     }
@@ -440,6 +534,7 @@ void Window::handle_multi_paint_event(MultiPaintEvent& event)
         PaintEvent paint_event(rect);
         m_main_widget->dispatch_event(paint_event, this);
     }
+    m_back_store->set_visible_size(event.window_size());
 
     if (m_double_buffering_enabled)
         flip(rects);
@@ -448,6 +543,75 @@ void Window::handle_multi_paint_event(MultiPaintEvent& event)
 
     if (is_visible())
         ConnectionToWindowServer::the().async_did_finish_painting(m_window_id, rects);
+}
+
+void Window::propagate_shortcuts(KeyEvent& event, Widget* widget, ShortcutPropagationBoundary boundary)
+{
+    VERIFY(event.type() == Event::KeyDown);
+    auto shortcut = Shortcut(event.modifiers(), event.key());
+    Action* action = nullptr;
+
+    if (widget) {
+        VERIFY(widget->window() == this);
+
+        do {
+            action = widget->action_for_shortcut(shortcut);
+            if (action)
+                break;
+
+            widget = widget->parent_widget();
+        } while (widget);
+    }
+
+    if (!action && boundary >= ShortcutPropagationBoundary::Window)
+        action = action_for_shortcut(shortcut);
+    if (!action && boundary >= ShortcutPropagationBoundary::Application)
+        action = Application::the()->action_for_shortcut(shortcut);
+
+    if (action) {
+        action->process_event(*this, event);
+        return;
+    }
+
+    event.ignore();
+}
+
+void Window::restore_size_and_position(StringView domain, StringView group, Optional<Gfx::IntSize> fallback_size, Optional<Gfx::IntPoint> fallback_position)
+{
+    int x = Config::read_i32(domain, group, "X"sv, INT_MIN);
+    int y = Config::read_i32(domain, group, "Y"sv, INT_MIN);
+    if (x != INT_MIN && y != INT_MIN) {
+        move_to(x, y);
+    } else if (fallback_position.has_value()) {
+        move_to(fallback_position.release_value());
+    }
+
+    int width = Config::read_i32(domain, group, "Width"sv, INT_MIN);
+    int height = Config::read_i32(domain, group, "Height"sv, INT_MIN);
+    if (width != INT_MIN && height != INT_MIN) {
+        resize(width, height);
+    } else if (fallback_size.has_value()) {
+        resize(fallback_size.release_value());
+    }
+
+    set_maximized(Config::read_bool(domain, group, "Maximized"sv, false));
+}
+
+void Window::save_size_and_position(StringView domain, StringView group) const
+{
+    auto rect_to_save = floating_rect();
+    Config::write_i32(domain, group, "X"sv, rect_to_save.x());
+    Config::write_i32(domain, group, "Y"sv, rect_to_save.y());
+    Config::write_i32(domain, group, "Width"sv, rect_to_save.width());
+    Config::write_i32(domain, group, "Height"sv, rect_to_save.height());
+    Config::write_bool(domain, group, "Maximized"sv, is_maximized());
+}
+
+void Window::save_size_and_position_on_close(StringView domain, StringView group)
+{
+    m_save_size_and_position_on_close = true;
+    m_save_domain = domain;
+    m_save_group = group;
 }
 
 void Window::handle_key_event(KeyEvent& event)
@@ -461,34 +625,44 @@ void Window::handle_key_event(KeyEvent& event)
             return default_return_key_widget()->dispatch_event(event, this);
 
     if (m_focused_widget)
-        return m_focused_widget->dispatch_event(event, this);
-    if (m_main_widget)
-        return m_main_widget->dispatch_event(event, this);
+        m_focused_widget->dispatch_event(event, this);
+    else if (m_main_widget)
+        m_main_widget->dispatch_event(event, this);
+
+    if (event.is_accepted())
+        return;
+
+    // Only process shortcuts if this is a keydown event.
+    if (event.type() == Event::KeyDown) {
+        auto const boundary = (is_blocking() || is_popup()) ? ShortcutPropagationBoundary::Window : ShortcutPropagationBoundary::Application;
+        propagate_shortcuts(event, nullptr, boundary);
+    }
 }
 
 void Window::handle_resize_event(ResizeEvent& event)
 {
     auto new_size = event.size();
-    if (m_back_store && m_back_store->size() != new_size)
-        m_back_store = nullptr;
+
+    // When the user is done resizing, we receive a last resize event with our actual size.
+    m_resizing = new_size != m_rect_when_windowless.size();
+
     if (!m_pending_paint_event_rects.is_empty()) {
         m_pending_paint_event_rects.clear_with_capacity();
         m_pending_paint_event_rects.append({ {}, new_size });
     }
-    m_rect_when_windowless = { {}, new_size };
+    m_rect_when_windowless.set_size(new_size);
     if (m_main_widget)
         m_main_widget->set_relative_rect({ {}, new_size });
 }
 
-void Window::handle_input_entered_or_left_event(Core::Event& event)
+void Window::handle_input_preemption_event(Core::Event& event)
 {
-    m_is_active_input = event.type() == Event::WindowInputEntered;
-    if (on_active_input_change)
-        on_active_input_change(m_is_active_input);
-    if (m_main_widget)
-        m_main_widget->dispatch_event(event, this);
-    if (m_focused_widget)
-        m_focused_widget->update();
+    if (on_input_preemption_change)
+        on_input_preemption_change(event.type() == Event::WindowInputPreempted);
+    if (!m_focused_widget)
+        return;
+    m_focused_widget->set_focus_preempted(event.type() == Event::WindowInputPreempted);
+    m_focused_widget->update();
 }
 
 void Window::handle_became_active_or_inactive_event(Core::Event& event)
@@ -501,8 +675,11 @@ void Window::handle_became_active_or_inactive_event(Core::Event& event)
         on_active_window_change(event.type() == Event::WindowBecameActive);
     if (m_main_widget)
         m_main_widget->dispatch_event(event, this);
-    if (m_focused_widget)
+    if (m_focused_widget) {
+        if (event.type() == Event::WindowBecameActive)
+            m_focused_widget->set_focus_preempted(false);
         m_focused_widget->update();
+    }
 }
 
 void Window::handle_close_request()
@@ -542,6 +719,12 @@ void Window::handle_fonts_change_event(FontsChangeEvent& event)
         });
     };
     dispatch_fonts_change(*m_main_widget.ptr(), dispatch_fonts_change);
+
+    if (is_auto_shrinking())
+        schedule_relayout();
+
+    if (on_font_change)
+        on_font_change();
 }
 
 void Window::handle_screen_rects_change_event(ScreenRectsChangeEvent& event)
@@ -583,14 +766,14 @@ void Window::handle_drag_move_event(DragEvent& event)
     auto result = m_main_widget->hit_test(event.position());
     VERIFY(result.widget);
 
-    Application::the()->set_drag_hovered_widget({}, result.widget, result.local_position, event.mime_types());
+    Application::the()->set_drag_hovered_widget({}, result.widget, result.local_position, event);
 
     // NOTE: Setting the drag hovered widget may have executed arbitrary code, so re-check that the widget is still there.
     if (!result.widget)
         return;
 
     if (result.widget->has_pending_drop()) {
-        DragEvent drag_move_event(static_cast<Event::Type>(event.type()), result.local_position, event.mime_types());
+        DragEvent drag_move_event(static_cast<Event::Type>(event.type()), result.local_position, event.button(), event.buttons(), event.modifiers(), event.text(), event.mime_data());
         result.widget->dispatch_event(drag_move_event, this);
     }
 }
@@ -636,8 +819,8 @@ void Window::event(Core::Event& event)
     if (event.type() == Event::WindowBecameActive || event.type() == Event::WindowBecameInactive)
         return handle_became_active_or_inactive_event(event);
 
-    if (event.type() == Event::WindowInputEntered || event.type() == Event::WindowInputLeft)
-        return handle_input_entered_or_left_event(event);
+    if (event.type() == Event::WindowInputPreempted || event.type() == Event::WindowInputRestored)
+        return handle_input_preemption_event(event);
 
     if (event.type() == Event::WindowCloseRequest)
         return handle_close_request();
@@ -669,7 +852,7 @@ void Window::event(Core::Event& event)
     if (event.type() == Event::AppletAreaRectChange)
         return handle_applet_area_rect_change_event(static_cast<AppletAreaRectChangeEvent&>(event));
 
-    Core::Object::event(event);
+    Core::EventReceiver::event(event);
 }
 
 bool Window::is_visible() const
@@ -803,14 +986,6 @@ void Window::set_double_buffering_enabled(bool value)
     m_double_buffering_enabled = value;
 }
 
-void Window::set_opacity(float opacity)
-{
-    m_opacity_when_windowless = opacity;
-    if (!is_visible())
-        return;
-    ConnectionToWindowServer::the().async_set_window_opacity(m_window_id, opacity);
-}
-
 void Window::set_alpha_hit_threshold(float threshold)
 {
     if (threshold < 0.0f)
@@ -843,10 +1018,19 @@ void Window::set_hovered_widget(Widget* widget)
         update();
 }
 
-void Window::set_current_backing_store(WindowBackingStore& backing_store, bool flush_immediately)
+void Window::set_current_backing_store(WindowBackingStore& backing_store, bool flush_immediately) const
 {
     auto& bitmap = backing_store.bitmap();
-    ConnectionToWindowServer::the().set_window_backing_store(m_window_id, 32, bitmap.pitch(), bitmap.anonymous_buffer().fd(), backing_store.serial(), bitmap.has_alpha_channel(), bitmap.size(), flush_immediately);
+    ConnectionToWindowServer::the().set_window_backing_store(
+        m_window_id,
+        32,
+        bitmap.pitch(),
+        MUST(IPC::File::clone_fd(bitmap.anonymous_buffer().fd())),
+        backing_store.serial(),
+        bitmap.has_alpha_channel(),
+        bitmap.size(),
+        backing_store.visible_size(),
+        flush_immediately);
 }
 
 void Window::flip(Vector<Gfx::IntRect, 32> const& dirty_rects)
@@ -856,10 +1040,9 @@ void Window::flip(Vector<Gfx::IntRect, 32> const& dirty_rects)
     set_current_backing_store(*m_front_store);
 
     if (!m_back_store || m_back_store->size() != m_front_store->size()) {
-        m_back_store = create_backing_store(m_front_store->size());
-        VERIFY(m_back_store);
+        m_back_store = create_backing_store(m_front_store->size()).release_value_but_fixme_should_propagate_errors();
         memcpy(m_back_store->bitmap().scanline(0), m_front_store->bitmap().scanline(0), m_front_store->bitmap().size_in_bytes());
-        m_back_store->bitmap().set_volatile();
+        m_back_store->set_volatile();
         return;
     }
 
@@ -868,10 +1051,10 @@ void Window::flip(Vector<Gfx::IntRect, 32> const& dirty_rects)
     for (auto& dirty_rect : dirty_rects)
         painter.blit(dirty_rect.location(), m_front_store->bitmap(), dirty_rect, 1.0f, false);
 
-    m_back_store->bitmap().set_volatile();
+    m_back_store->set_volatile();
 }
 
-OwnPtr<WindowBackingStore> Window::create_backing_store(Gfx::IntSize const& size)
+ErrorOr<NonnullOwnPtr<WindowBackingStore>> Window::create_backing_store(Gfx::IntSize size)
 {
     auto format = m_has_alpha_channel ? Gfx::BitmapFormat::BGRA8888 : Gfx::BitmapFormat::BGRx8888;
 
@@ -879,26 +1062,11 @@ OwnPtr<WindowBackingStore> Window::create_backing_store(Gfx::IntSize const& size
     size_t pitch = Gfx::Bitmap::minimum_pitch(size.width(), format);
     size_t size_in_bytes = size.height() * pitch;
 
-    auto buffer_or_error = Core::AnonymousBuffer::create_with_size(round_up_to_power_of_two(size_in_bytes, PAGE_SIZE));
-    if (buffer_or_error.is_error()) {
-        perror("anon_create");
-        return {};
-    }
+    auto buffer = TRY(Core::AnonymousBuffer::create_with_size(round_up_to_power_of_two(size_in_bytes, PAGE_SIZE)));
 
     // FIXME: Plumb scale factor here eventually.
-    auto bitmap_or_error = Gfx::Bitmap::try_create_with_anonymous_buffer(format, buffer_or_error.release_value(), size, 1, {});
-    if (bitmap_or_error.is_error()) {
-        VERIFY(size.width() <= INT16_MAX);
-        VERIFY(size.height() <= INT16_MAX);
-        return {};
-    }
-    return make<WindowBackingStore>(bitmap_or_error.release_value());
-}
-
-void Window::set_modal(bool modal)
-{
-    VERIFY(!is_visible());
-    m_modal = modal;
+    auto bitmap = TRY(Gfx::Bitmap::create_with_anonymous_buffer(format, buffer, size, 1));
+    return make<WindowBackingStore>(bitmap);
 }
 
 void Window::wm_event(WMEvent&)
@@ -920,11 +1088,12 @@ void Window::set_icon(Gfx::Bitmap const* icon)
 
     Gfx::IntSize icon_size = icon ? icon->size() : Gfx::IntSize(16, 16);
 
-    m_icon = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRA8888, icon_size).release_value_but_fixme_should_propagate_errors();
+    auto new_icon = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, icon_size).release_value_but_fixme_should_propagate_errors();
     if (icon) {
-        Painter painter(*m_icon);
+        Painter painter(*new_icon);
         painter.blit({ 0, 0 }, *icon, icon->rect());
     }
+    m_icon = move(new_icon);
 
     apply_icon();
 }
@@ -940,9 +1109,9 @@ void Window::apply_icon()
     ConnectionToWindowServer::the().async_set_window_icon_bitmap(m_window_id, m_icon->to_shareable_bitmap());
 }
 
-void Window::start_interactive_resize()
+void Window::start_interactive_resize(ResizeDirection resize_direction)
 {
-    ConnectionToWindowServer::the().async_start_window_resize(m_window_id);
+    ConnectionToWindowServer::the().async_start_window_resize(m_window_id, (i32)resize_direction);
 }
 
 Vector<Widget&> Window::focusable_widgets(FocusSource source) const
@@ -1029,6 +1198,14 @@ void Window::set_obey_widget_min_size(bool obey_widget_min_size)
     }
 }
 
+void Window::set_auto_shrink(bool shrink)
+{
+    if (m_auto_shrink == shrink)
+        return;
+    m_auto_shrink = shrink;
+    schedule_relayout();
+}
+
 void Window::set_maximized(bool maximized)
 {
     m_maximized = maximized;
@@ -1038,15 +1215,33 @@ void Window::set_maximized(bool maximized)
     ConnectionToWindowServer::the().async_set_maximized(m_window_id, maximized);
 }
 
+void Window::set_minimized(bool minimized)
+{
+    if (!is_minimizable())
+        return;
+
+    m_minimized = minimized;
+    if (!is_visible())
+        return;
+
+    ConnectionToWindowServer::the().async_set_minimized(m_window_id, minimized);
+}
+
 void Window::update_min_size()
 {
-    if (main_widget()) {
-        main_widget()->do_layout();
-        if (m_obey_widget_min_size) {
-            auto min_size = main_widget()->effective_min_size();
-            set_minimum_size(MUST(min_size.width().shrink_value()), MUST(min_size.height().shrink_value()));
-        }
+    if (!main_widget())
+        return;
+    main_widget()->do_layout();
+
+    auto min_size = main_widget()->effective_min_size();
+    Gfx::IntSize size = { MUST(min_size.width().shrink_value()), MUST(min_size.height().shrink_value()) };
+    if (is_obeying_widget_min_size()) {
+        m_minimum_size_when_windowless = size;
+        if (is_visible())
+            ConnectionToWindowServer::the().async_set_window_minimum_size(m_window_id, size);
     }
+    if (is_auto_shrinking())
+        resize(size);
 }
 
 void Window::schedule_relayout()
@@ -1093,10 +1288,10 @@ void Window::notify_state_changed(Badge<ConnectionToWindowServer>, bool minimize
     if (!store)
         return;
     if (minimized || occluded) {
-        store->bitmap().set_volatile();
+        store->set_volatile();
     } else {
         bool was_purged = false;
-        bool bitmap_has_memory = store->bitmap().set_nonvolatile(was_purged);
+        bool bitmap_has_memory = store->set_nonvolatile(was_purged);
         if (!bitmap_has_memory) {
             // Not enough memory to make the bitmap non-volatile. Lose the bitmap and schedule an update.
             // Let the paint system figure out what to do.
@@ -1112,18 +1307,10 @@ void Window::notify_state_changed(Badge<ConnectionToWindowServer>, bool minimize
 
 Action* Window::action_for_shortcut(Shortcut const& shortcut)
 {
-    Action* found_action = nullptr;
-    for_each_child_of_type<Action>([&](auto& action) {
-        if (action.shortcut() == shortcut || action.alternate_shortcut() == shortcut) {
-            found_action = &action;
-            return IterationDecision::Break;
-        }
-        return IterationDecision::Continue;
-    });
-    return found_action;
+    return Action::find_action_for_shortcut(*this, shortcut);
 }
 
-void Window::set_base_size(Gfx::IntSize const& base_size)
+void Window::set_base_size(Gfx::IntSize base_size)
 {
     if (m_base_size == base_size)
         return;
@@ -1132,7 +1319,7 @@ void Window::set_base_size(Gfx::IntSize const& base_size)
         ConnectionToWindowServer::the().async_set_window_base_size_and_size_increment(m_window_id, m_base_size, m_size_increment);
 }
 
-void Window::set_size_increment(Gfx::IntSize const& size_increment)
+void Window::set_size_increment(Gfx::IntSize size_increment)
 {
     if (m_size_increment == size_increment)
         return;
@@ -1177,18 +1364,25 @@ void Window::update_cursor()
 {
     auto new_cursor = m_cursor;
 
-    if (m_hovered_widget) {
-        auto override_cursor = m_hovered_widget->override_cursor();
-        if (override_cursor.has<NonnullRefPtr<Gfx::Bitmap>>() || override_cursor.get<Gfx::StandardCursor>() != Gfx::StandardCursor::None)
-            new_cursor = move(override_cursor);
+    auto is_usable_cursor = [](auto& cursor) {
+        return cursor.template has<NonnullRefPtr<Gfx::Bitmap const>>() || cursor.template get<Gfx::StandardCursor>() != Gfx::StandardCursor::None;
+    };
+
+    // NOTE: If there's an automatic cursor tracking widget, we retain its cursor until tracking stops.
+    if (auto widget = m_automatic_cursor_tracking_widget) {
+        if (is_usable_cursor(widget->override_cursor()))
+            new_cursor = widget->override_cursor();
+    } else if (auto widget = m_hovered_widget) {
+        if (is_usable_cursor(widget->override_cursor()))
+            new_cursor = widget->override_cursor();
     }
 
-    if (are_cursors_the_same(m_effective_cursor, new_cursor))
+    if (m_effective_cursor == new_cursor)
         return;
     m_effective_cursor = new_cursor;
 
-    if (new_cursor.has<NonnullRefPtr<Gfx::Bitmap>>())
-        ConnectionToWindowServer::the().async_set_window_custom_cursor(m_window_id, new_cursor.get<NonnullRefPtr<Gfx::Bitmap>>()->to_shareable_bitmap());
+    if (new_cursor.has<NonnullRefPtr<Gfx::Bitmap const>>())
+        ConnectionToWindowServer::the().async_set_window_custom_cursor(m_window_id, new_cursor.get<NonnullRefPtr<Gfx::Bitmap const>>()->to_shareable_bitmap());
     else
         ConnectionToWindowServer::the().async_set_window_cursor(m_window_id, (u32)new_cursor.get<Gfx::StandardCursor>());
 }
@@ -1216,9 +1410,18 @@ Gfx::Bitmap* Window::back_bitmap()
     return m_back_store ? &m_back_store->bitmap() : nullptr;
 }
 
-ErrorOr<NonnullRefPtr<Menu>> Window::try_add_menu(String name)
+void Window::add_menu(NonnullRefPtr<Menu> menu)
 {
-    auto menu = TRY(m_menubar->try_add_menu({}, move(name)));
+    m_menubar->add_menu({}, move(menu));
+    if (m_window_id) {
+        menu->realize_menu_if_needed();
+        ConnectionToWindowServer::the().async_add_menu(m_window_id, menu->menu_id());
+    }
+}
+
+NonnullRefPtr<Menu> Window::add_menu(String name)
+{
+    auto menu = m_menubar->add_menu({}, move(name));
     if (m_window_id) {
         menu->realize_menu_if_needed();
         ConnectionToWindowServer::the().async_add_menu(m_window_id, menu->menu_id());
@@ -1226,14 +1429,10 @@ ErrorOr<NonnullRefPtr<Menu>> Window::try_add_menu(String name)
     return menu;
 }
 
-Menu& Window::add_menu(String name)
-{
-    auto menu = MUST(try_add_menu(move(name)));
-    return *menu;
-}
-
 void Window::flash_menubar_menu_for(MenuItem const& menu_item)
 {
+    if (!Desktop::the().system_effects().flash_menus())
+        return;
     auto menu_id = menu_item.menu_id();
     if (menu_id < 0)
         return;
@@ -1263,6 +1462,13 @@ void Window::flush_pending_paints_immediately()
         return;
     MultiPaintEvent paint_event(move(m_pending_paint_event_rects), size());
     handle_multi_paint_event(paint_event);
+}
+
+void Window::set_always_on_top(bool always_on_top)
+{
+    if (!m_window_id)
+        return;
+    ConnectionToWindowServer::the().set_always_on_top(m_window_id, always_on_top);
 }
 
 }

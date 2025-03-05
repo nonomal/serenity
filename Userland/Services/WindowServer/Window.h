@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, David Ganz <david.g.ganz@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,9 +8,10 @@
 #pragma once
 
 #include "HitTestResult.h"
-#include <AK/String.h>
+#include <AK/ByteString.h>
+#include <AK/IntrusiveList.h>
 #include <AK/WeakPtr.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/DisjointRectSet.h>
 #include <LibGfx/Rect.h>
@@ -17,6 +19,7 @@
 #include <WindowServer/Menubar.h>
 #include <WindowServer/Screen.h>
 #include <WindowServer/WindowFrame.h>
+#include <WindowServer/WindowMode.h>
 #include <WindowServer/WindowType.h>
 
 namespace WindowServer {
@@ -58,9 +61,11 @@ enum class WindowMenuAction {
     MinimizeOrUnminimize = 0,
     MaximizeOrRestore,
     ToggleMenubarVisibility,
+    ToggleWindowRollUp,
     Close,
     Move,
     ToggleAlwaysOnTop,
+    AddToQuickLaunch,
 };
 
 enum class WindowMenuDefaultAction {
@@ -79,7 +84,7 @@ enum class WindowMinimizedState : u32 {
     Hidden,
 };
 
-class Window final : public Core::Object {
+class Window final : public Core::EventReceiver {
     C_OBJECT(Window);
 
 public:
@@ -88,7 +93,7 @@ public:
     bool is_modified() const { return m_modified; }
     void set_modified(bool);
 
-    void popup_window_menu(Gfx::IntPoint const&, WindowMenuDefaultAction);
+    void popup_window_menu(Gfx::IntPoint, WindowMenuDefaultAction);
     void handle_window_menu_action(WindowMenuAction);
     void window_menu_activate_default();
     void request_close();
@@ -105,11 +110,11 @@ public:
     bool is_closeable() const { return m_closeable; }
     void set_closeable(bool);
 
-    bool is_resizable() const { return m_resizable && !m_fullscreen; }
+    bool is_resizable() const { return m_type != WindowType::Popup && m_resizable && !m_fullscreen; }
     void set_resizable(bool);
 
     bool is_maximized() const { return m_tile_type == WindowTileType::Maximized; }
-    void set_maximized(bool, Optional<Gfx::IntPoint> fixed_point = {});
+    void set_maximized(bool);
 
     bool is_always_on_top() const { return m_always_on_top; }
     void set_always_on_top(bool);
@@ -119,10 +124,10 @@ public:
 
     WindowTileType tile_type() const { return m_tile_type; }
     bool is_tiled() const { return m_tile_type != WindowTileType::None; }
-    void set_tiled(WindowTileType);
+    void set_tiled(WindowTileType, Optional<Screen const&> = {});
     WindowTileType tile_type_based_on_rect(Gfx::IntRect const&) const;
     void check_untile_due_to_resize(Gfx::IntRect const&);
-    bool set_untiled(Optional<Gfx::IntPoint> fixed_point = {});
+    bool set_untiled();
 
     Gfx::IntRect floating_rect() const { return m_floating_rect; }
     void set_floating_rect(Gfx::IntRect rect) { m_floating_rect = rect; }
@@ -133,15 +138,10 @@ public:
     bool is_occluded() const { return m_occluded; }
     void set_occluded(bool);
 
-    bool is_movable() const
-    {
-        return m_type == WindowType::Normal || m_type == WindowType::ToolWindow;
-    }
+    bool is_movable() const { return m_type == WindowType::Normal; }
 
     WindowFrame& frame() { return m_frame; }
     WindowFrame const& frame() const { return m_frame; }
-
-    Window* blocking_modal_window();
 
     ConnectionFromClient* client() { return m_client; }
     ConnectionFromClient const* client() const { return m_client; }
@@ -152,13 +152,10 @@ public:
     bool is_internal() const { return m_client_id == -1; }
     i32 client_id() const { return m_client_id; }
 
-    String title() const { return m_title; }
-    void set_title(String const&);
+    ByteString title() const { return m_title; }
+    void set_title(ByteString const&);
 
-    String computed_title() const;
-
-    float opacity() const { return m_opacity; }
-    void set_opacity(float);
+    ByteString computed_title() const;
 
     void set_hit_testing_enabled(bool value)
     {
@@ -170,7 +167,7 @@ public:
         m_alpha_hit_threshold = threshold;
     }
 
-    Optional<HitTestResult> hit_test(Gfx::IntPoint const&, bool include_frame = true);
+    Optional<HitTestResult> hit_test(Gfx::IntPoint, bool include_frame = true);
 
     int x() const { return m_rect.x(); }
     int y() const { return m_rect.y(); }
@@ -182,31 +179,37 @@ public:
     bool is_visible() const { return m_visible; }
     void set_visible(bool);
 
-    bool is_modal() const;
-    bool is_modal_dont_unparent() const { return m_modal && m_parent_window; }
+    bool is_modal() const { return m_mode != WindowMode::Modeless; }
+    bool is_passive() { return m_mode == WindowMode::Passive; }
+    bool is_rendering_above() { return m_mode == WindowMode::RenderAbove; }
+
+    bool is_blocking() const { return m_mode == WindowMode::Blocking; }
+    Window* blocking_modal_window();
+
+    WindowMode mode() const { return m_mode; }
+    Window* modeless_ancestor();
 
     Gfx::IntRect rect() const { return m_rect; }
     void set_rect(Gfx::IntRect const&);
     void set_rect(int x, int y, int width, int height) { set_rect({ x, y, width, height }); }
     void set_rect_without_repaint(Gfx::IntRect const&);
     bool apply_minimum_size(Gfx::IntRect&);
-    void nudge_into_desktop(Screen*, bool force_titlebar_visible = true);
 
     Gfx::IntSize minimum_size() const { return m_minimum_size; }
-    void set_minimum_size(Gfx::IntSize const&);
+    void set_minimum_size(Gfx::IntSize);
     void set_minimum_size(int width, int height) { set_minimum_size({ width, height }); }
 
     void set_taskbar_rect(Gfx::IntRect const&);
     Gfx::IntRect const& taskbar_rect() const { return m_taskbar_rect; }
 
-    void move_to(Gfx::IntPoint const& position) { set_rect({ position, size() }); }
+    void move_to(Gfx::IntPoint position) { set_rect({ position, size() }); }
     void move_to(int x, int y) { move_to({ x, y }); }
 
-    void move_by(Gfx::IntPoint const& delta) { set_position_without_repaint(position().translated(delta)); }
+    void move_by(Gfx::IntPoint delta) { set_position_without_repaint(position().translated(delta)); }
 
     Gfx::IntPoint position() const { return m_rect.location(); }
-    void set_position(Gfx::IntPoint const& position) { set_rect({ position.x(), position.y(), width(), height() }); }
-    void set_position_without_repaint(Gfx::IntPoint const& position) { set_rect_without_repaint({ position.x(), position.y(), width(), height() }); }
+    void set_position(Gfx::IntPoint position) { set_rect({ position.x(), position.y(), width(), height() }); }
+    void set_position_without_repaint(Gfx::IntPoint position) { set_rect_without_repaint({ position.x(), position.y(), width(), height() }); }
 
     Gfx::IntSize size() const { return m_rect.size(); }
 
@@ -222,7 +225,7 @@ public:
 
     void prepare_dirty_rects();
     void clear_dirty_rects();
-    Gfx::DisjointRectSet& dirty_rects() { return m_dirty_rects; }
+    Gfx::DisjointIntRectSet& dirty_rects() { return m_dirty_rects; }
 
     // Only used by WindowType::Applet. Perhaps it could be a Window subclass? I don't know.
     void set_rect_in_applet_area(Gfx::IntRect const& rect) { m_rect_in_applet_area = rect; }
@@ -240,6 +243,9 @@ public:
         m_backing_store_serial = serial;
     }
 
+    Gfx::IntSize backing_store_visible_size() const { return m_backing_store_visible_size; }
+    void set_backing_store_visible_size(Gfx::IntSize visible_size) { m_backing_store_visible_size = visible_size; }
+
     void swap_backing_stores()
     {
         swap(m_backing_store, m_last_backing_store);
@@ -249,7 +255,6 @@ public:
     Gfx::Bitmap* last_backing_store() { return m_last_backing_store.ptr(); }
     i32 last_backing_store_serial() const { return m_last_backing_store_serial; }
 
-    void set_global_cursor_tracking_enabled(bool);
     void set_automatic_cursor_tracking_enabled(bool enabled) { m_automatic_cursor_tracking_enabled = enabled; }
     bool is_automatic_cursor_tracking() const { return m_automatic_cursor_tracking_enabled; }
 
@@ -257,7 +262,7 @@ public:
     void set_has_alpha_channel(bool value);
 
     Gfx::IntSize size_increment() const { return m_size_increment; }
-    void set_size_increment(Gfx::IntSize const& increment) { m_size_increment = increment; }
+    void set_size_increment(Gfx::IntSize increment) { m_size_increment = increment; }
 
     Optional<Gfx::IntSize> const& resize_aspect_ratio() const { return m_resize_aspect_ratio; }
     void set_resize_aspect_ratio(Optional<Gfx::IntSize> const& ratio)
@@ -266,28 +271,27 @@ public:
         // The screen can change, so "tiled" and "fixed aspect ratio" are mutually exclusive.
         // Similarly for "maximized" and "fixed aspect ratio".
         // In order to resolve this, undo those properties first:
-        set_untiled(position());
+        set_untiled();
         set_maximized(false);
         m_resize_aspect_ratio = ratio;
     }
 
     Gfx::IntSize base_size() const { return m_base_size; }
-    void set_base_size(Gfx::IntSize const& size) { m_base_size = size; }
+    void set_base_size(Gfx::IntSize size) { m_base_size = size; }
 
     Gfx::Bitmap const& icon() const { return *m_icon; }
-    void set_icon(NonnullRefPtr<Gfx::Bitmap>&& icon) { m_icon = move(icon); }
+    void set_icon(NonnullRefPtr<Gfx::Bitmap const>&& icon) { m_icon = move(icon); }
 
     void set_default_icon();
 
     Cursor const* cursor() const { return (m_cursor_override ? m_cursor_override : m_cursor).ptr(); }
-    void set_cursor(RefPtr<Cursor> cursor) { m_cursor = move(cursor); }
-    void set_cursor_override(RefPtr<Cursor> cursor) { m_cursor_override = move(cursor); }
+    void set_cursor(RefPtr<Cursor const> cursor) { m_cursor = move(cursor); }
+    void set_cursor_override(RefPtr<Cursor const> cursor) { m_cursor_override = move(cursor); }
     void remove_cursor_override() { m_cursor_override = nullptr; }
 
     void request_update(Gfx::IntRect const&, bool ignore_occlusion = false);
-    Gfx::DisjointRectSet take_pending_paint_rects() { return move(m_pending_paint_rects); }
+    Gfx::DisjointIntRectSet take_pending_paint_rects() { return move(m_pending_paint_rects); }
 
-    bool has_taskbar_rect() const { return m_have_taskbar_rect; };
     void start_minimize_animation();
 
     void start_launch_animation(Gfx::IntRect const&);
@@ -306,14 +310,7 @@ public:
     Vector<WeakPtr<Window>>& child_windows() { return m_child_windows; }
     Vector<WeakPtr<Window>> const& child_windows() const { return m_child_windows; }
 
-    Vector<WeakPtr<Window>>& accessory_windows() { return m_accessory_windows; }
-    Vector<WeakPtr<Window>> const& accessory_windows() const { return m_accessory_windows; }
-
     bool is_descendant_of(Window&) const;
-
-    void set_accessory(bool accessory) { m_accessory = accessory; }
-    bool is_accessory() const;
-    bool is_accessory_of(Window&) const;
 
     void set_frameless(bool);
     bool is_frameless() const { return m_frameless; }
@@ -331,16 +328,12 @@ public:
 
     bool is_opaque() const
     {
-        if (opacity() < 1.0f)
-            return false;
-        if (has_alpha_channel())
-            return false;
-        return true;
+        return !has_alpha_channel();
     }
 
-    Gfx::DisjointRectSet& opaque_rects() { return m_opaque_rects; }
-    Gfx::DisjointRectSet& transparency_rects() { return m_transparency_rects; }
-    Gfx::DisjointRectSet& transparency_wallpaper_rects() { return m_transparency_wallpaper_rects; }
+    Gfx::DisjointIntRectSet& opaque_rects() { return m_opaque_rects; }
+    Gfx::DisjointIntRectSet& transparency_rects() { return m_transparency_rects; }
+    Gfx::DisjointIntRectSet& transparency_wallpaper_rects() { return m_transparency_wallpaper_rects; }
     // The affected transparency rects are the rectangles of other windows (above or below)
     // that also need to be marked dirty whenever a window's dirty rect in a transparency
     // area needs to be rendered
@@ -380,42 +373,48 @@ public:
     void remove_all_stealing() { m_stealable_by_client_ids.clear(); }
     bool is_stealable_by_client(i32 client_id) const { return m_stealable_by_client_ids.contains_slow(client_id); }
 
+    void send_resize_event_to_client();
+    void send_move_event_to_client();
+
 private:
-    Window(ConnectionFromClient&, WindowType, int window_id, bool modal, bool minimizable, bool closeable, bool frameless, bool resizable, bool fullscreen, bool accessory, Window* parent_window = nullptr);
-    Window(Core::Object&, WindowType);
+    Window(ConnectionFromClient&, WindowType, WindowMode, int window_id, int process_id, bool minimizable, bool closeable, bool frameless, bool resizable, bool fullscreen, Window* parent_window = nullptr);
+    Window(Core::EventReceiver&, WindowType);
 
     virtual void event(Core::Event&) override;
     void handle_mouse_event(MouseEvent const&);
     void handle_keydown_event(KeyEvent const&);
     void add_child_window(Window&);
-    void add_accessory_window(Window&);
     void ensure_window_menu();
     void update_window_menu_items();
-    void modal_unparented();
+    void tile_type_changed(Optional<Screen const&> = {});
+    ErrorOr<Optional<ByteString>> compute_title_username(ConnectionFromClient* client);
+
+    void exit_roll_up_mode();
 
     ConnectionFromClient* m_client { nullptr };
 
     WeakPtr<Window> m_parent_window;
     Vector<WeakPtr<Window>> m_child_windows;
-    Vector<WeakPtr<Window>> m_accessory_windows;
 
     Menubar m_menubar;
 
-    String m_title;
+    ByteString m_title;
+    Optional<ByteString> m_title_username;
     Gfx::IntRect m_rect;
+    Gfx::IntRect m_saved_before_roll_up_rect;
     Gfx::IntRect m_saved_nonfullscreen_rect;
     Gfx::IntRect m_taskbar_rect;
     Vector<Screen*, default_screen_count> m_screens;
-    Gfx::DisjointRectSet m_dirty_rects;
-    Gfx::DisjointRectSet m_opaque_rects;
-    Gfx::DisjointRectSet m_transparency_rects;
-    Gfx::DisjointRectSet m_transparency_wallpaper_rects;
-    HashMap<Window*, Gfx::DisjointRectSet> m_affected_transparency_rects;
+    Gfx::DisjointIntRectSet m_dirty_rects;
+    Gfx::DisjointIntRectSet m_opaque_rects;
+    Gfx::DisjointIntRectSet m_transparency_rects;
+    Gfx::DisjointIntRectSet m_transparency_wallpaper_rects;
+    HashMap<Window*, Gfx::DisjointIntRectSet> m_affected_transparency_rects;
     WindowType m_type { WindowType::Normal };
+    WindowMode m_mode { WindowMode::Modeless };
     bool m_automatic_cursor_tracking_enabled { false };
     bool m_visible { true };
     bool m_has_alpha_channel { false };
-    bool m_modal { false };
     bool m_minimizable { false };
     bool m_closeable { false };
     bool m_frameless { false };
@@ -424,10 +423,8 @@ private:
     Optional<Gfx::IntSize> m_resize_aspect_ratio {};
     WindowMinimizedState m_minimized_state { WindowMinimizedState::None };
     bool m_fullscreen { false };
-    bool m_accessory { false };
     bool m_destroyed { false };
     bool m_default_positioned { false };
-    bool m_have_taskbar_rect { false };
     bool m_invalidated { true };
     bool m_invalidated_all { true };
     bool m_invalidated_frame { true };
@@ -442,33 +439,38 @@ private:
     bool m_occluded { false };
     RefPtr<Gfx::Bitmap> m_backing_store;
     RefPtr<Gfx::Bitmap> m_last_backing_store;
+    Gfx::IntSize m_backing_store_visible_size {};
+    Gfx::IntSize m_backup_backing_store_visible_size {};
     i32 m_backing_store_serial { -1 };
     i32 m_last_backing_store_serial { -1 };
     int m_window_id { -1 };
     i32 m_client_id { -1 };
-    float m_opacity { 1 };
     float m_alpha_hit_threshold { 0.0f };
     Gfx::IntSize m_size_increment;
     Gfx::IntSize m_base_size;
-    Gfx::IntSize m_minimum_size { 1, 1 };
-    NonnullRefPtr<Gfx::Bitmap> m_icon;
-    RefPtr<Cursor> m_cursor;
-    RefPtr<Cursor> m_cursor_override;
+    Gfx::IntSize m_minimum_size { 0, 0 };
+    NonnullRefPtr<Gfx::Bitmap const> m_icon;
+    RefPtr<Cursor const> m_cursor;
+    RefPtr<Cursor const> m_cursor_override;
     WindowFrame m_frame;
-    Gfx::DisjointRectSet m_pending_paint_rects;
-    Gfx::IntRect m_unmaximized_rect;
+    Gfx::DisjointIntRectSet m_pending_paint_rects;
     Gfx::IntRect m_rect_in_applet_area;
     RefPtr<Menu> m_window_menu;
     MenuItem* m_window_menu_minimize_item { nullptr };
     MenuItem* m_window_menu_maximize_item { nullptr };
     MenuItem* m_window_menu_move_item { nullptr };
     MenuItem* m_window_menu_close_item { nullptr };
+    MenuItem* m_window_menu_roll_up_item { nullptr };
     MenuItem* m_window_menu_always_on_top_item { nullptr };
     MenuItem* m_window_menu_menubar_visibility_item { nullptr };
+    MenuItem* m_window_menu_add_to_quick_launch_item { nullptr };
     Optional<int> m_progress;
     bool m_should_show_menubar { true };
+    bool m_should_show_window_content { true };
     WindowStack* m_window_stack { nullptr };
     RefPtr<Animation> m_animation;
+
+    Optional<pid_t> m_process_id {};
 
 public:
     using List = IntrusiveList<&Window::m_list_node>;

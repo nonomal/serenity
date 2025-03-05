@@ -13,9 +13,7 @@
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-#ifdef __serenity__
     TRY(Core::System::pledge("stdio settime"));
-#endif
 
     Core::ArgsParser args_parser;
     Optional<double> delta;
@@ -23,7 +21,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.parse(arguments);
 
     if (delta.has_value()) {
-        long delta_us = static_cast<long>(round(*delta * 1'000'000));
+        long delta_us = lround(*delta * 1'000'000);
         timeval delta_timeval;
         delta_timeval.tv_sec = delta_us / 1'000'000;
         delta_timeval.tv_usec = delta_us % 1'000'000;
@@ -34,9 +32,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         TRY(Core::System::adjtime(&delta_timeval, nullptr));
     }
 
-#ifdef __serenity__
     TRY(Core::System::pledge("stdio"));
-#endif
 
     timeval remaining_delta_timeval;
     TRY(Core::System::adjtime(nullptr, &remaining_delta_timeval));

@@ -20,11 +20,14 @@ struct StringMetrics {
     struct LineMetrics {
         Vector<MaskedChar> masked_chars;
         size_t length { 0 };
+        size_t visible_length { 0 };
+        Optional<size_t> bit_length { 0 };
 
         size_t total_length() const { return length; }
     };
 
     Vector<LineMetrics> line_metrics;
+    Vector<size_t> grapheme_breaks {};
     size_t total_length { 0 };
     size_t max_line_length { 0 };
 

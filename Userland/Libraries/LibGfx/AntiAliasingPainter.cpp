@@ -1,135 +1,149 @@
 /*
  * Copyright (c) 2021, Ali Mohammad Pur <mpfard@serenityos.org>
  * Copyright (c) 2022, Ben Maxwell <macdue@dueutil.tech>
+ * Copyright (c) 2022, Torsten Engelmann <engelTorsten@gmx.de>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(AK_COMPILER_GCC)
 #    pragma GCC optimize("O3")
 #endif
 
-#include "FillPathImplementation.h"
 #include <AK/Function.h>
 #include <AK/NumericLimits.h>
 #include <LibGfx/AntiAliasingPainter.h>
-#include <LibGfx/Path.h>
+#include <LibGfx/Line.h>
+#include <LibGfx/Painter.h>
 
 namespace Gfx {
 
-// Base algorithm from https://en.wikipedia.org/wiki/Xiaolin_Wu%27s_line_algorithm,
-// because there seems to be no other known method for drawing AA'd lines (?)
-template<AntiAliasingPainter::AntiAliasPolicy policy>
-void AntiAliasingPainter::draw_anti_aliased_line(FloatPoint const& actual_from, FloatPoint const& actual_to, Color color, float thickness, Painter::LineStyle style, Color)
+void AntiAliasingPainter::draw_anti_aliased_line(FloatPoint actual_from, FloatPoint actual_to, Color color, float thickness, LineStyle style, Color, LineLengthMode line_length_mode)
 {
     // FIXME: Implement this :P
-    VERIFY(style == Painter::LineStyle::Solid);
+    VERIFY(style == LineStyle::Solid);
 
-    auto corrected_thickness = thickness > 1 ? thickness - 1 : thickness;
-    auto size = IntSize(corrected_thickness, corrected_thickness);
-    auto plot = [&](int x, int y, float c) {
-        m_underlying_painter.fill_rect(IntRect::centered_on({ x, y }, size), color.with_alpha(color.alpha() * c));
-    };
+    if (color.alpha() == 0)
+        return;
 
-    auto integer_part = [](float x) { return floorf(x); };
-    auto round = [&](float x) { return integer_part(x + 0.5f); };
-    auto fractional_part = [&](float x) { return x - floorf(x); };
-    auto one_minus_fractional_part = [&](float x) { return 1.0f - fractional_part(x); };
+    // FIMXE:
+    // This is not a proper line drawing algorithm.
+    // It's hack-ish AA rotated rectangle painting.
+    // There's probably more optimal ways to achieve this
+    // (though this still runs faster than the previous AA-line code)
+    //
+    // If you, reading this comment, know a better way that:
+    //  1. Does not overpaint (i.e. painting a line with transparency looks correct)
+    //  2. Has square end points (i.e. the line is a rectangle)
+    //  3. Has good anti-aliasing
+    //  4. Is less hacky than this
+    //
+    // Please delete this code and implement it!
 
-    auto draw_line = [&](float x0, float y0, float x1, float y1) {
-        bool steep = fabsf(y1 - y0) > fabsf(x1 - x0);
-
-        if (steep) {
-            swap(x0, y0);
-            swap(x1, y1);
-        }
-
-        if (x0 > x1) {
-            swap(x0, x1);
-            swap(y0, y1);
-        }
-
-        float dx = x1 - x0;
-        float dy = y1 - y0;
-
-        float gradient;
-        if (dx == 0.0f)
-            gradient = 1.0f;
-        else
-            gradient = dy / dx;
-
-        // Handle first endpoint.
-        int x_end = round(x0);
-        int y_end = y0 + gradient * (x_end - x0);
-        float x_gap = one_minus_fractional_part(x0 + 0.5f);
-
-        int xpxl1 = x_end; // This will be used in the main loop.
-        int ypxl1 = integer_part(y_end);
-
-        if (steep) {
-            plot(ypxl1, xpxl1, one_minus_fractional_part(y_end) * x_gap);
-            plot(ypxl1 + 1, xpxl1, fractional_part(y_end) * x_gap);
-        } else {
-            plot(xpxl1, ypxl1, one_minus_fractional_part(y_end) * x_gap);
-            plot(xpxl1, ypxl1 + 1, fractional_part(y_end) * x_gap);
-        }
-
-        float intery = y_end + gradient; // First y-intersection for the main loop.
-
-        // Handle second endpoint.
-        x_end = round(x1);
-        y_end = y1 + gradient * (x_end - x1);
-        x_gap = fractional_part(x1 + 0.5f);
-        int xpxl2 = x_end; // This will be used in the main loop
-        int ypxl2 = integer_part(y_end);
-
-        if (steep) {
-            plot(ypxl2, xpxl2, one_minus_fractional_part(y_end) * x_gap);
-            plot(ypxl2 + 1, xpxl2, fractional_part(y_end) * x_gap);
-        } else {
-            plot(xpxl2, ypxl2, one_minus_fractional_part(y_end) * x_gap);
-            plot(xpxl2, ypxl2 + 1, fractional_part(y_end) * x_gap);
-        }
-
-        // Main loop.
-        if (steep) {
-            for (int x = xpxl1 + 1; x <= xpxl2 - 1; ++x) {
-                if constexpr (policy == AntiAliasPolicy::OnlyEnds) {
-                    plot(integer_part(intery), x, 1);
-                } else {
-                    plot(integer_part(intery), x, one_minus_fractional_part(intery));
-                }
-                plot(integer_part(intery) + 1, x, fractional_part(intery));
-                intery += gradient;
-            }
-        } else {
-            for (int x = xpxl1 + 1; x <= xpxl2 - 1; ++x) {
-                if constexpr (policy == AntiAliasPolicy::OnlyEnds) {
-                    plot(x, integer_part(intery), 1);
-                } else {
-                    plot(x, integer_part(intery), one_minus_fractional_part(intery));
-                }
-                plot(x, integer_part(intery) + 1, fractional_part(intery));
-                intery += gradient;
-            }
-        }
-    };
-
+    int int_thickness = AK::ceil(thickness);
     auto mapped_from = m_transform.map(actual_from);
     auto mapped_to = m_transform.map(actual_to);
-    draw_line(mapped_from.x(), mapped_from.y(), mapped_to.x(), mapped_to.y());
-}
+    auto distance = mapped_to.distance_from(mapped_from);
+    auto length = distance + (line_length_mode == LineLengthMode::PointToPoint);
 
-void AntiAliasingPainter::draw_aliased_line(FloatPoint const& actual_from, FloatPoint const& actual_to, Color color, float thickness, Painter::LineStyle style, Color alternate_color)
-{
-    draw_anti_aliased_line<AntiAliasPolicy::OnlyEnds>(actual_from, actual_to, color, thickness, style, alternate_color);
+    // Axis-aligned lines:
+    if (mapped_from.y() == mapped_to.y()) {
+        auto start_point = (mapped_from.x() < mapped_to.x() ? mapped_from : mapped_to).translated(0, -int_thickness / 2);
+        return fill_rect(Gfx::FloatRect(start_point, { length, thickness }), color);
+    }
+    if (mapped_from.x() == mapped_to.x()) {
+        auto start_point = (mapped_from.y() < mapped_to.y() ? mapped_from : mapped_to).translated(-int_thickness / 2, 0);
+        return fill_rect(Gfx::FloatRect(start_point, { thickness, length }), color);
+    }
+
+    // The painting only works for the positive XY quadrant (because that is easier).
+    // So flip things around until we're there:
+    bool flip_x = false;
+    bool flip_y = false;
+    if (mapped_to.x() < mapped_from.x() && mapped_to.y() < mapped_from.y())
+        swap(mapped_to, mapped_from);
+    if ((flip_x = mapped_to.x() < mapped_from.x()))
+        mapped_to.set_x(2 * mapped_from.x() - mapped_to.x());
+    if ((flip_y = mapped_to.y() < mapped_from.y()))
+        mapped_to.set_y(2 * mapped_from.y() - mapped_to.y());
+
+    auto delta = mapped_to - mapped_from;
+    auto line_angle_radians = AK::atan2(delta.y(), delta.x()) - 0.5f * AK::Pi<float>;
+    float sin_inverse_angle;
+    float cos_inverse_angle;
+    AK::sincos(-line_angle_radians, sin_inverse_angle, cos_inverse_angle);
+
+    auto inverse_rotate_point = [=](FloatPoint point) {
+        return Gfx::FloatPoint(
+            point.x() * cos_inverse_angle - point.y() * sin_inverse_angle,
+            point.y() * cos_inverse_angle + point.x() * sin_inverse_angle);
+    };
+
+    Gfx::FloatRect line_rect({ -(thickness * 255) / 2.0f, 0 }, Gfx::FloatSize(thickness * 255, length * 255));
+
+    auto gradient = delta.y() / delta.x();
+    // Work out how long we need to scan along the X-axis to reach the other side of the line.
+    // E.g. for a vertical line this would be `thickness', in general it is this:
+    int scan_line_length = AK::ceil(AK::sqrt((gradient * gradient + 1) * thickness * thickness) / gradient);
+
+    auto x_gradient = 1 / gradient;
+    int x_step = floorf(x_gradient);
+
+    float x_error = 0;
+    float x_error_per_y = x_gradient - x_step;
+
+    auto y_offset = int_thickness + 1;
+    auto x_offset = int(x_gradient * y_offset);
+    int const line_start_x = mapped_from.x();
+    int const line_start_y = mapped_from.y();
+    int const line_end_x = mapped_to.x();
+    int const line_end_y = mapped_to.y();
+
+    auto set_pixel = [=, this](int x, int y, Gfx::Color color) {
+        // FIXME: The lines seem slightly off (<= 1px) when flipped.
+        if (flip_x)
+            x = 2 * line_start_x - x;
+        if (flip_y)
+            y = 2 * line_start_y - y;
+        m_underlying_painter.set_pixel(x, y, color, true);
+    };
+
+    // Scan a bit extra to avoid issues from the x_error:
+    int const overscan = max(x_step, 1) * 2 + 1;
+    int x = line_start_x - x_offset;
+    int const center_offset = (scan_line_length + 1) / 2;
+    for (int y = line_start_y - y_offset; y < line_end_y + y_offset; y += 1) {
+        for (int i = -overscan; i < scan_line_length + overscan; i++) {
+            int scan_x_pos = x + i - center_offset;
+            // Avoid scanning over pixels definitely outside the line:
+            int dx = (line_start_x - int_thickness) - (scan_x_pos + 1);
+            if (dx > 0) {
+                i += dx;
+                continue;
+            }
+            if (line_end_x + int_thickness <= scan_x_pos - 1)
+                break;
+            auto sample = inverse_rotate_point(Gfx::FloatPoint(scan_x_pos - line_start_x, y - line_start_y));
+            Gfx::FloatRect sample_px(sample * 255, Gfx::FloatSize(255, 255));
+            sample_px.intersect(line_rect);
+            auto alpha = (sample_px.width() * sample_px.height()) / 255.0f;
+            alpha = (alpha * color.alpha()) / 255;
+            set_pixel(scan_x_pos, y, color.with_alpha(alpha));
+        }
+        x += x_step;
+        x_error += x_error_per_y;
+        if (x_error > 1.0f) {
+            x_error -= 1.0f;
+            x += 1;
+        }
+    }
 }
 
 void AntiAliasingPainter::draw_dotted_line(IntPoint point1, IntPoint point2, Color color, int thickness)
 {
     // AA circles don't really work below a radius of 2px.
     if (thickness < 4)
-        return m_underlying_painter.draw_line(point1, point2, color, thickness, Painter::LineStyle::Dotted);
+        return m_underlying_painter.draw_line(point1, point2, color, thickness, LineStyle::Dotted);
 
     auto draw_spaced_dots = [&](int start, int end, auto to_point) {
         int step = thickness * 2;
@@ -167,82 +181,86 @@ void AntiAliasingPainter::draw_dotted_line(IntPoint point1, IntPoint point2, Col
     }
 }
 
-void AntiAliasingPainter::draw_line(FloatPoint const& actual_from, FloatPoint const& actual_to, Color color, float thickness, Painter::LineStyle style, Color alternate_color)
+void AntiAliasingPainter::draw_line(IntPoint actual_from, IntPoint actual_to, Color color, float thickness, LineStyle style, Color alternate_color, LineLengthMode line_length_mode)
 {
-    if (style == Painter::LineStyle::Dotted)
+    draw_line(actual_from.to_type<float>(), actual_to.to_type<float>(), color, thickness, style, alternate_color, line_length_mode);
+}
+
+void AntiAliasingPainter::draw_line(FloatPoint actual_from, FloatPoint actual_to, Color color, float thickness, LineStyle style, Color alternate_color, LineLengthMode line_length_mode)
+{
+    if (style == LineStyle::Dotted)
         return draw_dotted_line(actual_from.to_rounded<int>(), actual_to.to_rounded<int>(), color, static_cast<int>(round(thickness)));
-    draw_anti_aliased_line<AntiAliasPolicy::Full>(actual_from, actual_to, color, thickness, style, alternate_color);
+    draw_anti_aliased_line(actual_from, actual_to, color, thickness, style, alternate_color, line_length_mode);
 }
 
-void AntiAliasingPainter::fill_path(Path& path, Color color, Painter::WindingRule rule)
+void AntiAliasingPainter::stroke_path(Path const& path, Color color, Path::StrokeStyle const& stroke_style)
 {
-    Detail::fill_path<Detail::FillPathMode::AllowFloatingPoints>(*this, path, color, rule);
+    if (stroke_style.thickness <= 0)
+        return;
+    // FIXME: Cache this? Probably at a higher level such as in LibWeb?
+    fill_path(path.stroke_to_fill(stroke_style), color);
 }
 
-void AntiAliasingPainter::stroke_path(Path const& path, Color color, float thickness)
+void AntiAliasingPainter::stroke_path(Path const& path, Gfx::PaintStyle const& paint_style, Path::StrokeStyle const& stroke_style, float opacity)
 {
-    FloatPoint cursor;
-
-    for (auto& segment : path.segments()) {
-        switch (segment.type()) {
-        case Segment::Type::Invalid:
-            VERIFY_NOT_REACHED();
-        case Segment::Type::MoveTo:
-            cursor = segment.point();
-            break;
-        case Segment::Type::LineTo:
-            draw_line(cursor, segment.point(), color, thickness);
-            cursor = segment.point();
-            break;
-        case Segment::Type::QuadraticBezierCurveTo: {
-            auto& through = static_cast<QuadraticBezierCurveSegment const&>(segment).through();
-            draw_quadratic_bezier_curve(through, cursor, segment.point(), color, thickness);
-            cursor = segment.point();
-            break;
-        }
-        case Segment::Type::CubicBezierCurveTo: {
-            auto& curve = static_cast<CubicBezierCurveSegment const&>(segment);
-            auto& through_0 = curve.through_0();
-            auto& through_1 = curve.through_1();
-            draw_cubic_bezier_curve(through_0, through_1, cursor, segment.point(), color, thickness);
-            cursor = segment.point();
-            break;
-        }
-        case Segment::Type::EllipticalArcTo:
-            auto& arc = static_cast<EllipticalArcSegment const&>(segment);
-            draw_elliptical_arc(cursor, segment.point(), arc.center(), arc.radii(), arc.x_axis_rotation(), arc.theta_1(), arc.theta_delta(), color, thickness);
-            cursor = segment.point();
-            break;
-        }
-    }
+    if (stroke_style.thickness <= 0)
+        return;
+    // FIXME: Cache this? Probably at a higher level such as in LibWeb?
+    fill_path(path.stroke_to_fill(stroke_style), paint_style, opacity);
 }
 
-void AntiAliasingPainter::draw_elliptical_arc(FloatPoint const& p1, FloatPoint const& p2, FloatPoint const& center, FloatPoint const& radii, float x_axis_rotation, float theta_1, float theta_delta, Color color, float thickness, Painter::LineStyle style)
+void AntiAliasingPainter::fill_rect(FloatRect const& float_rect, Color color)
 {
-    Painter::for_each_line_segment_on_elliptical_arc(p1, p2, center, radii, x_axis_rotation, theta_1, theta_delta, [&](FloatPoint const& fp1, FloatPoint const& fp2) {
-        draw_line(fp1, fp2, color, thickness, style);
-    });
-}
+    // Draw the integer part of the rectangle:
+    float right_x = float_rect.x() + float_rect.width();
+    float bottom_y = float_rect.y() + float_rect.height();
+    int x1 = ceilf(float_rect.x());
+    int y1 = ceilf(float_rect.y());
+    int x2 = floorf(right_x);
+    int y2 = floorf(bottom_y);
+    auto solid_rect = Gfx::IntRect::from_two_points({ x1, y1 }, { x2, y2 });
+    m_underlying_painter.fill_rect(solid_rect, color);
 
-void AntiAliasingPainter::draw_quadratic_bezier_curve(FloatPoint const& control_point, FloatPoint const& p1, FloatPoint const& p2, Color color, float thickness, Painter::LineStyle style)
-{
-    Painter::for_each_line_segment_on_bezier_curve(control_point, p1, p2, [&](FloatPoint const& fp1, FloatPoint const& fp2) {
-        draw_line(fp1, fp2, color, thickness, style);
-    });
-}
+    if (float_rect == solid_rect)
+        return;
 
-void AntiAliasingPainter::draw_cubic_bezier_curve(FloatPoint const& control_point_0, FloatPoint const& control_point_1, FloatPoint const& p1, FloatPoint const& p2, Color color, float thickness, Painter::LineStyle style)
-{
-    Painter::for_each_line_segment_on_cubic_bezier_curve(control_point_0, control_point_1, p1, p2, [&](FloatPoint const& fp1, FloatPoint const& fp2) {
-        draw_line(fp1, fp2, color, thickness, style);
-    });
+    // Draw the rest:
+    float left_subpixel = x1 - float_rect.x();
+    float top_subpixel = y1 - float_rect.y();
+    float right_subpixel = right_x - x2;
+    float bottom_subpixel = bottom_y - y2;
+    float top_left_subpixel = top_subpixel * left_subpixel;
+    float top_right_subpixel = top_subpixel * right_subpixel;
+    float bottom_left_subpixel = bottom_subpixel * left_subpixel;
+    float bottom_right_subpixel = bottom_subpixel * right_subpixel;
+
+    auto subpixel = [&](float alpha) {
+        return color.with_alpha(color.alpha() * alpha);
+    };
+
+    auto set_pixel = [&](int x, int y, float alpha) {
+        m_underlying_painter.set_pixel(x, y, subpixel(alpha), true);
+    };
+
+    auto line_to_rect = [&](int x1, int y1, int x2, int y2) {
+        return IntRect::from_two_points({ x1, y1 }, { x2 + 1, y2 + 1 });
+    };
+
+    set_pixel(x1 - 1, y1 - 1, top_left_subpixel);
+    set_pixel(x2, y1 - 1, top_right_subpixel);
+    set_pixel(x2, y2, bottom_right_subpixel);
+    set_pixel(x1 - 1, y2, bottom_left_subpixel);
+    m_underlying_painter.fill_rect(line_to_rect(x1, y1 - 1, x2 - 1, y1 - 1), subpixel(top_subpixel));
+    m_underlying_painter.fill_rect(line_to_rect(x1, y2, x2 - 1, y2), subpixel(bottom_subpixel));
+    m_underlying_painter.fill_rect(line_to_rect(x1 - 1, y1, x1 - 1, y2 - 1), subpixel(left_subpixel));
+    m_underlying_painter.fill_rect(line_to_rect(x2, y1, x2, y2 - 1), subpixel(right_subpixel));
 }
 
 void AntiAliasingPainter::draw_ellipse(IntRect const& a_rect, Color color, int thickness)
 {
     // FIXME: Come up with an allocation-free version of this!
     // Using draw_line() for segments of an ellipse was attempted but gave really poor results :^(
-    // There probably is a way to adjust the fill of draw_ellipse_part() to do this, but gettting it rendering correctly is tricky.
+    // There probably is a way to adjust the fill of draw_ellipse_part() to do this, but getting it rendering correctly is tricky.
     // The outline of the steps required to paint it efficiently is:
     //     - Paint the outer ellipse without the fill (from the fill() lambda in draw_ellipse_part())
     //     - Paint the inner ellipse, but in the set_pixel() invert the alpha values
@@ -252,7 +270,7 @@ void AntiAliasingPainter::draw_ellipse(IntRect const& a_rect, Color color, int t
     auto color_no_alpha = color;
     color_no_alpha.set_alpha(255);
     auto outline_ellipse_bitmap = ({
-        auto bitmap = Bitmap::try_create(BitmapFormat::BGRA8888, a_rect.size());
+        auto bitmap = Bitmap::create(BitmapFormat::BGRA8888, a_rect.size());
         if (bitmap.is_error())
             return warnln("Failed to allocate temporary bitmap for antialiased outline ellipse!");
         bitmap.release_value();
@@ -268,7 +286,7 @@ void AntiAliasingPainter::draw_ellipse(IntRect const& a_rect, Color color, int t
     m_underlying_painter.blit(a_rect.location(), outline_ellipse_bitmap, outline_ellipse_bitmap->rect(), color.alpha() / 255.);
 }
 
-void AntiAliasingPainter::fill_circle(IntPoint const& center, int radius, Color color, BlendMode blend_mode)
+void AntiAliasingPainter::fill_circle(IntPoint center, int radius, Color color, BlendMode blend_mode)
 {
     if (radius <= 0)
         return;
@@ -331,8 +349,8 @@ FLATTEN AntiAliasingPainter::Range AntiAliasingPainter::draw_ellipse_part(
     int f_squared = y * y;
 
     // 1st and 2nd order differences of f(i)*f(i)
-    int delta_f_squared = -(static_cast<int64_t>(b_squared) * subpixel_resolution * subpixel_resolution) / a_squared;
-    int delta2_f_squared = 2 * delta_f_squared;
+    int delta_f_squared = (static_cast<int64_t>(b_squared) * subpixel_resolution * subpixel_resolution) / a_squared;
+    int delta2_f_squared = -delta_f_squared - delta_f_squared;
 
     // edge_intersection_area/subpixel_resolution = percentage of pixel intersected by circle
     // (aka the alpha for the pixel)
@@ -374,11 +392,6 @@ FLATTEN AntiAliasingPainter::Range AntiAliasingPainter::draw_ellipse_part(
 
     auto correct = [&] {
         int error = y - y_hat;
-
-        // FIXME: The alpha values seem too low, which makes things look
-        // overly pointy. This fixes that, though there's probably a better
-        // solution to be found. (This issue seems to exist in the base algorithm)
-        error /= 4;
 
         delta2_y += error;
         delta_y += error;
@@ -573,18 +586,18 @@ void AntiAliasingPainter::fill_rect_with_rounded_corners(IntRect const& a_rect, 
     auto fill_corner = [&](auto const& ellipse_center, auto const& corner_point, CornerRadius const& corner) {
         PainterStateSaver save { m_underlying_painter };
         m_underlying_painter.add_clip_rect(IntRect::from_two_points(ellipse_center, corner_point));
-        fill_ellipse(IntRect::centered_at(ellipse_center, { corner.horizontal_radius * 2, corner.vertical_radius * 2 }), color, blend_mode);
+        fill_ellipse(IntRect::centered_on(ellipse_center, { corner.horizontal_radius * 2, corner.vertical_radius * 2 }), color, blend_mode);
     };
 
     auto bounding_rect = a_rect.inflated(0, 1, 1, 0);
     if (top_left)
         fill_corner(top_left_corner, bounding_rect.top_left(), top_left);
     if (top_right)
-        fill_corner(top_right_corner, bounding_rect.top_right(), top_right);
+        fill_corner(top_right_corner, bounding_rect.top_right().moved_left(1), top_right);
     if (bottom_left)
-        fill_corner(bottom_left_corner, bounding_rect.bottom_left(), bottom_left);
+        fill_corner(bottom_left_corner, bounding_rect.bottom_left().moved_up(1), bottom_left);
     if (bottom_right)
-        fill_corner(bottom_right_corner, bounding_rect.bottom_right(), bottom_right);
+        fill_corner(bottom_right_corner, bounding_rect.bottom_right().translated(-1), bottom_right);
 }
 
 }

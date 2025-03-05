@@ -1,140 +1,157 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/FixedStringBuffer.h>
 #include <Kernel/FileSystem/Custody.h>
-#include <Kernel/FileSystem/DevPtsFS.h>
-#include <Kernel/FileSystem/DevTmpFS.h>
-#include <Kernel/FileSystem/Ext2FileSystem.h>
-#include <Kernel/FileSystem/ISO9660FileSystem.h>
-#include <Kernel/FileSystem/Plan9FileSystem.h>
-#include <Kernel/FileSystem/ProcFS.h>
-#include <Kernel/FileSystem/SysFS.h>
-#include <Kernel/FileSystem/TmpFS.h>
+#include <Kernel/FileSystem/MountFile.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
-struct FileSystemInitializer {
-    StringView short_name;
-    StringView name;
-    bool requires_open_file_description { false };
-    bool requires_block_device { false };
-    bool requires_seekable_file { false };
-    ErrorOr<NonnullRefPtr<FileSystem>> (*create_with_fd)(OpenFileDescription&) = nullptr;
-    ErrorOr<NonnullRefPtr<FileSystem>> (*create)(void) = nullptr;
-};
-
-static constexpr FileSystemInitializer s_initializers[] = {
-    { "proc"sv, "ProcFS"sv, false, false, false, {}, ProcFS::try_create },
-    { "devpts"sv, "DevPtsFS"sv, false, false, false, {}, DevPtsFS::try_create },
-    { "dev"sv, "DevTmpFS"sv, false, false, false, {}, DevTmpFS::try_create },
-    { "sys"sv, "SysFS"sv, false, false, false, {}, SysFS::try_create },
-    { "tmp"sv, "TmpFS"sv, false, false, false, {}, TmpFS::try_create },
-    { "ext2"sv, "Ext2FS"sv, true, true, true, Ext2FS::try_create, {} },
-    { "9p"sv, "Plan9FS"sv, true, true, true, Plan9FS::try_create, {} },
-    { "iso9660"sv, "ISO9660FS"sv, true, true, true, ISO9660FS::try_create, {} },
-};
-
-static ErrorOr<NonnullRefPtr<FileSystem>> create_filesystem_instance(StringView fs_type, OpenFileDescription* possible_description)
+ErrorOr<FlatPtr> Process::sys$copy_mount(Userspace<Syscall::SC_copy_mount_params const*> user_params)
 {
-    for (auto& initializer_entry : s_initializers) {
-        if (fs_type != initializer_entry.short_name && fs_type != initializer_entry.name)
-            continue;
-        if (!initializer_entry.requires_open_file_description) {
-            VERIFY(initializer_entry.create);
-            NonnullRefPtr<FileSystem> fs = TRY(initializer_entry.create());
-            return fs;
-        }
-        VERIFY(initializer_entry.create_with_fd);
-        if (!possible_description)
-            return EBADF;
-        OpenFileDescription& description = *possible_description;
-
-        if (initializer_entry.requires_block_device && !description.file().is_block_device())
-            return ENOTBLK;
-        if (initializer_entry.requires_seekable_file && !description.file().is_seekable()) {
-            dbgln("mount: this is not a seekable file");
-            return ENODEV;
-        }
-        NonnullRefPtr<FileSystem> fs = TRY(initializer_entry.create_with_fd(description));
-        return fs;
-    }
-    return ENODEV;
-}
-
-ErrorOr<FlatPtr> Process::sys$mount(Userspace<Syscall::SC_mount_params const*> user_params)
-{
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    TRY(require_no_promises());
-    if (!is_superuser())
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    TRY(require_promise(Pledge::mount));
+    auto credentials = this->credentials();
+    if (!credentials->is_superuser())
         return EPERM;
 
     auto params = TRY(copy_typed_from_user(user_params));
 
-    auto source_fd = params.source_fd;
-    auto target = TRY(try_copy_kstring_from_user(params.target));
-    auto fs_type_string = TRY(try_copy_kstring_from_user(params.fs_type));
-    auto fs_type = fs_type_string->view();
+    // NOTE: If some userspace program uses MS_REMOUNT, return EINVAL to indicate that we never want this
+    // flag to appear in the mount table...
+    if (params.flags & MS_REMOUNT || params.flags & MS_BIND)
+        return Error::from_errno(EINVAL);
 
-    auto description_or_error = open_file_description(source_fd);
-    if (!description_or_error.is_error())
-        dbgln("mount {}: source fd {} @ {}", fs_type, source_fd, target);
-    else
-        dbgln("mount {} @ {}", fs_type, target);
+    auto original_path = TRY(try_copy_kstring_from_user(params.original_path));
+    auto target_path = TRY(try_copy_kstring_from_user(params.target_path));
 
-    auto target_custody = TRY(VirtualFileSystem::the().resolve_path(target->view(), current_directory()));
+    auto mount_original_context = TRY(context_for_mount_operation(params.original_vfs_root_context_id, original_path->view()));
+    auto mount_target_context = TRY(context_for_mount_operation(params.target_vfs_root_context_id, target_path->view()));
 
-    if (params.flags & MS_REMOUNT) {
-        // We're not creating a new mount, we're updating an existing one!
-        TRY(VirtualFileSystem::the().remount(target_custody, params.flags & ~MS_REMOUNT));
-        return 0;
-    }
-
-    if (params.flags & MS_BIND) {
-        // We're doing a bind mount.
-        if (description_or_error.is_error())
-            return description_or_error.release_error();
-        auto description = description_or_error.release_value();
-        if (!description->custody()) {
-            // We only support bind-mounting inodes, not arbitrary files.
-            return ENODEV;
-        }
-        TRY(VirtualFileSystem::the().bind_mount(*description->custody(), target_custody, params.flags));
-        return 0;
-    }
-
-    RefPtr<FileSystem> fs;
-
-    if (!description_or_error.is_error()) {
-        auto description = description_or_error.release_value();
-        fs = TRY(create_filesystem_instance(fs_type, description.ptr()));
-        auto source_pseudo_path = TRY(description->pseudo_path());
-        dbgln("mount: attempting to mount {} on {}", source_pseudo_path, target);
-    } else {
-        fs = TRY(create_filesystem_instance(fs_type, {}));
-    }
-
-    TRY(fs->initialize());
-    TRY(VirtualFileSystem::the().mount(*fs, target_custody, params.flags));
+    TRY(VirtualFileSystem::copy_mount(
+        mount_original_context.custody,
+        mount_target_context.vfs_root_context,
+        mount_target_context.custody,
+        params.flags));
     return 0;
 }
 
-ErrorOr<FlatPtr> Process::sys$umount(Userspace<char const*> user_mountpoint, size_t mountpoint_length)
+ErrorOr<FlatPtr> Process::sys$fsopen(Userspace<Syscall::SC_fsopen_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    if (!is_superuser())
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    TRY(require_promise(Pledge::mount));
+    auto credentials = this->credentials();
+    if (!credentials->is_superuser())
+        return Error::from_errno(EPERM);
+    auto params = TRY(copy_typed_from_user(user_params));
+    // NOTE: 16 characters should be enough for any fstype today and in the future.
+    auto fs_type_string = TRY(get_syscall_name_string_fixed_buffer<16>(params.fs_type));
+
+    // NOTE: If some userspace program uses MS_REMOUNT, return EINVAL to indicate that we never want this
+    // flag to appear in the mount table...
+    if (params.flags & MS_REMOUNT || params.flags & MS_BIND)
+        return Error::from_errno(EINVAL);
+
+    auto const* fs_type_initializer = TRY(VirtualFileSystem::find_filesystem_type_initializer(fs_type_string.representable_view()));
+    VERIFY(fs_type_initializer);
+    auto mount_file = TRY(MountFile::create(*fs_type_initializer, params.flags));
+    auto description = TRY(OpenFileDescription::try_create(move(mount_file)));
+    return m_fds.with_exclusive([&](auto& fds) -> ErrorOr<FlatPtr> {
+        auto new_fd = TRY(fds.allocate());
+        fds[new_fd.fd].set(move(description), FD_CLOEXEC);
+        return new_fd.fd;
+    });
+}
+
+ErrorOr<FlatPtr> Process::sys$fsmount(Userspace<Syscall::SC_fsmount_params const*> user_params)
+{
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    TRY(require_promise(Pledge::mount));
+    auto credentials = this->credentials();
+    if (!credentials->is_superuser())
+        return Error::from_errno(EPERM);
+
+    auto params = TRY(copy_typed_from_user(user_params));
+    auto mount_description = TRY(open_file_description(params.mount_fd));
+    if (!mount_description->is_mount_file())
+        return Error::from_errno(EINVAL);
+
+    RefPtr<OpenFileDescription> source_description = TRY(open_file_description_ignoring_negative(params.source_fd));
+    auto target = TRY(try_copy_kstring_from_user(params.target));
+    auto mount_target_context = TRY(context_for_mount_operation(params.vfs_root_context_id, target->view()));
+    auto flags = mount_description->mount_file()->mount_flags();
+    TRY(VirtualFileSystem::mount(mount_target_context.vfs_root_context, *mount_description->mount_file(), source_description.ptr(), mount_target_context.custody, flags));
+    return 0;
+}
+
+ErrorOr<FlatPtr> Process::sys$remount(Userspace<Syscall::SC_remount_params const*> user_params)
+{
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    TRY(require_promise(Pledge::mount));
+    auto credentials = this->credentials();
+    if (!credentials->is_superuser())
         return EPERM;
 
-    TRY(require_no_promises());
+    auto params = TRY(copy_typed_from_user(user_params));
+    if (params.flags & MS_REMOUNT)
+        return EINVAL;
+    if (params.flags & MS_BIND)
+        return EINVAL;
 
-    auto mountpoint = TRY(get_syscall_path_argument(user_mountpoint, mountpoint_length));
-    auto custody = TRY(VirtualFileSystem::the().resolve_path(mountpoint->view(), current_directory()));
-    auto& guest_inode = custody->inode();
-    TRY(VirtualFileSystem::the().unmount(guest_inode));
+    auto target = TRY(try_copy_kstring_from_user(params.target));
+    auto current_vfs_root_context = Process::current().vfs_root_context();
+    auto mount_target_context = TRY(context_for_mount_operation(params.vfs_root_context_id, target->view()));
+    TRY(VirtualFileSystem::remount(mount_target_context.vfs_root_context, mount_target_context.custody, params.flags));
+    return 0;
+}
+
+ErrorOr<FlatPtr> Process::sys$bindmount(Userspace<Syscall::SC_bindmount_params const*> user_params)
+{
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    TRY(require_promise(Pledge::mount));
+    auto credentials = this->credentials();
+    if (!credentials->is_superuser())
+        return EPERM;
+
+    auto params = TRY(copy_typed_from_user(user_params));
+    if (params.flags & MS_REMOUNT)
+        return EINVAL;
+    if (params.flags & MS_BIND)
+        return EINVAL;
+
+    auto source_fd = params.source_fd;
+    auto target = TRY(try_copy_kstring_from_user(params.target));
+    auto mount_target_context = TRY(context_for_mount_operation(params.vfs_root_context_id, target->view()));
+
+    auto description = TRY(open_file_description(source_fd));
+    if (!description->custody()) {
+        // NOTE: We only support bind-mounting inodes, not arbitrary files.
+        return ENODEV;
+    }
+
+    TRY(VirtualFileSystem::bind_mount(mount_target_context.vfs_root_context, *description->custody(), mount_target_context.custody, params.flags));
+    return 0;
+}
+
+ErrorOr<FlatPtr> Process::sys$umount(Userspace<Syscall::SC_umount_params const*> user_params)
+{
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    auto credentials = this->credentials();
+    if (!credentials->is_superuser())
+        return EPERM;
+
+    TRY(require_promise(Pledge::mount));
+
+    auto params = TRY(copy_typed_from_user(user_params));
+    auto target = TRY(try_copy_kstring_from_user(params.target));
+    auto mount_target_context = TRY(context_for_mount_operation(params.vfs_root_context_id, target->view()));
+    TRY(VirtualFileSystem::unmount(mount_target_context.vfs_root_context, mount_target_context.custody));
     return 0;
 }
 

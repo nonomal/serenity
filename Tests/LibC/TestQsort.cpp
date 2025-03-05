@@ -6,13 +6,13 @@
 
 #include <LibTest/TestCase.h>
 
+#include <AK/ByteString.h>
 #include <AK/QuickSort.h>
 #include <AK/Random.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
 #include <stdlib.h>
 
-const size_t NUM_RUNS = 10;
+size_t const NUM_RUNS = 10;
 
 struct SortableObject {
     int m_key;
@@ -38,15 +38,6 @@ static int calc_payload_for_pos(size_t pos)
     return pos ^ (pos << 8) ^ (pos << 16) ^ (pos << 24);
 }
 
-static void shuffle_vec(Vector<SortableObject>& test_objects)
-{
-    for (size_t i = 0; i < test_objects.size() * 3; ++i) {
-        auto i1 = get_random_uniform(test_objects.size());
-        auto i2 = get_random_uniform(test_objects.size());
-        swap(test_objects[i1], test_objects[i2]);
-    }
-}
-
 TEST_CASE(quick_sort)
 {
     // Generate vector of SortableObjects in sorted order, with payloads determined by their sorted positions
@@ -56,14 +47,14 @@ TEST_CASE(quick_sort)
     }
     for (size_t i = 0; i < NUM_RUNS; i++) {
         // Shuffle the vector, then sort it again
-        shuffle_vec(test_objects);
+        shuffle(test_objects);
         qsort(test_objects.data(), test_objects.size(), sizeof(SortableObject), compare_sortable_object);
         // Check that the objects are sorted by key
         for (auto i = 0u; i + 1 < test_objects.size(); ++i) {
             auto const& key1 = test_objects[i].m_key;
             auto const& key2 = test_objects[i + 1].m_key;
             if (key1 > key2) {
-                FAIL(String::formatted("saw key {} before key {}\n", key1, key2));
+                FAIL(ByteString::formatted("saw key {} before key {}\n", key1, key2));
             }
         }
         // Check that the object's payloads have not been corrupted
@@ -71,7 +62,7 @@ TEST_CASE(quick_sort)
             auto const expected = calc_payload_for_pos(i);
             auto const payload = test_objects[i].m_payload;
             if (payload != expected) {
-                FAIL(String::formatted("Expected payload {} for pos {}, got payload {}", expected, i, payload));
+                FAIL(ByteString::formatted("Expected payload {} for pos {}, got payload {}", expected, i, payload));
             }
         }
     }

@@ -15,21 +15,22 @@ namespace JS {
 // 27.1.4.3 Properties of Async-from-Sync Iterator Instances, https://tc39.es/ecma262/#sec-properties-of-async-from-sync-iterator-instances
 class AsyncFromSyncIterator final : public Object {
     JS_OBJECT(AsyncFromSyncIterator, Object);
+    JS_DECLARE_ALLOCATOR(AsyncFromSyncIterator);
 
 public:
-    static AsyncFromSyncIterator* create(GlobalObject&, Iterator sync_iterator_record);
+    static NonnullGCPtr<AsyncFromSyncIterator> create(Realm&, NonnullGCPtr<IteratorRecord> sync_iterator_record);
 
-    explicit AsyncFromSyncIterator(GlobalObject&, Iterator sync_iterator_record);
-    virtual void initialize(GlobalObject&) override;
     virtual ~AsyncFromSyncIterator() override = default;
 
     void visit_edges(Visitor& visitor) override;
 
-    Iterator& sync_iterator_record() { return m_sync_iterator_record; }
-    Iterator const& sync_iterator_record() const { return m_sync_iterator_record; }
+    IteratorRecord& sync_iterator_record() { return m_sync_iterator_record; }
+    IteratorRecord const& sync_iterator_record() const { return m_sync_iterator_record; }
 
 private:
-    Iterator m_sync_iterator_record; // [[SyncIteratorRecord]]
+    AsyncFromSyncIterator(Realm&, NonnullGCPtr<IteratorRecord> sync_iterator_record);
+
+    NonnullGCPtr<IteratorRecord> m_sync_iterator_record; // [[SyncIteratorRecord]]
 };
 
 }

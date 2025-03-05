@@ -9,8 +9,10 @@
 namespace WebContent {
 
 class ConnectionFromClient;
-class ConsoleGlobalObject;
+class ConsoleGlobalEnvironmentExtensions;
 class PageHost;
+class PageClient;
 class WebContentConsoleClient;
+class WebDriverConnection;
 
 }

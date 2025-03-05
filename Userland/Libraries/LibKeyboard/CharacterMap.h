@@ -6,8 +6,8 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Error.h>
-#include <AK/String.h>
 #include <LibKeyboard/CharacterMapData.h>
 
 namespace Keyboard {
@@ -15,18 +15,18 @@ namespace Keyboard {
 class CharacterMap {
 
 public:
-    CharacterMap(String const& map_name, CharacterMapData const& map_data);
-    static ErrorOr<CharacterMap> load_from_file(String const& filename);
+    CharacterMap(ByteString const& map_name, CharacterMapData const& map_data);
+    static ErrorOr<CharacterMap> load_from_file(ByteString const& filename);
 
     int set_system_map();
     static ErrorOr<CharacterMap> fetch_system_map();
 
-    CharacterMapData const& character_map_data() const { return m_character_map_data; };
-    String const& character_map_name() const;
+    CharacterMapData const& character_map_data() const { return m_character_map_data; }
+    ByteString const& character_map_name() const;
 
 private:
     CharacterMapData m_character_map_data;
-    String m_character_map_name;
+    ByteString m_character_map_name;
 };
 
 }

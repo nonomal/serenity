@@ -9,12 +9,12 @@
 
 #include <AK/Vector.h>
 #include <LibGUI/Model.h>
-#include <sys/arch/i386/regs.h>
+#include <sys/arch/regs.h>
 
 namespace HackStudio {
 
 struct RegisterData {
-    String name;
+    ByteString name;
     FlatPtr value;
     bool changed { false };
 };
@@ -41,7 +41,7 @@ public:
 
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return Column::__Count; }
-    virtual String column_name(int) const override;
+    virtual ErrorOr<String> column_name(int) const override;
     virtual GUI::Variant data(const GUI::ModelIndex&, GUI::ModelRole) const override;
 
     PtraceRegisters const& raw_registers() const { return m_raw_registers; }

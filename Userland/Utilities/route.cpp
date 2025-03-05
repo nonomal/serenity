@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteString.h>
 #include <AK/IPv4Address.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/QuickSort.h>
-#include <AK/String.h>
 #include <AK/StringView.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
@@ -25,7 +25,7 @@
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio rpath inet"));
-    TRY(Core::System::unveil("/proc/net", "r"));
+    TRY(Core::System::unveil("/sys/kernel/net", "r"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
     StringView modify_action;
@@ -51,10 +51,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     };
 
     struct Column {
-        String title;
+        ByteString title;
         Alignment alignment { Alignment::Left };
         int width { 0 };
-        String buffer;
+        ByteString buffer;
     };
 
     Vector<Column> columns;
@@ -89,8 +89,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     };
 
     if (modify_action.is_empty()) {
-        auto file = TRY(Core::File::open("/proc/net/route", Core::OpenMode::ReadOnly));
-        auto file_contents = file->read_all();
+        auto file = TRY(Core::File::open("/sys/kernel/net/route"sv, Core::File::OpenMode::Read));
+        auto file_contents = TRY(file->read_until_eof());
         auto json = TRY(JsonValue::from_string(file_contents));
 
         outln("Kernel IP routing table");
@@ -101,17 +101,17 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
         Vector<JsonValue> sorted_regions = json.as_array().values();
         quick_sort(sorted_regions, [](auto& a, auto& b) {
-            return a.as_object().get("destination"sv).to_string() < b.as_object().get("destination"sv).to_string();
+            return a.as_object().get_byte_string("destination"sv).value_or({}) < b.as_object().get_byte_string("destination"sv).value_or({});
         });
 
         for (auto& value : sorted_regions) {
             auto& if_object = value.as_object();
 
-            auto destination = if_object.get("destination"sv).to_string();
-            auto gateway = if_object.get("gateway"sv).to_string();
-            auto genmask = if_object.get("genmask"sv).to_string();
-            auto interface = if_object.get("interface"sv).to_string();
-            auto flags = if_object.get("flags"sv).to_u32();
+            auto destination = if_object.get_byte_string("destination"sv).value_or({});
+            auto gateway = if_object.get_byte_string("gateway"sv).value_or({});
+            auto genmask = if_object.get_byte_string("genmask"sv).value_or({});
+            auto interface = if_object.get_byte_string("interface"sv).value_or({});
+            auto flags = if_object.get_u32("flags"sv).value_or(0);
 
             StringBuilder flags_builder;
             if (flags & RTF_UP)
@@ -157,8 +157,18 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         if (!value_host_address.is_empty())
             destination = AK::IPv4Address::from_string(value_host_address);
 
-        if (!value_network_address.is_empty())
-            destination = AK::IPv4Address::from_string(value_network_address);
+        StringView address;
+        StringView cidr;
+        if (!value_network_address.is_empty()) {
+            // Check if a CIDR notation was provided and parse accordingly
+            if (auto position = value_network_address.find('/'); position.has_value()) {
+                address = value_network_address.substring_view(0, position.value());
+                cidr = value_network_address.substring_view(position.value() + 1);
+            } else {
+                address = value_network_address;
+            }
+            destination = AK::IPv4Address::from_string(address);
+        }
 
         if (!destination.has_value()) {
             warnln("Invalid destination IPv4 address");
@@ -171,7 +181,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             return 1;
         }
 
-        auto genmask = AK::IPv4Address::from_string(value_netmask_address);
+        Optional<IPv4Address> genmask;
+        if (auto cidr_int = cidr.to_number<int>(); cidr_int.has_value())
+            genmask = AK::IPv4Address::netmask_from_cidr(cidr_int.value());
+        else
+            genmask = AK::IPv4Address::from_string(value_netmask_address);
+
         if (!genmask.has_value()) {
             warnln("Invalid genmask IPv4 address: '{}'", value_netmask_address);
             return 1;

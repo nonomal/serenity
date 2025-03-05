@@ -1,11 +1,10 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 set -e
 
-die() {
-    echo "die: $*"
-    exit 1
-}
+script_path=$(cd -P -- "$(dirname -- "$0")" && pwd -P)
+
+. "${script_path}/shell_include.sh"
 
 if [ ! -d "limine" ]; then
     echo "limine not found, the script will now build it"
@@ -17,18 +16,22 @@ if [ ! -d "limine" ]; then
 fi
 
 if [ "$(id -u)" != 0 ]; then
-    exec sudo -E -- "$0" "$@" || die "this script needs to run as root"
+    set +e
+    ${SUDO} -- "${SHELL}" -c "\"$0\" $* || exit 42"
+    case $? in
+        1)
+            die "this script needs to run as root"
+            ;;
+        42)
+            exit 1
+            ;;
+        *)
+            exit 0
+            ;;
+    esac
 else
     : "${SUDO_UID:=0}" "${SUDO_GID:=0}"
 fi
-
-disk_usage() {
-    if [ "$(uname -s)" = "Darwin" ]; then
-        du -sm "$1" | cut -f1
-    else
-        du -sm --apparent-size "$1" | cut -f1
-    fi
-}
 
 DISK_SIZE=$(($(disk_usage "$SERENITY_SOURCE_DIR/Base") + $(disk_usage Root) + 300))
 
@@ -74,7 +77,7 @@ echo "done"
 
 printf "creating new filesystems... "
 mkfs.vfat -F 32 "${dev}p1" || die "couldn't create efi filesystem"
-mke2fs -q -I 128 "${dev}p2" || die "couldn't create root filesystem"
+mke2fs -q "${dev}p2" || die "couldn't create root filesystem"
 echo "done"
 
 printf "mounting filesystems... "
@@ -84,7 +87,6 @@ mkdir -p mnt
 mount "${dev}p2" mnt || die "couldn't mount root filesystem"
 echo "done"
 
-script_path=$(cd -P -- "$(dirname -- "$0")" && pwd -P)
 "$script_path/build-root-filesystem.sh"
 
 echo "installing limine"

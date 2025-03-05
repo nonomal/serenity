@@ -7,9 +7,10 @@ WSL Version 2 requires Windows 10 version 2004 or higher, with OS Build 19041 or
 [get WSL2](https://docs.microsoft.com/en-us/windows/wsl/install-win10).
 
 Once installed, you will need to make sure the distribution you want to use (and the new default) is using Version 2:
-- `wsl -l -v` lists distros and versions,<br/>
-- `wsl --set-version <distro> <version>` is used to convert a distro to another version, and<br/>
-- `wsl --set-default-version 2` will set the default version for all new distros (if desired.)<br/>
+
+-   `wsl -l -v` lists distros and versions,<br/>
+-   `wsl --set-version <distro> <version>` is used to convert a distro to another version, and<br/>
+-   `wsl --set-default-version 2` will set the default version for all new distros (if desired.)<br/>
 
 Next, go to [BuildInstructions.md](https://github.com/SerenityOS/serenity/blob/master/Documentation/BuildInstructions.md#prerequisites)
 and follow the instructions for your chosen Linux environment, to get the needed build tools.
@@ -30,7 +31,8 @@ access the linux filesystem at `\\wsl$`, so for example, the project would be at
 ## Setting up QEMU
 
 Grab the latest QEMU binaries from [here](https://www.qemu.org/download/#windows) and install them. At a minimum you
-will need to install the tools as well as the system emulators for i386 and x86_64.
+will need to install the tools, the system emulators for i386 and x86_64, and
+the DLL libraries.
 
 ![QEMU Components](QEMU_Components.png)
 

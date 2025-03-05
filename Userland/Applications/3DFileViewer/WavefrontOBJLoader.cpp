@@ -8,25 +8,39 @@
 
 #include "WavefrontOBJLoader.h"
 #include <AK/FixedArray.h>
+#include <AK/String.h>
 #include <LibCore/File.h>
-#include <stdlib.h>
 
 static inline GLuint get_index_value(StringView& representation)
 {
-    return representation.to_uint().value_or(1) - 1;
+    return representation.to_number<GLuint>().value_or(1) - 1;
 }
 
-RefPtr<Mesh> WavefrontOBJLoader::load(Core::File& file)
+static ErrorOr<GLfloat> parse_float(StringView string)
 {
+    auto maybe_float = string.to_number<GLfloat>(TrimWhitespace::No);
+    if (!maybe_float.has_value())
+        return Error::from_string_literal("Wavefront: Expected floating point value when parsing TexCoord line");
+
+    return maybe_float.release_value();
+}
+
+ErrorOr<NonnullRefPtr<Mesh>> WavefrontOBJLoader::load(ByteString const& filename, NonnullOwnPtr<Core::File> file)
+{
+    auto buffered_file = TRY(Core::InputBufferedFile::create(move(file)));
+
     Vector<Vertex> vertices;
     Vector<Vertex> normals;
     Vector<TexCoord> tex_coords;
     Vector<Triangle> triangles;
 
-    dbgln("Wavefront: Loading {}...", file.name());
+    dbgln("Wavefront: Loading {}...", filename);
 
     // Start reading file line by line
-    for (auto object_line : file.lines()) {
+    auto buffer = TRY(ByteBuffer::create_uninitialized(PAGE_SIZE));
+    while (TRY(buffered_file->can_read_line())) {
+        auto object_line = TRY(buffered_file->read_line(buffer));
+
         // Ignore file comments
         if (object_line.starts_with('#'))
             continue;
@@ -34,12 +48,11 @@ RefPtr<Mesh> WavefrontOBJLoader::load(Core::File& file)
         if (object_line.starts_with("vt"sv)) {
             auto tex_coord_line = object_line.split_view(' ');
             if (tex_coord_line.size() != 3) {
-                dbgln("Wavefront: Malformed TexCoord line. Aborting.");
-                return nullptr;
+                return Error::from_string_literal("Wavefront: Malformed TexCoord line.");
             }
 
-            tex_coords.append({ static_cast<GLfloat>(atof(String(tex_coord_line.at(1)).characters())),
-                static_cast<GLfloat>(atof(String(tex_coord_line.at(2)).characters())) });
+            tex_coords.append({ TRY(parse_float(tex_coord_line.at(1))),
+                TRY(parse_float(tex_coord_line.at(2))) });
 
             continue;
         }
@@ -47,13 +60,12 @@ RefPtr<Mesh> WavefrontOBJLoader::load(Core::File& file)
         if (object_line.starts_with("vn"sv)) {
             auto normal_line = object_line.split_view(' ');
             if (normal_line.size() != 4) {
-                dbgln("Wavefront: Malformed vertex normal line. Aborting.");
-                return nullptr;
+                return Error::from_string_literal("Wavefront: Malformed vertex normal line.");
             }
 
-            normals.append({ static_cast<GLfloat>(atof(String(normal_line.at(1)).characters())),
-                static_cast<GLfloat>(atof(String(normal_line.at(2)).characters())),
-                static_cast<GLfloat>(atof(String(normal_line.at(3)).characters())) });
+            normals.append({ TRY(parse_float(normal_line.at(1))),
+                TRY(parse_float(normal_line.at(2))),
+                TRY(parse_float(normal_line.at(3))) });
 
             continue;
         }
@@ -62,13 +74,12 @@ RefPtr<Mesh> WavefrontOBJLoader::load(Core::File& file)
         if (object_line.starts_with('v')) {
             auto vertex_line = object_line.split_view(' ');
             if (vertex_line.size() != 4) {
-                dbgln("Wavefront: Malformed vertex line. Aborting.");
-                return nullptr;
+                return Error::from_string_literal("Wavefront: Malformed vertex line.");
             }
 
-            vertices.append({ static_cast<GLfloat>(atof(String(vertex_line.at(1)).characters())),
-                static_cast<GLfloat>(atof(String(vertex_line.at(2)).characters())),
-                static_cast<GLfloat>(atof(String(vertex_line.at(3)).characters())) });
+            vertices.append({ TRY(parse_float((vertex_line.at(1)))),
+                TRY(parse_float((vertex_line.at(2)))),
+                TRY(parse_float((vertex_line.at(3)))) });
 
             continue;
         }
@@ -78,16 +89,15 @@ RefPtr<Mesh> WavefrontOBJLoader::load(Core::File& file)
             auto face_line = object_line.substring_view(2).split_view(' ');
             auto number_of_vertices = face_line.size();
             if (number_of_vertices < 3) {
-                dbgln("Wavefront: Malformed face line. Aborting.");
-                return nullptr;
+                return Error::from_string_literal("Wavefront: Malformed face line.");
             }
 
-            auto vertex_indices = FixedArray<GLuint>::must_create_but_fixme_should_propagate_errors(number_of_vertices);
-            auto tex_coord_indices = FixedArray<GLuint>::must_create_but_fixme_should_propagate_errors(number_of_vertices);
-            auto normal_indices = FixedArray<GLuint>::must_create_but_fixme_should_propagate_errors(number_of_vertices);
+            auto vertex_indices = TRY(FixedArray<GLuint>::create(number_of_vertices));
+            auto tex_coord_indices = TRY(FixedArray<GLuint>::create(number_of_vertices));
+            auto normal_indices = TRY(FixedArray<GLuint>::create(number_of_vertices));
 
             for (size_t i = 0; i < number_of_vertices; ++i) {
-                auto vertex_parts = face_line.at(i).split_view('/', true);
+                auto vertex_parts = face_line.at(i).split_view('/', SplitBehavior::KeepEmpty);
                 vertex_indices[i] = get_index_value(vertex_parts[0]);
                 tex_coord_indices[i] = (vertex_parts.size() >= 2) ? get_index_value(vertex_parts[1]) : 0;
                 normal_indices[i] = (vertex_parts.size() >= 3) ? get_index_value(vertex_parts[2]) : 0;
@@ -111,8 +121,7 @@ RefPtr<Mesh> WavefrontOBJLoader::load(Core::File& file)
     }
 
     if (vertices.is_empty()) {
-        dbgln("Wavefront: Failed to read any data from 3D file: {}", file.name());
-        return nullptr;
+        return Error::from_string_literal("Wavefront: Failed to read any data from 3D file");
     }
 
     dbgln("Wavefront: Done.");

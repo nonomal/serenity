@@ -9,31 +9,28 @@
 #include <AK/Utf16View.h>
 #include <LibJS/Runtime/Intl/Segmenter.h>
 #include <LibJS/Runtime/Object.h>
+#include <LibLocale/Segmenter.h>
 
 namespace JS::Intl {
 
 class Segments final : public Object {
     JS_OBJECT(Segments, Object);
+    JS_DECLARE_ALLOCATOR(Segments);
 
 public:
-    static Segments* create(GlobalObject&, Segmenter&, Utf16String);
+    static NonnullGCPtr<Segments> create(Realm&, ::Locale::Segmenter const&, Utf16String);
 
-    Segments(GlobalObject&, Segmenter&, Utf16String);
     virtual ~Segments() override = default;
 
-    Segmenter& segments_segmenter() const { return m_segments_segmenter; }
+    ::Locale::Segmenter& segments_segmenter() const { return *m_segments_segmenter; }
 
     Utf16View segments_string() const { return m_segments_string.view(); }
 
-    Optional<Vector<size_t>>& boundaries_cache() const { return m_boundaries_cache; }
-
 private:
-    virtual void visit_edges(Cell::Visitor&) override;
+    Segments(Realm&, ::Locale::Segmenter const&, Utf16String);
 
-    Segmenter& m_segments_segmenter; // [[SegmentsSegmenter]]
-    Utf16String m_segments_string;   // [[SegmentsString]]
-
-    mutable Optional<Vector<size_t>> m_boundaries_cache;
+    NonnullOwnPtr<::Locale::Segmenter> m_segments_segmenter; // [[SegmentsSegmenter]]
+    Utf16String m_segments_string;                           // [[SegmentsString]]
 };
 
 }

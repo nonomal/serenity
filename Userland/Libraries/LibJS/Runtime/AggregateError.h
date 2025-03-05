@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,12 +13,14 @@ namespace JS {
 
 class AggregateError : public Error {
     JS_OBJECT(AggregateError, Error);
+    JS_DECLARE_ALLOCATOR(AggregateError);
 
 public:
-    static AggregateError* create(GlobalObject&);
-
-    explicit AggregateError(Object& prototype);
+    static NonnullGCPtr<AggregateError> create(Realm&);
     virtual ~AggregateError() override = default;
+
+private:
+    explicit AggregateError(Object& prototype);
 };
 
 }

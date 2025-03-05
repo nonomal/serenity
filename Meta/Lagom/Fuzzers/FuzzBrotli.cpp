@@ -4,21 +4,17 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/MemoryStream.h>
 #include <LibCompress/Brotli.h>
-#include <LibCore/MemoryStream.h>
 #include <stdio.h>
 
 extern "C" int LLVMFuzzerTestOneInput(uint8_t const* data, size_t size)
 {
-    auto bufstream_result = Core::Stream::MemoryStream::construct({ const_cast<uint8_t*>(data), size });
-    if (bufstream_result.is_error()) {
-        dbgln("MemoryStream::construct() failed.");
-        return 1;
-    }
-    auto bufstream = bufstream_result.release_value();
+    AK::set_debug_enabled(false);
+    FixedMemoryStream bufstream { { data, size } };
 
-    auto brotli_stream = Compress::BrotliDecompressionStream { *bufstream };
+    auto brotli_stream = Compress::BrotliDecompressionStream { MaybeOwned<Stream> { bufstream } };
 
-    auto uncompressed = brotli_stream.read_all();
-    return uncompressed.is_error();
+    (void)brotli_stream.read_until_eof();
+    return 0;
 }

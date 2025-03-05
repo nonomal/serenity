@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Error.h>
 #include <AK/FlyString.h>
 
 namespace Web::HTML::TagNames {
@@ -77,6 +78,7 @@ namespace Web::HTML::TagNames {
     __ENUMERATE_HTML_TAG(img)        \
     __ENUMERATE_HTML_TAG(input)      \
     __ENUMERATE_HTML_TAG(ins)        \
+    __ENUMERATE_HTML_TAG(isindex)    \
     __ENUMERATE_HTML_TAG(kbd)        \
     __ENUMERATE_HTML_TAG(keygen)     \
     __ENUMERATE_HTML_TAG(label)      \
@@ -93,7 +95,9 @@ namespace Web::HTML::TagNames {
     __ENUMERATE_HTML_TAG(menuitem)   \
     __ENUMERATE_HTML_TAG(meta)       \
     __ENUMERATE_HTML_TAG(meter)      \
+    __ENUMERATE_HTML_TAG(multicol)   \
     __ENUMERATE_HTML_TAG(nav)        \
+    __ENUMERATE_HTML_TAG(nextid)     \
     __ENUMERATE_HTML_TAG(nobr)       \
     __ENUMERATE_HTML_TAG(noembed)    \
     __ENUMERATE_HTML_TAG(noframes)   \
@@ -125,6 +129,7 @@ namespace Web::HTML::TagNames {
     __ENUMERATE_HTML_TAG(small)      \
     __ENUMERATE_HTML_TAG(source)     \
     __ENUMERATE_HTML_TAG(span)       \
+    __ENUMERATE_HTML_TAG(spacer)     \
     __ENUMERATE_HTML_TAG(strike)     \
     __ENUMERATE_HTML_TAG(strong)     \
     __ENUMERATE_HTML_TAG(style)      \
@@ -155,5 +160,7 @@ namespace Web::HTML::TagNames {
 #define __ENUMERATE_HTML_TAG(name) extern FlyString name;
 ENUMERATE_HTML_TAGS
 #undef __ENUMERATE_HTML_TAG
+
+void initialize_strings();
 
 }

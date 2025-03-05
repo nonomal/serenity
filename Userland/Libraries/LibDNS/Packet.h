@@ -24,8 +24,8 @@ class Packet {
 public:
     Packet() = default;
 
-    static Optional<Packet> from_raw_packet(u8 const*, size_t);
-    ByteBuffer to_byte_buffer() const;
+    static ErrorOr<Packet> from_raw_packet(ReadonlyBytes bytes);
+    ErrorOr<ByteBuffer> to_byte_buffer() const;
 
     bool is_query() const { return !m_query_or_response; }
     bool is_response() const { return m_query_or_response; }

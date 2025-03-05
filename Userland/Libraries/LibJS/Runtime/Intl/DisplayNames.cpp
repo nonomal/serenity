@@ -10,9 +10,11 @@
 
 namespace JS::Intl {
 
+JS_DEFINE_ALLOCATOR(DisplayNames);
+
 // 12 DisplayNames Objects, https://tc39.es/ecma402/#intl-displaynames-objects
 DisplayNames::DisplayNames(Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
 {
 }
 
@@ -101,41 +103,39 @@ StringView DisplayNames::language_display_string() const
 }
 
 // 12.5.1 CanonicalCodeForDisplayNames ( type, code ), https://tc39.es/ecma402/#sec-canonicalcodefordisplaynames
-ThrowCompletionOr<Value> canonical_code_for_display_names(GlobalObject& global_object, DisplayNames::Type type, StringView code)
+ThrowCompletionOr<Value> canonical_code_for_display_names(VM& vm, DisplayNames::Type type, StringView code)
 {
-    auto& vm = global_object.vm();
-
     // 1. If type is "language", then
     if (type == DisplayNames::Type::Language) {
         // a. If code does not match the unicode_language_id production, throw a RangeError exception.
-        if (!Unicode::parse_unicode_language_id(code).has_value())
-            return vm.throw_completion<RangeError>(global_object, ErrorType::OptionIsNotValidValue, code, "language"sv);
+        if (!::Locale::parse_unicode_language_id(code).has_value())
+            return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "language"sv);
 
         // b. If IsStructurallyValidLanguageTag(code) is false, throw a RangeError exception.
         auto locale_id = is_structurally_valid_language_tag(code);
         if (!locale_id.has_value())
-            return vm.throw_completion<RangeError>(global_object, ErrorType::IntlInvalidLanguageTag, code);
+            return vm.throw_completion<RangeError>(ErrorType::IntlInvalidLanguageTag, code);
 
         // c. Return ! CanonicalizeUnicodeLocaleId(code).
-        auto canonicalized_tag = Intl::canonicalize_unicode_locale_id(*locale_id);
-        return js_string(vm, move(canonicalized_tag));
+        auto canonicalized_tag = JS::Intl::canonicalize_unicode_locale_id(*locale_id);
+        return PrimitiveString::create(vm, move(canonicalized_tag));
     }
 
     // 2. If type is "region", then
     if (type == DisplayNames::Type::Region) {
         // a. If code does not match the unicode_region_subtag production, throw a RangeError exception.
-        if (!Unicode::is_unicode_region_subtag(code))
-            return vm.throw_completion<RangeError>(global_object, ErrorType::OptionIsNotValidValue, code, "region"sv);
+        if (!::Locale::is_unicode_region_subtag(code))
+            return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "region"sv);
 
         // b. Return the ASCII-uppercase of code.
-        return js_string(vm, code.to_uppercase_string());
+        return PrimitiveString::create(vm, code.to_uppercase_string());
     }
 
     // 3. If type is "script", then
     if (type == DisplayNames::Type::Script) {
         // a. If code does not match the unicode_script_subtag production, throw a RangeError exception.
-        if (!Unicode::is_unicode_script_subtag(code))
-            return vm.throw_completion<RangeError>(global_object, ErrorType::OptionIsNotValidValue, code, "script"sv);
+        if (!::Locale::is_unicode_script_subtag(code))
+            return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "script"sv);
 
         // Assert: The length of code is 4, and every code unit of code represents an ASCII letter (0x0041 through 0x005A and 0x0061 through 0x007A, both inclusive).
         VERIFY(code.length() == 4);
@@ -144,31 +144,31 @@ ThrowCompletionOr<Value> canonical_code_for_display_names(GlobalObject& global_o
         // c. Let first be the ASCII-uppercase of the substring of code from 0 to 1.
         // d. Let rest be the ASCII-lowercase of the substring of code from 1.
         // e. Return the string-concatenation of first and rest.
-        return js_string(vm, code.to_titlecase_string());
+        return PrimitiveString::create(vm, code.to_titlecase_string());
     }
 
     // 4. If type is "calendar", then
     if (type == DisplayNames::Type::Calendar) {
         // a. If code does not match the Unicode Locale Identifier type nonterminal, throw a RangeError exception.
-        if (!Unicode::is_type_identifier(code))
-            return vm.throw_completion<RangeError>(global_object, ErrorType::OptionIsNotValidValue, code, "calendar"sv);
+        if (!::Locale::is_type_identifier(code))
+            return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "calendar"sv);
 
         // b. If code uses any of the backwards compatibility syntax described in Unicode Technical Standard #35 LDML § 3.3 BCP 47 Conformance, throw a RangeError exception.
         if (code.contains('_'))
-            return vm.throw_completion<RangeError>(global_object, ErrorType::OptionIsNotValidValue, code, "calendar"sv);
+            return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "calendar"sv);
 
         // c. Return the ASCII-lowercase of code.
-        return js_string(vm, code.to_lowercase_string());
+        return PrimitiveString::create(vm, code.to_lowercase_string());
     }
 
     // 5. If type is "dateTimeField", then
     if (type == DisplayNames::Type::DateTimeField) {
         // a. If the result of IsValidDateTimeFieldCode(code) is false, throw a RangeError exception.
         if (!is_valid_date_time_field_code(code))
-            return vm.throw_completion<RangeError>(global_object, ErrorType::OptionIsNotValidValue, code, "dateTimeField"sv);
+            return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "dateTimeField"sv);
 
         // b. Return code.
-        return js_string(vm, code);
+        return PrimitiveString::create(vm, code);
     }
 
     // 6. Assert: type is "currency".
@@ -176,10 +176,10 @@ ThrowCompletionOr<Value> canonical_code_for_display_names(GlobalObject& global_o
 
     // 7. If ! IsWellFormedCurrencyCode(code) is false, throw a RangeError exception.
     if (!is_well_formed_currency_code(code))
-        return vm.throw_completion<RangeError>(global_object, ErrorType::OptionIsNotValidValue, code, "currency"sv);
+        return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, code, "currency"sv);
 
     // 8. Return the ASCII-uppercase of code.
-    return js_string(vm, code.to_uppercase_string());
+    return PrimitiveString::create(vm, code.to_uppercase_string());
 }
 
 // 12.5.2 IsValidDateTimeFieldCode ( field ), https://tc39.es/ecma402/#sec-isvaliddatetimefieldcode

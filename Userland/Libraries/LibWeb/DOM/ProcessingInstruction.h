@@ -6,16 +6,15 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
 #include <LibWeb/DOM/CharacterData.h>
 
 namespace Web::DOM {
 
 class ProcessingInstruction final : public CharacterData {
-public:
-    using WrapperType = Bindings::ProcessingInstructionWrapper;
+    WEB_PLATFORM_OBJECT(ProcessingInstruction, CharacterData);
+    JS_DECLARE_ALLOCATOR(ProcessingInstruction);
 
-    ProcessingInstruction(Document&, String const& data, String const& target);
+public:
     virtual ~ProcessingInstruction() override = default;
 
     virtual FlyString node_name() const override { return m_target; }
@@ -23,6 +22,10 @@ public:
     String const& target() const { return m_target; }
 
 private:
+    ProcessingInstruction(Document&, String const& data, String const& target);
+
+    virtual void initialize(JS::Realm&) override;
+
     String m_target;
 };
 

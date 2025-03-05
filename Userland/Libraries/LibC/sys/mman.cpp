@@ -5,6 +5,7 @@
  */
 
 #include <AK/Format.h>
+#include <bits/pthread_cancel.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -83,16 +84,6 @@ int posix_madvise(void* address, size_t len, int advice)
     return madvise(address, len, advice);
 }
 
-void* allocate_tls(char const* initial_data, size_t size)
-{
-    ptrdiff_t rc = syscall(SC_allocate_tls, initial_data, size);
-    if (rc < 0 && rc > -EMAXERRNO) {
-        errno = -rc;
-        return MAP_FAILED;
-    }
-    return (void*)rc;
-}
-
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/mlock.html
 int mlock(void const*, size_t)
 {
@@ -110,6 +101,8 @@ int munlock(void const*, size_t)
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/msync.html
 int msync(void* address, size_t size, int flags)
 {
+    __pthread_maybe_cancel();
+
     int rc = syscall(SC_msync, address, size, flags);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }

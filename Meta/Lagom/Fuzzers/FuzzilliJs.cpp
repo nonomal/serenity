@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Format.h>
 #include <AK/Function.h>
-#include <AK/String.h>
 #include <AK/StringView.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Forward.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Lexer.h>
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/GlobalObject.h>
@@ -119,16 +119,16 @@ class TestRunnerGlobalObject final : public JS::GlobalObject {
     JS_OBJECT(TestRunnerGlobalObject, JS::GlobalObject);
 
 public:
-    TestRunnerGlobalObject();
+    TestRunnerGlobalObject(JS::Realm&);
+    virtual void initialize(JS::Realm&) override;
     virtual ~TestRunnerGlobalObject() override;
-
-    virtual void initialize_global_object() override;
 
 private:
     JS_DECLARE_NATIVE_FUNCTION(fuzzilli);
 };
 
-TestRunnerGlobalObject::TestRunnerGlobalObject()
+TestRunnerGlobalObject::TestRunnerGlobalObject(JS::Realm& realm)
+    : GlobalObject(realm)
 {
 }
 
@@ -141,9 +141,9 @@ JS_DEFINE_NATIVE_FUNCTION(TestRunnerGlobalObject::fuzzilli)
     if (!vm.argument_count())
         return JS::js_undefined();
 
-    auto operation = TRY(vm.argument(0).to_string(global_object));
+    auto operation = TRY(vm.argument(0).to_string(vm));
     if (operation == "FUZZILLI_CRASH") {
-        auto type = TRY(vm.argument(1).to_i32(global_object));
+        auto type = TRY(vm.argument(1).to_i32(vm));
         switch (type) {
         case 0:
             *((int*)0x41414141) = 0x1337;
@@ -159,19 +159,19 @@ JS_DEFINE_NATIVE_FUNCTION(TestRunnerGlobalObject::fuzzilli)
             fzliout = stdout;
         }
 
-        auto string = TRY(vm.argument(1).to_string(global_object));
-        fprintf(fzliout, "%s\n", string.characters());
+        auto string = TRY(vm.argument(1).to_string(vm));
+        outln(fzliout, "{}", string);
         fflush(fzliout);
     }
 
     return JS::js_undefined();
 }
 
-void TestRunnerGlobalObject::initialize_global_object()
+void TestRunnerGlobalObject::initialize(JS::Realm& realm)
 {
-    Base::initialize_global_object();
+    Base::initialize(realm);
     define_direct_property("global", this, JS::Attribute::Enumerable);
-    define_native_function("fuzzilli", fuzzilli, 2, JS::default_attributes);
+    define_native_function(realm, "fuzzilli", fuzzilli, 2, JS::default_attributes);
 }
 
 int main(int, char**)
@@ -187,8 +187,9 @@ int main(int, char**)
     reprl_input = (char*)mmap(0, REPRL_MAX_DATA_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, REPRL_DRFD, 0);
     VERIFY(reprl_input != MAP_FAILED);
 
-    auto vm = JS::VM::create();
-    auto interpreter = JS::Interpreter::create<TestRunnerGlobalObject>(*vm);
+    auto vm = MUST(JS::VM::create());
+    auto root_execution_context = JS::create_simple_execution_context<TestRunnerGlobalObject>(*vm);
+    auto& realm = *root_execution_context->realm;
 
     while (true) {
         unsigned action;
@@ -207,16 +208,20 @@ int main(int, char**)
 
         auto js = StringView(static_cast<unsigned char const*>(data_buffer.data()), script_size);
 
-        auto parse_result = JS::Script::parse(js, interpreter->realm());
-        if (parse_result.is_error()) {
+        // FIXME: https://github.com/SerenityOS/serenity/issues/17899
+        if (!Utf8View(js).validate()) {
             result = 1;
         } else {
-            auto completion = interpreter->run(parse_result.value());
-            if (completion.is_error()) {
+            auto parse_result = JS::Script::parse(js, realm);
+            if (parse_result.is_error()) {
                 result = 1;
+            } else {
+                auto completion = vm->bytecode_interpreter().run(parse_result.value());
+                if (completion.is_error()) {
+                    result = 1;
+                }
             }
         }
-
         fflush(stdout);
         fflush(stderr);
 

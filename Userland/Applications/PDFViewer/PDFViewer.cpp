@@ -8,6 +8,7 @@
 #include "PDFViewer.h"
 #include <AK/Array.h>
 #include <AK/BinarySearch.h>
+#include <AK/HashFunctions.h>
 #include <LibConfig/Client.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/MessageBox.h>
@@ -45,6 +46,13 @@ PDFViewer::PDFViewer()
     start_timer(30'000);
 
     m_page_view_mode = static_cast<PageViewMode>(Config::read_i32("PDFViewer"sv, "Display"sv, "PageMode"sv, 0));
+    m_rendering_preferences.show_clipping_paths = Config::read_bool("PDFViewer"sv, "Rendering"sv, "ShowClippingPaths"sv, false);
+    m_rendering_preferences.show_images = Config::read_bool("PDFViewer"sv, "Rendering"sv, "ShowImages"sv, true);
+    m_rendering_preferences.show_hidden_text = Config::read_bool("PDFViewer"sv, "Rendering"sv, "ShowHiddenText"sv, false);
+    m_rendering_preferences.show_diagnostics = Config::read_bool("PDFViewer"sv, "Rendering"sv, "ShowDiagnostics"sv, false);
+    m_rendering_preferences.clip_images = Config::read_bool("PDFViewer"sv, "Rendering"sv, "ClipImages"sv, true);
+    m_rendering_preferences.clip_paths = Config::read_bool("PDFViewer"sv, "Rendering"sv, "ClipPaths"sv, true);
+    m_rendering_preferences.clip_text = Config::read_bool("PDFViewer"sv, "Rendering"sv, "ClipText"sv, true);
 }
 
 PDF::PDFErrorOr<void> PDFViewer::set_document(RefPtr<PDF::Document> document)
@@ -66,13 +74,14 @@ PDF::PDFErrorOr<void> PDFViewer::set_document(RefPtr<PDF::Document> document)
 
 PDF::PDFErrorOr<NonnullRefPtr<Gfx::Bitmap>> PDFViewer::get_rendered_page(u32 index)
 {
+    auto key = pair_int_hash(m_rendering_preferences.hash(), m_zoom_level);
     auto& rendered_page_map = m_rendered_page_list[index];
-    auto existing_rendered_page = rendered_page_map.get(m_zoom_level);
+    auto existing_rendered_page = rendered_page_map.get(key);
     if (existing_rendered_page.has_value() && existing_rendered_page.value().rotation == m_rotations)
         return existing_rendered_page.value().bitmap;
 
     auto rendered_page = TRY(render_page(index));
-    rendered_page_map.set(m_zoom_level, { rendered_page, m_rotations });
+    rendered_page_map.set(key, { rendered_page, m_rotations });
     return rendered_page;
 }
 
@@ -88,19 +97,18 @@ void PDFViewer::paint_event(GUI::PaintEvent& event)
     if (!m_document)
         return;
 
-    auto handle_error = [&]<typename T>(PDF::PDFErrorOr<T> maybe_error) {
-        if (maybe_error.is_error()) {
-            auto error = maybe_error.release_error();
-            GUI::MessageBox::show_error(nullptr, String::formatted("Error rendering page:\n{}", error.message()));
-            return true;
-        }
-        return false;
+    auto handle_error = [&](PDF::Error& error) {
+        warnln("{}", error.message());
+        GUI::MessageBox::show_error(nullptr, "Failed to render the page."sv);
+        m_document.clear();
     };
 
     if (m_page_view_mode == PageViewMode::Single) {
         auto maybe_page = get_rendered_page(m_current_page_index);
-        if (handle_error(maybe_page))
+        if (maybe_page.is_error()) {
+            handle_error(maybe_page.error());
             return;
+        }
 
         auto page = maybe_page.release_value();
         set_content_size(page->size());
@@ -137,8 +145,10 @@ void PDFViewer::paint_event(GUI::PaintEvent& event)
 
     for (size_t page_index = first_page_index; page_index <= last_page_index; page_index++) {
         auto maybe_page = get_rendered_page(page_index);
-        if (handle_error(maybe_page))
+        if (maybe_page.is_error()) {
+            handle_error(maybe_page.error());
             return;
+        }
 
         auto page = maybe_page.release_value();
 
@@ -159,6 +169,55 @@ void PDFViewer::set_current_page(u32 current_page)
 {
     m_current_page_index = current_page;
     vertical_scrollbar().set_value(m_page_dimension_cache.render_info[current_page].total_height_before_this_page);
+    update();
+}
+
+void PDFViewer::set_show_rendering_diagnostics(bool show_diagnostics)
+{
+    m_rendering_preferences.show_diagnostics = show_diagnostics;
+    Config::write_bool("PDFViewer"sv, "Rendering"sv, "ShowDiagnostics"sv, show_diagnostics);
+    update();
+}
+
+void PDFViewer::set_show_clipping_paths(bool show_clipping_paths)
+{
+    m_rendering_preferences.show_clipping_paths = show_clipping_paths;
+    Config::write_bool("PDFViewer"sv, "Rendering"sv, "ShowClippingPaths"sv, show_clipping_paths);
+    update();
+}
+
+void PDFViewer::set_show_images(bool show_images)
+{
+    m_rendering_preferences.show_images = show_images;
+    Config::write_bool("PDFViewer"sv, "Rendering"sv, "ShowImages"sv, show_images);
+    update();
+}
+
+void PDFViewer::set_show_hidden_text(bool show_hidden_text)
+{
+    m_rendering_preferences.show_hidden_text = show_hidden_text;
+    Config::write_bool("PDFViewer"sv, "Rendering"sv, "ShowHiddenText"sv, show_hidden_text);
+    update();
+}
+
+void PDFViewer::set_clip_images(bool clip_images)
+{
+    m_rendering_preferences.clip_images = clip_images;
+    Config::write_bool("PDFViewer"sv, "Rendering"sv, "ClipImages"sv, clip_images);
+    update();
+}
+
+void PDFViewer::set_clip_paths(bool clip_paths)
+{
+    m_rendering_preferences.clip_paths = clip_paths;
+    Config::write_bool("PDFViewer"sv, "Rendering"sv, "ClipPaths"sv, clip_paths);
+    update();
+}
+
+void PDFViewer::set_clip_text(bool clip_text)
+{
+    m_rendering_preferences.clip_text = clip_text;
+    Config::write_bool("PDFViewer"sv, "Rendering"sv, "ClipText"sv, clip_text);
     update();
 }
 
@@ -188,14 +247,15 @@ void PDFViewer::mousewheel_event(GUI::MouseEvent& event)
     }
 
     auto& scrollbar = event.shift() ? horizontal_scrollbar() : vertical_scrollbar();
+    auto delta = abs(event.wheel_delta_y() * 20);
 
     if (m_page_view_mode == PageViewMode::Multiple) {
         if (scrolled_down) {
             if (scrollbar.value() != scrollbar.max())
-                scrollbar.increase_slider_by(20);
+                scrollbar.increase_slider_by(delta);
         } else {
             if (scrollbar.value() > 0)
-                scrollbar.decrease_slider_by(20);
+                scrollbar.decrease_slider_by(delta);
         }
     } else {
         if (scrolled_down) {
@@ -205,7 +265,7 @@ void PDFViewer::mousewheel_event(GUI::MouseEvent& event)
                     scrollbar.set_value(0);
                 }
             } else {
-                scrollbar.increase_slider_by(20);
+                scrollbar.increase_slider_by(delta);
             }
         } else {
             if (scrollbar.value() == 0) {
@@ -214,7 +274,7 @@ void PDFViewer::mousewheel_event(GUI::MouseEvent& event)
                     scrollbar.set_value(scrollbar.max());
                 }
             } else {
-                scrollbar.decrease_slider_by(20);
+                scrollbar.decrease_slider_by(delta);
             }
         }
     }
@@ -297,21 +357,16 @@ PDF::PDFErrorOr<NonnullRefPtr<Gfx::Bitmap>> PDFViewer::render_page(u32 page_inde
 {
     auto page = TRY(m_document->get_page(page_index));
     auto& page_size = m_page_dimension_cache.render_info[page_index].size;
-    auto bitmap = TRY(Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRA8888, page_size.to_type<int>()));
+    auto bitmap = TRY(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, page_size.to_type<int>()));
 
-    TRY(PDF::Renderer::render(*m_document, page, bitmap));
-
-    if (page.rotate + m_rotations != 0) {
-        int rotation_count = ((page.rotate + m_rotations) / 90) % 4;
-        if (rotation_count == 3) {
-            bitmap = TRY(bitmap->rotated(Gfx::RotationDirection::CounterClockwise));
-        } else {
-            for (int i = 0; i < rotation_count; i++)
-                bitmap = TRY(bitmap->rotated(Gfx::RotationDirection::Clockwise));
-        }
+    auto maybe_errors = PDF::Renderer::render(*m_document, page, bitmap, Color::White, m_rendering_preferences);
+    if (maybe_errors.is_error()) {
+        auto errors = maybe_errors.release_error();
+        on_render_errors(page_index, errors);
+        return bitmap;
     }
 
-    return bitmap;
+    return TRY(PDF::Renderer::apply_page_rotation(bitmap, page, m_rotations));
 }
 
 PDF::PDFErrorOr<void> PDFViewer::cache_page_dimensions(bool recalculate_fixed_info)

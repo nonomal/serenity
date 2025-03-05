@@ -6,16 +6,17 @@
 
 #pragma once
 
+#include <AK/Error.h>
 #include <AK/FlyString.h>
 
-namespace Web {
-namespace HTML {
+namespace Web::HTML {
 namespace AttributeNames {
 
 #define ENUMERATE_HTML_ATTRIBUTES                          \
     __ENUMERATE_HTML_ATTRIBUTE(abbr)                       \
     __ENUMERATE_HTML_ATTRIBUTE(accept)                     \
     __ENUMERATE_HTML_ATTRIBUTE(accept_charset)             \
+    __ENUMERATE_HTML_ATTRIBUTE(accesskey)                  \
     __ENUMERATE_HTML_ATTRIBUTE(action)                     \
     __ENUMERATE_HTML_ATTRIBUTE(align)                      \
     __ENUMERATE_HTML_ATTRIBUTE(alink)                      \
@@ -24,6 +25,9 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(alt)                        \
     __ENUMERATE_HTML_ATTRIBUTE(archive)                    \
     __ENUMERATE_HTML_ATTRIBUTE(async)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(as)                         \
+    __ENUMERATE_HTML_ATTRIBUTE(autocomplete)               \
+    __ENUMERATE_HTML_ATTRIBUTE(autofocus)                  \
     __ENUMERATE_HTML_ATTRIBUTE(autoplay)                   \
     __ENUMERATE_HTML_ATTRIBUTE(axis)                       \
     __ENUMERATE_HTML_ATTRIBUTE(background)                 \
@@ -38,8 +42,10 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(checked)                    \
     __ENUMERATE_HTML_ATTRIBUTE(cite)                       \
     __ENUMERATE_HTML_ATTRIBUTE(class_)                     \
+    __ENUMERATE_HTML_ATTRIBUTE(classid)                    \
     __ENUMERATE_HTML_ATTRIBUTE(clear)                      \
     __ENUMERATE_HTML_ATTRIBUTE(code)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(codebase)                   \
     __ENUMERATE_HTML_ATTRIBUTE(codetype)                   \
     __ENUMERATE_HTML_ATTRIBUTE(color)                      \
     __ENUMERATE_HTML_ATTRIBUTE(cols)                       \
@@ -49,19 +55,26 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(contenteditable)            \
     __ENUMERATE_HTML_ATTRIBUTE(controls)                   \
     __ENUMERATE_HTML_ATTRIBUTE(coords)                     \
+    __ENUMERATE_HTML_ATTRIBUTE(crossorigin)                \
     __ENUMERATE_HTML_ATTRIBUTE(data)                       \
     __ENUMERATE_HTML_ATTRIBUTE(datetime)                   \
     __ENUMERATE_HTML_ATTRIBUTE(declare)                    \
     __ENUMERATE_HTML_ATTRIBUTE(default_)                   \
     __ENUMERATE_HTML_ATTRIBUTE(defer)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(dir)                        \
     __ENUMERATE_HTML_ATTRIBUTE(direction)                  \
     __ENUMERATE_HTML_ATTRIBUTE(dirname)                    \
     __ENUMERATE_HTML_ATTRIBUTE(disabled)                   \
     __ENUMERATE_HTML_ATTRIBUTE(download)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(enctype)                    \
     __ENUMERATE_HTML_ATTRIBUTE(event)                      \
     __ENUMERATE_HTML_ATTRIBUTE(face)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(fetchpriority)              \
     __ENUMERATE_HTML_ATTRIBUTE(for_)                       \
     __ENUMERATE_HTML_ATTRIBUTE(form)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(formaction)                 \
+    __ENUMERATE_HTML_ATTRIBUTE(formenctype)                \
+    __ENUMERATE_HTML_ATTRIBUTE(formmethod)                 \
     __ENUMERATE_HTML_ATTRIBUTE(formnovalidate)             \
     __ENUMERATE_HTML_ATTRIBUTE(formtarget)                 \
     __ENUMERATE_HTML_ATTRIBUTE(frame)                      \
@@ -69,6 +82,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(headers)                    \
     __ENUMERATE_HTML_ATTRIBUTE(height)                     \
     __ENUMERATE_HTML_ATTRIBUTE(hidden)                     \
+    __ENUMERATE_HTML_ATTRIBUTE(high)                       \
     __ENUMERATE_HTML_ATTRIBUTE(href)                       \
     __ENUMERATE_HTML_ATTRIBUTE(hreflang)                   \
     __ENUMERATE_HTML_ATTRIBUTE(hspace)                     \
@@ -76,24 +90,36 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(id)                         \
     __ENUMERATE_HTML_ATTRIBUTE(imagesizes)                 \
     __ENUMERATE_HTML_ATTRIBUTE(imagesrcset)                \
+    __ENUMERATE_HTML_ATTRIBUTE(inert)                      \
     __ENUMERATE_HTML_ATTRIBUTE(integrity)                  \
+    __ENUMERATE_HTML_ATTRIBUTE(is)                         \
     __ENUMERATE_HTML_ATTRIBUTE(ismap)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(itemscope)                  \
+    __ENUMERATE_HTML_ATTRIBUTE(kind)                       \
     __ENUMERATE_HTML_ATTRIBUTE(label)                      \
     __ENUMERATE_HTML_ATTRIBUTE(lang)                       \
     __ENUMERATE_HTML_ATTRIBUTE(language)                   \
     __ENUMERATE_HTML_ATTRIBUTE(link)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(list)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(loading)                    \
     __ENUMERATE_HTML_ATTRIBUTE(longdesc)                   \
     __ENUMERATE_HTML_ATTRIBUTE(loop)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(low)                        \
+    __ENUMERATE_HTML_ATTRIBUTE(lowsrc)                     \
     __ENUMERATE_HTML_ATTRIBUTE(marginheight)               \
     __ENUMERATE_HTML_ATTRIBUTE(marginwidth)                \
     __ENUMERATE_HTML_ATTRIBUTE(max)                        \
+    __ENUMERATE_HTML_ATTRIBUTE(maxlength)                  \
     __ENUMERATE_HTML_ATTRIBUTE(media)                      \
     __ENUMERATE_HTML_ATTRIBUTE(method)                     \
     __ENUMERATE_HTML_ATTRIBUTE(min)                        \
+    __ENUMERATE_HTML_ATTRIBUTE(minlength)                  \
     __ENUMERATE_HTML_ATTRIBUTE(multiple)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(muted)                      \
     __ENUMERATE_HTML_ATTRIBUTE(name)                       \
     __ENUMERATE_HTML_ATTRIBUTE(nohref)                     \
     __ENUMERATE_HTML_ATTRIBUTE(nomodule)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(noresize)                   \
     __ENUMERATE_HTML_ATTRIBUTE(noshade)                    \
     __ENUMERATE_HTML_ATTRIBUTE(novalidate)                 \
     __ENUMERATE_HTML_ATTRIBUTE(nowrap)                     \
@@ -124,6 +150,8 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(onended)                    \
     __ENUMERATE_HTML_ATTRIBUTE(onerror)                    \
     __ENUMERATE_HTML_ATTRIBUTE(onfocus)                    \
+    __ENUMERATE_HTML_ATTRIBUTE(onfocusin)                  \
+    __ENUMERATE_HTML_ATTRIBUTE(onfocusout)                 \
     __ENUMERATE_HTML_ATTRIBUTE(onformdata)                 \
     __ENUMERATE_HTML_ATTRIBUTE(onhashchange)               \
     __ENUMERATE_HTML_ATTRIBUTE(oninput)                    \
@@ -163,6 +191,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(onseeked)                   \
     __ENUMERATE_HTML_ATTRIBUTE(onseeking)                  \
     __ENUMERATE_HTML_ATTRIBUTE(onselect)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(onselectionchange)          \
     __ENUMERATE_HTML_ATTRIBUTE(onslotchange)               \
     __ENUMERATE_HTML_ATTRIBUTE(onstalled)                  \
     __ENUMERATE_HTML_ATTRIBUTE(onstorage)                  \
@@ -180,13 +209,16 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(onwebkittransitionend)      \
     __ENUMERATE_HTML_ATTRIBUTE(onwheel)                    \
     __ENUMERATE_HTML_ATTRIBUTE(open)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(optimum)                    \
     __ENUMERATE_HTML_ATTRIBUTE(pattern)                    \
     __ENUMERATE_HTML_ATTRIBUTE(ping)                       \
     __ENUMERATE_HTML_ATTRIBUTE(placeholder)                \
     __ENUMERATE_HTML_ATTRIBUTE(playsinline)                \
+    __ENUMERATE_HTML_ATTRIBUTE(popover)                    \
     __ENUMERATE_HTML_ATTRIBUTE(poster)                     \
     __ENUMERATE_HTML_ATTRIBUTE(preload)                    \
     __ENUMERATE_HTML_ATTRIBUTE(readonly)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(referrerpolicy)             \
     __ENUMERATE_HTML_ATTRIBUTE(rel)                        \
     __ENUMERATE_HTML_ATTRIBUTE(required)                   \
     __ENUMERATE_HTML_ATTRIBUTE(rev)                        \
@@ -195,22 +227,34 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(rowspan)                    \
     __ENUMERATE_HTML_ATTRIBUTE(rules)                      \
     __ENUMERATE_HTML_ATTRIBUTE(scheme)                     \
+    __ENUMERATE_HTML_ATTRIBUTE(scope)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(scrollamount)               \
+    __ENUMERATE_HTML_ATTRIBUTE(scrolldelay)                \
     __ENUMERATE_HTML_ATTRIBUTE(scrolling)                  \
     __ENUMERATE_HTML_ATTRIBUTE(selected)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootclonable)         \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootdelegatesfocus)   \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootmode)             \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootserializable)     \
     __ENUMERATE_HTML_ATTRIBUTE(shape)                      \
     __ENUMERATE_HTML_ATTRIBUTE(size)                       \
     __ENUMERATE_HTML_ATTRIBUTE(sizes)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(slot)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(span)                       \
     __ENUMERATE_HTML_ATTRIBUTE(src)                        \
     __ENUMERATE_HTML_ATTRIBUTE(srcdoc)                     \
     __ENUMERATE_HTML_ATTRIBUTE(srclang)                    \
     __ENUMERATE_HTML_ATTRIBUTE(srcset)                     \
     __ENUMERATE_HTML_ATTRIBUTE(standby)                    \
+    __ENUMERATE_HTML_ATTRIBUTE(start)                      \
     __ENUMERATE_HTML_ATTRIBUTE(step)                       \
     __ENUMERATE_HTML_ATTRIBUTE(style)                      \
     __ENUMERATE_HTML_ATTRIBUTE(summary)                    \
+    __ENUMERATE_HTML_ATTRIBUTE(tabindex)                   \
     __ENUMERATE_HTML_ATTRIBUTE(target)                     \
     __ENUMERATE_HTML_ATTRIBUTE(text)                       \
     __ENUMERATE_HTML_ATTRIBUTE(title)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(truespeed)                  \
     __ENUMERATE_HTML_ATTRIBUTE(type)                       \
     __ENUMERATE_HTML_ATTRIBUTE(usemap)                     \
     __ENUMERATE_HTML_ATTRIBUTE(valign)                     \
@@ -226,6 +270,10 @@ namespace AttributeNames {
 ENUMERATE_HTML_ATTRIBUTES
 #undef __ENUMERATE_HTML_ATTRIBUTE
 
+void initialize_strings();
+
 }
-}
+
+bool is_boolean_attribute(FlyString const& attribute);
+
 }

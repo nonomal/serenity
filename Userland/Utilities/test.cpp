@@ -143,7 +143,7 @@ private:
         }
     }
 
-    String m_path;
+    ByteString m_path;
     Kind m_kind { Regular };
 };
 
@@ -178,8 +178,91 @@ private:
         }
     }
 
-    String m_path;
+    ByteString m_path;
     Permission m_kind { Read };
+};
+
+class FileHasFlag : public Condition {
+public:
+    enum Flag {
+        SGID,
+        SUID,
+        SVTX,
+    };
+    FileHasFlag(StringView path, Flag kind)
+        : m_path(path)
+        , m_kind(kind)
+    {
+    }
+
+private:
+    virtual bool check() const override
+    {
+        struct stat statbuf;
+        int rc = stat(m_path.characters(), &statbuf);
+
+        if (rc < 0) {
+            if (errno != ENOENT) {
+                perror(m_path.characters());
+                g_there_was_an_error = true;
+            }
+            return false;
+        }
+
+        switch (m_kind) {
+        case SGID:
+            return statbuf.st_mode & S_ISGID;
+        case SUID:
+            return statbuf.st_mode & S_ISUID;
+        case SVTX:
+            return statbuf.st_mode & S_ISVTX;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+
+    ByteString m_path;
+    Flag m_kind { SGID };
+};
+
+class FileIsOwnedBy : public Condition {
+public:
+    enum Owner {
+        EffectiveGID,
+        EffectiveUID,
+    };
+    FileIsOwnedBy(StringView path, Owner kind)
+        : m_path(path)
+        , m_kind(kind)
+    {
+    }
+
+private:
+    virtual bool check() const override
+    {
+        struct stat statbuf;
+        int rc = stat(m_path.characters(), &statbuf);
+
+        if (rc < 0) {
+            if (errno != ENOENT) {
+                perror(m_path.characters());
+                g_there_was_an_error = true;
+            }
+            return false;
+        }
+
+        switch (m_kind) {
+        case EffectiveGID:
+            return statbuf.st_gid == getgid();
+        case EffectiveUID:
+            return statbuf.st_uid == getuid();
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+
+    ByteString m_path;
+    Owner m_kind { EffectiveGID };
 };
 
 class StringCompare : public Condition {
@@ -220,11 +303,11 @@ public:
         NotEqual,
     };
 
-    NumericCompare(String lhs, String rhs, Mode mode)
+    NumericCompare(ByteString lhs, ByteString rhs, Mode mode)
         : m_mode(mode)
     {
-        auto lhs_option = lhs.trim_whitespace().to_int();
-        auto rhs_option = rhs.trim_whitespace().to_int();
+        auto lhs_option = lhs.trim_whitespace().to_number<int>();
+        auto rhs_option = rhs.trim_whitespace().to_number<int>();
 
         if (!lhs_option.has_value())
             fatal_error("expected integer expression: '%s'", lhs.characters());
@@ -270,7 +353,7 @@ public:
         ModificationTimestampLess,
     };
 
-    FileCompare(String lhs, String rhs, Mode mode)
+    FileCompare(ByteString lhs, ByteString rhs, Mode mode)
         : m_lhs(move(lhs))
         , m_rhs(move(rhs))
         , m_mode(mode)
@@ -310,8 +393,8 @@ private:
         }
     }
 
-    String m_lhs;
-    String m_rhs;
+    ByteString m_lhs;
+    ByteString m_rhs;
     Mode m_mode { Same };
 };
 
@@ -343,7 +426,8 @@ static OwnPtr<Condition> parse_simple_expression(char* argv[])
 
     // Try to read a unary op.
     if (arg.starts_with('-') && arg.length() == 2) {
-        optind++;
+        if (argv[++optind] == nullptr)
+            fatal_error("expected an argument");
         if (should_treat_expression_as_single_string({ argv[optind], strlen(argv[optind]) })) {
             --optind;
             return make<StringCompare>(move(arg), ""sv, StringCompare::NotEqual);
@@ -374,6 +458,12 @@ static OwnPtr<Condition> parse_simple_expression(char* argv[])
             return make<UserHasPermission>(value, UserHasPermission::Execute);
         case 'e':
             return make<UserHasPermission>(value, UserHasPermission::Any);
+        case 'g':
+            return make<FileHasFlag>(value, FileHasFlag::SGID);
+        case 'k':
+            return make<FileHasFlag>(value, FileHasFlag::SVTX);
+        case 'u':
+            return make<FileHasFlag>(value, FileHasFlag::SUID);
         case 'o':
         case 'a':
             // '-a' and '-o' are boolean ops, which are part of a complex expression
@@ -384,13 +474,15 @@ static OwnPtr<Condition> parse_simple_expression(char* argv[])
             return make<StringCompare>(""sv, value, StringCompare::NotEqual);
         case 'z':
             return make<StringCompare>(""sv, value, StringCompare::Equal);
-        case 'g':
         case 'G':
-        case 'k':
-        case 'N':
+            return make<FileIsOwnedBy>(value, FileIsOwnedBy::EffectiveGID);
         case 'O':
+            return make<FileIsOwnedBy>(value, FileIsOwnedBy::EffectiveUID);
+        case 'N':
         case 's':
-            fatal_error("Unsupported operator \033[1m%s", argv[optind]);
+            // 'optind' has been incremented to refer to the argument after the
+            // operator, while we want to print the operator itself.
+            fatal_error("Unsupported operator \033[1m%s", argv[optind - 1]);
         default:
             --optind;
             break;
@@ -480,10 +572,12 @@ static OwnPtr<Condition> parse_complex_expression(char* argv[])
         } binary_operation { AndOp };
 
         if (arg == "-a") {
-            optind++;
+            if (argv[++optind] == nullptr)
+                fatal_error("expected an expression");
             binary_operation = AndOp;
         } else if (arg == "-o") {
-            optind++;
+            if (argv[++optind] == nullptr)
+                fatal_error("expected an expression");
             binary_operation = OrOp;
         } else {
             // Ooops, looked too far.

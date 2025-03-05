@@ -51,6 +51,7 @@ public:
     enum UpdateFlag {
         DontInvalidateIndices = 0,
         InvalidateAllIndices = 1 << 0,
+        DontResizeColumns = 1 << 1,
     };
 
     enum MatchesFlag {
@@ -61,13 +62,18 @@ public:
         MatchFull = 1 << 3,
     };
 
+    struct MatchResult {
+        TriState matched { TriState::Unknown };
+        int score { 0 };
+    };
+
     virtual ~Model();
 
     virtual int row_count(ModelIndex const& = ModelIndex()) const = 0;
     virtual int column_count(ModelIndex const& = ModelIndex()) const = 0;
-    virtual String column_name(int) const { return {}; }
+    virtual ErrorOr<String> column_name(int) const { return String {}; }
     virtual Variant data(ModelIndex const&, ModelRole = ModelRole::Display) const = 0;
-    virtual TriState data_matches(ModelIndex const&, Variant const&) const { return TriState::Unknown; }
+    virtual MatchResult data_matches(ModelIndex const&, Variant const&) const { return {}; }
     virtual void invalidate();
     virtual ModelIndex parent_index(ModelIndex const&) const { return {}; }
     virtual ModelIndex index(int row, int column = 0, ModelIndex const& parent = ModelIndex()) const;
@@ -75,7 +81,7 @@ public:
     virtual bool is_searchable() const { return false; }
     virtual void set_data(ModelIndex const&, Variant const&) { }
     virtual int tree_column() const { return 0; }
-    virtual bool accepts_drag(ModelIndex const&, Vector<String> const& mime_types) const;
+    virtual bool accepts_drag(ModelIndex const&, Core::MimeData const&) const;
     virtual Vector<ModelIndex> matches(StringView, unsigned = MatchesFlag::AllMatching, ModelIndex const& = ModelIndex()) { return {}; }
 
     virtual bool is_column_sortable([[maybe_unused]] int column_index) const { return true; }
@@ -97,6 +103,13 @@ public:
     void unregister_client(ModelClient&);
 
     WeakPtr<PersistentHandle> register_persistent_index(Badge<PersistentModelIndex>, ModelIndex const&);
+
+    // NOTE: This is a public version of create_index() which is normally protected,
+    //       but this can be used when creating a model translator like in Ladybird.
+    ModelIndex unsafe_create_index(int row, int column, void const* data = nullptr) const
+    {
+        return create_index(row, column, data);
+    }
 
 protected:
     Model();

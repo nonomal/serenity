@@ -8,12 +8,12 @@
 
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/DeclarativeEnvironment.h>
-#include <LibJS/Runtime/ECMAScriptFunctionObject.h>
 
 namespace JS {
 
 class FunctionEnvironment final : public DeclarativeEnvironment {
     JS_ENVIRONMENT(FunctionEnvironment, DeclarativeEnvironment);
+    JS_DECLARE_ALLOCATOR(FunctionEnvironment);
 
 public:
     enum class ThisBindingStatus : u8 {
@@ -22,7 +22,6 @@ public:
         Uninitialized,
     };
 
-    explicit FunctionEnvironment(Environment* parent_environment);
     virtual ~FunctionEnvironment() override = default;
 
     ThisBindingStatus this_binding_status() const { return m_this_binding_status; }
@@ -43,16 +42,18 @@ public:
     ThrowCompletionOr<Value> get_super_base() const;
     bool has_super_binding() const;
     virtual bool has_this_binding() const override;
-    virtual ThrowCompletionOr<Value> get_this_binding(GlobalObject&) const override;
-    ThrowCompletionOr<Value> bind_this_value(GlobalObject&, Value);
+    virtual ThrowCompletionOr<Value> get_this_binding(VM&) const override;
+    ThrowCompletionOr<Value> bind_this_value(VM&, Value);
 
 private:
+    explicit FunctionEnvironment(Environment* parent_environment);
+
     virtual bool is_function_environment() const override { return true; }
     virtual void visit_edges(Visitor&) override;
 
     Value m_this_value;                                                           // [[ThisValue]]
     ThisBindingStatus m_this_binding_status { ThisBindingStatus::Uninitialized }; // [[ThisBindingStatus]]
-    ECMAScriptFunctionObject* m_function_object { nullptr };                      // [[FunctionObject]]
+    GCPtr<ECMAScriptFunctionObject> m_function_object;                            // [[FunctionObject]]
     Value m_new_target { js_undefined() };                                        // [[NewTarget]]
 };
 

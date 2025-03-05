@@ -23,10 +23,10 @@ public:
     virtual void die() override;
 
 private:
-    explicit ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket>, int client_id);
+    explicit ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket>, int client_id);
 
-    virtual Messages::LookupServer::LookupNameResponse lookup_name(String const&) override;
-    virtual Messages::LookupServer::LookupAddressResponse lookup_address(String const&) override;
+    virtual Messages::LookupServer::LookupNameResponse lookup_name(ByteString const&) override;
+    virtual Messages::LookupServer::LookupAddressResponse lookup_address(ByteString const&) override;
 };
 
 }

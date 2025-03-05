@@ -8,7 +8,6 @@
 
 #include <AK/Array.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef long double longdouble;
@@ -148,7 +147,7 @@ struct TestSuite {
     Array<unsigned char, 32> expected_values[8]; // 32 bytes for each argument's value.
 };
 
-const TestSuite test_suites[] {
+TestSuite const test_suites[] {
     { "%d", "", 0, 0, {}, {} },
     { "%x", "0x519", 1, 1, { unsignedarg0 }, { to_value_t(0x519) } },
     { "%x", "0x51g", 1, 1, { unsignedarg0 }, { to_value_t(0x51u) } },
@@ -180,6 +179,7 @@ const TestSuite test_suites[] {
     { "%d %n", "1 a", 1, 2, { intarg0, intarg1 }, { to_value_t(1), to_value_t(2) } },
     { "%*d", "  42", 0, 0, {}, {} },
     { "%d%*1[:/]%d", "24/7", 2, 2, { intarg0, intarg1 }, { to_value_t(24), to_value_t(7) } },
+    { " %[^a]", " b", 1, 1, { charstararg0 }, { str_to_value_t("b") } },
 };
 
 bool g_any_failed = false;

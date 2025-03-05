@@ -7,6 +7,7 @@
 #include <LibTest/TestCase.h>
 
 #include <AK/ByteBuffer.h>
+#include <AK/Vector.h>
 
 TEST_CASE(equality_operator)
 {
@@ -31,6 +32,43 @@ TEST_CASE(equality_operator)
     EXPECT_EQ(d == b, false);
     EXPECT_EQ(d == c, false);
     EXPECT_EQ(d == d, true);
+}
+
+TEST_CASE(byte_buffer_vector_contains_slow_bytes)
+{
+    Vector<ByteBuffer> vector;
+    ByteBuffer a = ByteBuffer::copy("Hello, friend", 13).release_value();
+    vector.append(a);
+
+    ReadonlyBytes b = "Hello, friend"sv.bytes();
+    Bytes c = a.bytes();
+    EXPECT_EQ(vector.contains_slow(b), true);
+    EXPECT_EQ(vector.contains_slow(c), true);
+}
+
+TEST_CASE(zero_fill_new_elements_on_growth)
+{
+    auto buffer = MUST(ByteBuffer::create_uninitialized(5));
+
+    buffer.span().fill(1);
+    EXPECT_EQ(buffer.span(), (Array<u8, 5> { 1, 1, 1, 1, 1 }));
+
+    buffer.resize(8, ByteBuffer::ZeroFillNewElements::Yes);
+    EXPECT_EQ(buffer.span(), (Array<u8, 8> { 1, 1, 1, 1, 1, 0, 0, 0 }));
+
+    buffer.span().fill(2);
+    EXPECT_EQ(buffer.span(), (Array<u8, 8> { 2, 2, 2, 2, 2, 2, 2, 2 }));
+
+    buffer.resize(10, ByteBuffer::ZeroFillNewElements::Yes);
+    EXPECT_EQ(buffer.span(), (Array<u8, 10> { 2, 2, 2, 2, 2, 2, 2, 2, 0, 0 }));
+}
+
+BENCHMARK_CASE(append)
+{
+    ByteBuffer bb;
+    for (size_t i = 0; i < 1000000; ++i) {
+        bb.append(static_cast<u8>(i));
+    }
 }
 
 /*

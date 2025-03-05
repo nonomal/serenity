@@ -8,7 +8,7 @@
 
 #include <AK/Error.h>
 #include <Kernel/Locking/MutexProtected.h>
-#include <Kernel/Net/IPv4Socket.h>
+#include <Kernel/Net/IP/Socket.h>
 
 namespace Kernel {
 
@@ -29,8 +29,7 @@ private:
     virtual ErrorOr<size_t> protocol_receive(ReadonlyBytes raw_ipv4_packet, UserOrKernelBuffer& buffer, size_t buffer_size, int flags) override;
     virtual ErrorOr<size_t> protocol_send(UserOrKernelBuffer const&, size_t) override;
     virtual ErrorOr<size_t> protocol_size(ReadonlyBytes raw_ipv4_packet) override;
-    virtual ErrorOr<void> protocol_connect(OpenFileDescription&, ShouldBlock) override;
-    virtual ErrorOr<u16> protocol_allocate_local_port() override;
+    virtual ErrorOr<void> protocol_connect(OpenFileDescription&) override;
     virtual ErrorOr<void> protocol_bind() override;
 };
 

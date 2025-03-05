@@ -22,13 +22,17 @@ public:
     virtual void on_mousemove(Layer*, MouseEvent&) override;
     virtual void on_mouseup(Layer*, MouseEvent&) override;
     virtual void on_second_paint(Layer const*, GUI::PaintEvent&) override;
-    virtual void on_keydown(GUI::KeyEvent&) override;
-    virtual GUI::Widget* get_properties_widget() override;
-    virtual Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> cursor() override { return Gfx::StandardCursor::Crosshair; }
+    virtual bool on_keydown(GUI::KeyEvent&) override;
+    virtual NonnullRefPtr<GUI::Widget> get_properties_widget() override;
+    virtual Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap const>> cursor() override { return Gfx::StandardCursor::Crosshair; }
 
-    void draw_using(GUI::Painter&, Gfx::IntPoint const& start_position, Gfx::IntPoint const& end_position, Color color, int thickness);
+    void draw_using(GUI::Painter&, Gfx::IntPoint start_position, Gfx::IntPoint end_position, Color color, int thickness);
+
+    virtual bool is_overriding_alt() override { return true; }
 
 private:
+    virtual StringView tool_name() const override { return "Line Tool"sv; }
+
     RefPtr<GUI::Widget> m_properties_widget;
 
     GUI::MouseButton m_drawing_button { GUI::MouseButton::None };

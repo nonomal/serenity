@@ -4,38 +4,41 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "SVGPolygonElement.h"
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGPolygonElementPrototype.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/AttributeParser.h>
+#include <LibWeb/SVG/SVGPolygonElement.h>
 
 namespace Web::SVG {
+
+JS_DEFINE_ALLOCATOR(SVGPolygonElement);
 
 SVGPolygonElement::SVGPolygonElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : SVGGeometryElement(document, qualified_name)
 {
 }
 
-void SVGPolygonElement::parse_attribute(FlyString const& name, String const& value)
+void SVGPolygonElement::initialize(JS::Realm& realm)
 {
-    SVGGeometryElement::parse_attribute(name, value);
-
-    if (name == SVG::AttributeNames::points) {
-        m_points = AttributeParser::parse_points(value);
-        m_path.clear();
-    }
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGPolygonElement);
 }
 
-Gfx::Path& SVGPolygonElement::get_path()
+void SVGPolygonElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value)
 {
-    if (m_path.has_value())
-        return m_path.value();
+    SVGGeometryElement::attribute_changed(name, old_value, value);
 
+    if (name == SVG::AttributeNames::points)
+        m_points = AttributeParser::parse_points(value.value_or(String {}));
+}
+
+Gfx::Path SVGPolygonElement::get_path(CSSPixelSize)
+{
     Gfx::Path path;
 
-    if (m_points.is_empty()) {
-        m_path = move(path);
-        return m_path.value();
-    }
+    if (m_points.is_empty())
+        return path;
 
     // 1. perform an absolute moveto operation to the first coordinate pair in the list of points
     path.move_to(m_points.first());
@@ -47,8 +50,7 @@ Gfx::Path& SVGPolygonElement::get_path()
     // 3. perform a closepath command
     path.close();
 
-    m_path = move(path);
-    return m_path.value();
+    return path;
 }
 
 }

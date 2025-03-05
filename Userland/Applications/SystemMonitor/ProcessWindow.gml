@@ -1,6 +1,8 @@
 @GUI::Widget {
     fill_with_background_color: true
-    layout: @GUI::VerticalBoxLayout {}
+    layout: @GUI::VerticalBoxLayout {
+        margins: [4]
+    }
 
     @GUI::Widget {
         shrink_to_fit: true
@@ -9,8 +11,8 @@
             spacing: 8
         }
 
-        @GUI::Label {
-            name: "icon_label"
+        @GUI::ImageWidget {
+            name: "process_icon"
             fixed_size: [32, 32]
         }
 
@@ -19,6 +21,7 @@
             font_weight: "Bold"
             text_alignment: "CenterLeft"
             text: "This is the process name."
+            preferred_width: "grow"
         }
     }
 

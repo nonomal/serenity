@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Andrew Kaster <akaster@serenityos.org>
+ * Copyright (c) 2021-2023, Andrew Kaster <akaster@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,13 +7,19 @@
 #pragma once
 
 #include <AK/Endian.h>
+#include <AK/Error.h>
+#include <AK/Function.h>
+#include <AK/IterationDecision.h>
+#include <AK/StringView.h>
 #include <AK/Types.h>
+
+#include "DeviceTree.h"
 
 namespace DeviceTree {
 
 // https://devicetree-specification.readthedocs.io/en/v0.3/flattened-format.html
 struct FlattenedDeviceTreeHeader {
-    BigEndian<u32> magic;             // 0xDOODFEED (BE)
+    BigEndian<u32> magic;             // 0xD00DFEED (BE)
     BigEndian<u32> totalsize;         // Total size of entire blob including padding b/w and after fields
     BigEndian<u32> off_dt_struct;     // Offset of StructureBlock from beginning of header
                                       // https://devicetree-specification.readthedocs.io/en/v0.3/flattened-format.html#sect-fdt-structure-block
@@ -34,8 +40,28 @@ struct FlattenedDeviceTreeReserveEntry {
     BigEndian<u64> size;
 
     bool operator==(FlattenedDeviceTreeReserveEntry const& other) const { return other.address == address && other.size == size; }
-    bool operator!=(FlattenedDeviceTreeReserveEntry const& other) const { return !(operator==(other)); }
 };
 static_assert(sizeof(FlattenedDeviceTreeReserveEntry) == 16, "FDT Memory Reservation entry size must match specification");
+
+// https://devicetree-specification.readthedocs.io/en/v0.3/flattened-format.html#lexical-structure
+enum class FlattenedDeviceTreeTokenType : u32 {
+    BeginNode = 1,
+    EndNode = 2,
+    Property = 3,
+    NoOp = 4,
+    End = 9
+};
+
+struct DeviceTreeCallbacks {
+    Function<ErrorOr<IterationDecision>(StringView)> on_node_begin;
+    Function<ErrorOr<IterationDecision>(StringView)> on_node_end;
+    Function<ErrorOr<IterationDecision>(StringView, ReadonlyBytes)> on_property;
+    Function<ErrorOr<IterationDecision>()> on_noop;
+    Function<ErrorOr<void>()> on_end;
+};
+
+ErrorOr<void> walk_device_tree(FlattenedDeviceTreeHeader const&, ReadonlyBytes raw_device_tree, DeviceTreeCallbacks);
+
+ErrorOr<Property> slow_get_property(StringView name, FlattenedDeviceTreeHeader const&, ReadonlyBytes raw_device_tree);
 
 } // namespace DeviceTree

@@ -1,16 +1,14 @@
 /*
  * Copyright (c) 2021, Stephan Unverwerth <s.unverwerth@serenityos.org>
- * Copyright (c) 2022, Jelle Raaijmakers <jelle@gmta.nl>
+ * Copyright (c) 2022-2024, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/Array.h>
 #include <LibGPU/Config.h>
 #include <LibGPU/Enums.h>
-#include <LibGPU/TexCoordGenerationConfig.h>
 #include <LibGfx/Rect.h>
 #include <LibGfx/Vector4.h>
 
@@ -25,6 +23,9 @@ struct RasterizerOptions {
     AlphaTestFunction alpha_test_func { AlphaTestFunction::Always };
     float alpha_test_ref_value { 0 };
     bool enable_blending { false };
+    FloatVector4 blend_color { 0.f, 0.f, 0.f, 0.f };
+    BlendEquation blend_equation_rgb { BlendEquation::Add };
+    BlendEquation blend_equation_alpha { BlendEquation::Add };
     BlendFactor blend_source_factor { BlendFactor::One };
     BlendFactor blend_destination_factor { BlendFactor::One };
     u32 color_mask { 0xffffffff };
@@ -53,8 +54,6 @@ struct RasterizerOptions {
     WindingOrder front_face { WindingOrder::CounterClockwise };
     bool cull_back { true };
     bool cull_front { false };
-    Array<u8, NUM_SAMPLERS> texcoord_generation_enabled_coordinates {};
-    Array<Array<TexCoordGenerationConfig, 4>, NUM_SAMPLERS> texcoord_generation_config {};
     Gfx::IntRect viewport;
     bool lighting_enabled { false };
     bool color_material_enabled { false };

@@ -6,7 +6,7 @@
 
 #include <Kernel/FileSystem/SysFS/Registry.h>
 #include <Kernel/FileSystem/SysFS/Subsystems/Bus/USB/BusDirectory.h>
-#include <Kernel/KBufferBuilder.h>
+#include <Kernel/Library/KBufferBuilder.h>
 
 namespace Kernel {
 
@@ -43,12 +43,6 @@ UNMAP_AFTER_INIT void SysFSUSBBusDirectory::initialize()
     auto directory = adopt_ref(*new SysFSUSBBusDirectory(SysFSComponentRegistry::the().buses_directory()));
     SysFSComponentRegistry::the().register_new_bus_directory(directory);
     s_sysfs_usb_bus_directory = directory;
-}
-
-ErrorOr<NonnullRefPtr<SysFSUSBDeviceInformation>> SysFSUSBDeviceInformation::create(USB::Device& device)
-{
-    auto device_name = TRY(KString::number(device.address()));
-    return adopt_nonnull_ref_or_enomem(new (nothrow) SysFSUSBDeviceInformation(move(device_name), device));
 }
 
 }

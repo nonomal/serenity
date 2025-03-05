@@ -6,8 +6,14 @@
 
 #pragma once
 
-#include <bits/wchar.h>
+// Includes essentially mandated by POSIX:
+// https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/stdlib.h.html
+#include <limits.h>
+#include <math.h>
 #include <stddef.h>
+#include <sys/wait.h>
+
+#include <bits/wchar.h>
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
@@ -25,15 +31,13 @@ size_t malloc_good_size(size_t);
 void serenity_dump_malloc_stats(void);
 void free(void*);
 __attribute__((alloc_size(2))) void* realloc(void* ptr, size_t);
-__attribute__((malloc, alloc_size(1), alloc_align(2))) void* _aligned_malloc(size_t size, size_t alignment);
-void _aligned_free(void* memblock);
 char* getenv(char const* name);
 char* secure_getenv(char const* name);
 int putenv(char*);
+int serenity_putenv(char const* new_var, size_t length);
 int unsetenv(char const*);
 int clearenv(void);
 int setenv(char const* name, char const* value, int overwrite);
-int serenity_setenv(char const* name, ssize_t name_length, char const* value, ssize_t value_length, int overwrite);
 char const* getprogname(void);
 void setprogname(char const*);
 int atoi(char const*);
@@ -60,6 +64,7 @@ double atof(char const*);
 int system(char const* command);
 char* mktemp(char*);
 int mkstemp(char*);
+int mkstemps(char*, int);
 char* mkdtemp(char*);
 void* bsearch(void const* key, void const* base, size_t nmemb, size_t size, int (*compar)(void const*, void const*));
 int mblen(char const*, size_t);
@@ -73,6 +78,8 @@ __attribute__((noreturn)) void _Exit(int status);
 #define RAND_MAX 32767
 int rand(void);
 void srand(unsigned seed);
+double drand48(void);
+void srand48(long seed);
 
 long int random(void);
 void srandom(unsigned seed);

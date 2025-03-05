@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/Function.h>
-#include <AK/String.h>
 #include <AK/StringView.h>
 #include <AK/Types.h>
 
@@ -30,8 +29,6 @@ protected:
         ReadSubcommand,
         Error,
     };
-
-    void write(String const& str);
 
 private:
     State m_state { State::Free };

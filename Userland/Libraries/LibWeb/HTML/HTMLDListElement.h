@@ -11,11 +11,16 @@
 namespace Web::HTML {
 
 class HTMLDListElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLDListElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLDListElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLDListElement);
 
-    HTMLDListElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLDListElement() override;
+
+private:
+    HTMLDListElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

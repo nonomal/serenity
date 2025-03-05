@@ -4,35 +4,39 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Slugify.h>
 #include <AK/StringBuilder.h>
 #include <LibMarkdown/Heading.h>
 #include <LibMarkdown/Visitor.h>
+#include <LibUnicode/Normalize.h>
 
 namespace Markdown {
 
-String Heading::render_to_html(bool) const
+ByteString Heading::render_to_html(bool) const
 {
-    return String::formatted("<h{}>{}</h{}>\n", m_level, m_text.render_to_html(), m_level);
+    auto input = Unicode::normalize(m_text.render_for_raw_print(), Unicode::NormalizationForm::NFD);
+    auto slugified = MUST(AK::slugify(input));
+    return ByteString::formatted("<h{} id='{}'><a href='#{}'>#</a> {}</h{}>\n", m_level, slugified, slugified, m_text.render_to_html(), m_level);
 }
 
-String Heading::render_for_terminal(size_t) const
+Vector<ByteString> Heading::render_lines_for_terminal(size_t) const
 {
     StringBuilder builder;
 
-    builder.append("\033[0;31;1m\n"sv);
+    builder.append("\n\033[0;31;1m"sv);
     switch (m_level) {
     case 1:
     case 2:
         builder.append(m_text.render_for_terminal().to_uppercase());
-        builder.append("\033[0m\n"sv);
+        builder.append("\033[0m"sv);
         break;
     default:
         builder.append(m_text.render_for_terminal());
-        builder.append("\033[0m\n"sv);
+        builder.append("\033[0m"sv);
         break;
     }
 
-    return builder.build();
+    return Vector<ByteString> { builder.to_byte_string() };
 }
 
 RecursionDecision Heading::walk(Visitor& visitor) const

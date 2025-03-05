@@ -25,7 +25,7 @@ public:
     static ErrorOr<NonnullRefPtr<Typed3DBuffer<T>>> try_create(int width, int height, int depth)
     {
         VERIFY(width > 0 && height > 0 && depth > 0);
-        auto data = TRY(FixedArray<T>::try_create(width * height * depth));
+        auto data = TRY(FixedArray<T>::create(width * height * depth));
         return adopt_ref(*new Typed3DBuffer(width, height, depth, move(data)));
     }
 
@@ -41,10 +41,10 @@ public:
 
     void fill(T value, int x1, int x2, int y1, int y2, int z1, int z2)
     {
-        for (auto z = z1; z <= z2; ++z) {
-            for (auto y = y1; y <= y2; ++y) {
+        for (auto z = z1; z < z2; ++z) {
+            for (auto y = y1; y < y2; ++y) {
                 auto* xline = buffer_pointer(0, y, z);
-                for (auto x = x1; x <= x2; ++x)
+                for (auto x = x1; x < x2; ++x)
                     xline[x] = value;
             }
         }

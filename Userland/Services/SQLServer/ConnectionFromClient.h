@@ -6,8 +6,12 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
+#include <AK/Function.h>
 #include <AK/HashMap.h>
+#include <AK/Vector.h>
 #include <LibIPC/ConnectionFromClient.h>
+#include <LibSQL/Type.h>
 #include <SQLServer/SQLClientEndpoint.h>
 #include <SQLServer/SQLServerEndpoint.h>
 
@@ -24,13 +28,19 @@ public:
 
     static RefPtr<ConnectionFromClient> client_connection_for(int client_id);
 
-private:
-    explicit ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket>, int client_id);
+    void set_database_path(ByteString);
+    Function<void()> on_disconnect;
 
-    virtual Messages::SQLServer::ConnectResponse connect(String const&) override;
-    virtual Messages::SQLServer::SqlStatementResponse sql_statement(int, String const&) override;
-    virtual void statement_execute(int) override;
-    virtual void disconnect(int) override;
+private:
+    explicit ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket>, int client_id);
+
+    virtual Messages::SQLServer::ConnectResponse connect(ByteString const&) override;
+    virtual Messages::SQLServer::PrepareStatementResponse prepare_statement(SQL::ConnectionID, ByteString const&) override;
+    virtual Messages::SQLServer::ExecuteStatementResponse execute_statement(SQL::StatementID, Vector<SQL::Value> const& placeholder_values) override;
+    virtual void ready_for_next_result(SQL::StatementID, SQL::ExecutionID) override;
+    virtual void disconnect(SQL::ConnectionID) override;
+
+    ByteString m_database_path;
 };
 
 }

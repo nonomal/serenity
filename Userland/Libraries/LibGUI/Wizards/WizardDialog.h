@@ -7,23 +7,17 @@
 
 #pragma once
 
-#include <AK/NonnullRefPtrVector.h>
 #include <LibGUI/Dialog.h>
 #include <LibGUI/Wizards/AbstractWizardPage.h>
 
 namespace GUI {
 
 class WizardDialog : public Dialog {
-    C_OBJECT(WizardDialog)
+    C_OBJECT_ABSTRACT(WizardDialog)
 public:
     virtual ~WizardDialog() override = default;
 
-    static void show(AbstractWizardPage& first_page, Window* parent_window = nullptr)
-    {
-        auto dialog = WizardDialog::construct(parent_window);
-        dialog->push_page(first_page);
-        dialog->exec();
-    }
+    static ErrorOr<NonnullRefPtr<WizardDialog>> create(Window* parent_window);
 
     Function<void()> on_cancel;
 
@@ -37,8 +31,9 @@ public:
     inline bool has_pages() const { return !m_page_stack.is_empty(); }
 
 protected:
-    WizardDialog(Window* parent_window);
+    explicit WizardDialog(Window* parent_window);
 
+    virtual ErrorOr<void> build();
     virtual void handle_cancel();
 
 private:
@@ -49,6 +44,6 @@ private:
     RefPtr<Button> m_next_button;
     RefPtr<Button> m_cancel_button;
 
-    NonnullRefPtrVector<AbstractWizardPage> m_page_stack;
+    Vector<NonnullRefPtr<AbstractWizardPage>> m_page_stack;
 };
 }

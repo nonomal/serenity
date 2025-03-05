@@ -8,29 +8,27 @@
 
 #include "Forward.h"
 #include "Spreadsheet.h"
-#include <AK/NonnullOwnPtrVector.h>
-#include <AK/Result.h>
 
 namespace Spreadsheet {
 
 class Workbook {
 public:
-    Workbook(NonnullRefPtrVector<Sheet>&& sheets, GUI::Window& parent_window);
+    Workbook(Vector<NonnullRefPtr<Sheet>>&& sheets, GUI::Window& parent_window);
 
-    Result<bool, String> open_file(Core::File&);
-    Result<bool, String> write_to_file(Core::File&);
+    ErrorOr<void, ByteString> open_file(ByteString const& filename, Core::File&);
+    ErrorOr<void> write_to_file(ByteString const& filename, Core::File&);
 
-    Result<bool, String> import_file(Core::File&);
+    ErrorOr<bool, ByteString> import_file(ByteString const& filename, Core::File&);
 
-    String const& current_filename() const { return m_current_filename; }
-    bool set_filename(String const& filename);
+    ByteString const& current_filename() const { return m_current_filename; }
+    bool set_filename(ByteString const& filename);
     bool dirty() { return m_dirty; }
     void set_dirty(bool dirty) { m_dirty = dirty; }
 
     bool has_sheets() const { return !m_sheets.is_empty(); }
 
-    NonnullRefPtrVector<Sheet> const& sheets() const { return m_sheets; }
-    NonnullRefPtrVector<Sheet> sheets() { return m_sheets; }
+    Vector<NonnullRefPtr<Sheet>> const& sheets() const { return m_sheets; }
+    Vector<NonnullRefPtr<Sheet>> sheets() { return m_sheets; }
 
     Sheet& add_sheet(StringView name)
     {
@@ -44,15 +42,15 @@ public:
     JS::VM const& vm() const { return *m_vm; }
 
 private:
-    NonnullRefPtrVector<Sheet> m_sheets;
+    Vector<NonnullRefPtr<Sheet>> m_sheets;
     NonnullRefPtr<JS::VM> m_vm;
-    NonnullOwnPtr<JS::Interpreter> m_interpreter;
-    JS::VM::InterpreterExecutionScope m_interpreter_scope;
-    WorkbookObject* m_workbook_object { nullptr };
-    JS::ExecutionContext m_main_execution_context;
+    NonnullOwnPtr<JS::ExecutionContext> m_root_execution_context;
+
+    JS::GCPtr<WorkbookObject> m_workbook_object;
+    NonnullOwnPtr<JS::ExecutionContext> m_main_execution_context;
     GUI::Window& m_parent_window;
 
-    String m_current_filename;
+    ByteString m_current_filename;
     bool m_dirty { false };
 };
 

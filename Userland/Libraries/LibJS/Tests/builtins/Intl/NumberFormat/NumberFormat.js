@@ -128,15 +128,15 @@ describe("errors", () => {
 
         expect(() => {
             new Intl.NumberFormat("en", { minimumFractionDigits: "hello!" });
-        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 0 and 20");
+        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 0 and 100");
 
         expect(() => {
             new Intl.NumberFormat("en", { minimumFractionDigits: -1 });
-        }).toThrowWithMessage(RangeError, "Value -1 is NaN or is not between 0 and 20");
+        }).toThrowWithMessage(RangeError, "Value -1 is NaN or is not between 0 and 100");
 
         expect(() => {
-            new Intl.NumberFormat("en", { minimumFractionDigits: 21 });
-        }).toThrowWithMessage(RangeError, "Value 21 is NaN or is not between 0 and 20");
+            new Intl.NumberFormat("en", { minimumFractionDigits: 101 });
+        }).toThrowWithMessage(RangeError, "Value 101 is NaN or is not between 0 and 100");
     });
 
     test("maximumFractionDigits option is invalid ", () => {
@@ -146,15 +146,15 @@ describe("errors", () => {
 
         expect(() => {
             new Intl.NumberFormat("en", { maximumFractionDigits: "hello!" });
-        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 0 and 20");
+        }).toThrowWithMessage(RangeError, "Value NaN is NaN or is not between 0 and 100");
 
         expect(() => {
             new Intl.NumberFormat("en", { maximumFractionDigits: -1 });
-        }).toThrowWithMessage(RangeError, "Value -1 is NaN or is not between 0 and 20");
+        }).toThrowWithMessage(RangeError, "Value -1 is NaN or is not between 0 and 100");
 
         expect(() => {
-            new Intl.NumberFormat("en", { maximumFractionDigits: 21 });
-        }).toThrowWithMessage(RangeError, "Value 21 is NaN or is not between 0 and 20");
+            new Intl.NumberFormat("en", { maximumFractionDigits: 101 });
+        }).toThrowWithMessage(RangeError, "Value 101 is NaN or is not between 0 and 100");
 
         expect(() => {
             new Intl.NumberFormat("en", { minimumFractionDigits: 10, maximumFractionDigits: 5 });
@@ -209,6 +209,12 @@ describe("errors", () => {
         }).toThrowWithMessage(RangeError, "hello! is not a valid value for option signDisplay");
     });
 
+    test("useGrouping option is invalid", () => {
+        expect(() => {
+            new Intl.NumberFormat("en", { useGrouping: "hello!" });
+        }).toThrowWithMessage(RangeError, "hello! is not a valid value for option useGrouping");
+    });
+
     test("roundingPriority option is invalid", () => {
         expect(() => {
             new Intl.NumberFormat("en", { roundingPriority: "hello!" });
@@ -238,11 +244,7 @@ describe("errors", () => {
         }).toThrowWithMessage(RangeError, "Value 5001 is NaN or is not between 1 and 5000");
 
         expect(() => {
-            new Intl.NumberFormat("en", {
-                roundingIncrement: 3,
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-            });
+            new Intl.NumberFormat("en", { roundingIncrement: 3 });
         }).toThrowWithMessage(RangeError, "3 is not a valid rounding increment");
 
         expect(() => {
@@ -368,7 +370,7 @@ describe("normal behavior", () => {
     });
 
     test("all valid minimumFractionDigits options", () => {
-        for (let i = 0; i <= 20; ++i) {
+        for (let i = 0; i <= 100; ++i) {
             expect(() => {
                 new Intl.NumberFormat("en", { minimumFractionDigits: i });
             }).not.toThrow();
@@ -376,7 +378,7 @@ describe("normal behavior", () => {
     });
 
     test("all valid maximumFractionDigits options", () => {
-        for (let i = 0; i <= 20; ++i) {
+        for (let i = 0; i <= 100; ++i) {
             expect(() => {
                 new Intl.NumberFormat("en", { maximumFractionDigits: i });
             }).not.toThrow();
@@ -416,7 +418,7 @@ describe("normal behavior", () => {
     });
 
     test("valid useGrouping options", () => {
-        ["min2", "auto", "always", false, true, ""].forEach(useGrouping => {
+        ["min2", "auto", "always", false, true, "false", "true", ""].forEach(useGrouping => {
             expect(() => {
                 new Intl.NumberFormat("en", { useGrouping: useGrouping });
             }).not.toThrow();
@@ -453,11 +455,7 @@ describe("normal behavior", () => {
         [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000].forEach(
             roundingIncrement => {
                 expect(() => {
-                    new Intl.NumberFormat("en", {
-                        roundingIncrement: roundingIncrement,
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                    });
+                    new Intl.NumberFormat("en", { roundingIncrement: roundingIncrement });
                 }).not.toThrow();
             }
         );

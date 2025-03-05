@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/Types.h>
 #include <LibCpp/Parser.h>
 #include <LibGUI/AutocompleteProvider.h>
@@ -16,111 +16,110 @@
 namespace IPC {
 
 template<>
-inline bool encode(Encoder& encoder, CodeComprehension::AutocompleteResultEntry const& response)
+inline ErrorOr<void> encode(Encoder& encoder, CodeComprehension::AutocompleteResultEntry const& response)
 {
-    encoder << response.completion;
-    encoder << response.partial_input_length;
-    encoder << response.language;
-    encoder << response.display_text;
-    encoder << response.hide_autocomplete_after_applying;
-    return true;
-}
-
-template<>
-inline ErrorOr<void> decode(Decoder& decoder, CodeComprehension::AutocompleteResultEntry& response)
-{
-    TRY(decoder.decode(response.completion));
-    TRY(decoder.decode(response.partial_input_length));
-    TRY(decoder.decode(response.language));
-    TRY(decoder.decode(response.display_text));
-    TRY(decoder.decode(response.hide_autocomplete_after_applying));
+    TRY(encoder.encode(response.completion));
+    TRY(encoder.encode(response.partial_input_length));
+    TRY(encoder.encode(response.language));
+    TRY(encoder.encode(response.display_text));
+    TRY(encoder.encode(response.hide_autocomplete_after_applying));
     return {};
 }
 
 template<>
-inline bool encode(Encoder& encoder, CodeComprehension::ProjectLocation const& location)
+inline ErrorOr<CodeComprehension::AutocompleteResultEntry> decode(Decoder& decoder)
 {
-    encoder << location.file;
-    encoder << location.line;
-    encoder << location.column;
-    return true;
+    auto completion = TRY(decoder.decode<ByteString>());
+    auto partial_input_length = TRY(decoder.decode<size_t>());
+    auto language = TRY(decoder.decode<CodeComprehension::Language>());
+    auto display_text = TRY(decoder.decode<ByteString>());
+    auto hide_autocomplete_after_applying = TRY(decoder.decode<CodeComprehension::AutocompleteResultEntry::HideAutocompleteAfterApplying>());
+
+    return CodeComprehension::AutocompleteResultEntry { move(completion), partial_input_length, language, move(display_text), hide_autocomplete_after_applying };
 }
 
 template<>
-inline ErrorOr<void> decode(Decoder& decoder, CodeComprehension::ProjectLocation& location)
+inline ErrorOr<void> encode(Encoder& encoder, CodeComprehension::ProjectLocation const& location)
 {
-    TRY(decoder.decode(location.file));
-    TRY(decoder.decode(location.line));
-    TRY(decoder.decode(location.column));
+    TRY(encoder.encode(location.file));
+    TRY(encoder.encode(location.line));
+    TRY(encoder.encode(location.column));
     return {};
 }
 
 template<>
-inline bool encode(Encoder& encoder, CodeComprehension::Declaration const& declaration)
+inline ErrorOr<CodeComprehension::ProjectLocation> decode(Decoder& decoder)
 {
-    encoder << declaration.name;
-    if (!encode(encoder, declaration.position))
-        return false;
-    encoder << declaration.type;
-    encoder << declaration.scope;
-    return true;
+    auto file = TRY(decoder.decode<ByteString>());
+    auto line = TRY(decoder.decode<size_t>());
+    auto column = TRY(decoder.decode<size_t>());
+
+    return CodeComprehension::ProjectLocation { move(file), line, column };
 }
 
 template<>
-inline ErrorOr<void> decode(Decoder& decoder, CodeComprehension::Declaration& declaration)
+inline ErrorOr<void> encode(Encoder& encoder, CodeComprehension::Declaration const& declaration)
 {
-    TRY(decoder.decode(declaration.name));
-    TRY(decoder.decode(declaration.position));
-    TRY(decoder.decode(declaration.type));
-    TRY(decoder.decode(declaration.scope));
+    TRY(encoder.encode(declaration.name));
+    TRY(encoder.encode(declaration.position));
+    TRY(encoder.encode(declaration.type));
+    TRY(encoder.encode(declaration.scope));
     return {};
 }
 
 template<>
-inline bool encode(Encoder& encoder, CodeComprehension::TodoEntry const& entry)
+inline ErrorOr<CodeComprehension::Declaration> decode(Decoder& decoder)
 {
-    encoder << entry.content;
-    encoder << entry.filename;
-    encoder << entry.line;
-    encoder << entry.column;
-    return true;
+    auto name = TRY(decoder.decode<ByteString>());
+    auto position = TRY(decoder.decode<CodeComprehension::ProjectLocation>());
+    auto type = TRY(decoder.decode<CodeComprehension::DeclarationType>());
+    auto scope = TRY(decoder.decode<ByteString>());
+
+    return CodeComprehension::Declaration { move(name), position, type, move(scope) };
 }
 
 template<>
-inline ErrorOr<void> decode(Decoder& decoder, CodeComprehension::TodoEntry& entry)
+inline ErrorOr<void> encode(Encoder& encoder, CodeComprehension::TodoEntry const& entry)
 {
-    TRY(decoder.decode(entry.content));
-    TRY(decoder.decode(entry.filename));
-    TRY(decoder.decode(entry.line));
-    TRY(decoder.decode(entry.column));
+    TRY(encoder.encode(entry.content));
+    TRY(encoder.encode(entry.filename));
+    TRY(encoder.encode(entry.line));
+    TRY(encoder.encode(entry.column));
     return {};
 }
 
 template<>
-inline bool encode(Encoder& encoder, CodeComprehension::TokenInfo const& location)
+inline ErrorOr<CodeComprehension::TodoEntry> decode(Decoder& decoder)
 {
-    encoder << (u32)location.type;
-    static_assert(sizeof(location.type) == sizeof(u32));
-    encoder << location.start_line;
-    encoder << location.start_column;
-    encoder << location.end_line;
-    encoder << location.end_column;
-    return true;
+    auto content = TRY(decoder.decode<ByteString>());
+    auto filename = TRY(decoder.decode<ByteString>());
+    auto line = TRY(decoder.decode<size_t>());
+    auto column = TRY(decoder.decode<size_t>());
+
+    return CodeComprehension::TodoEntry { move(content), move(filename), line, column };
 }
 
 template<>
-inline ErrorOr<void> decode(Decoder& decoder, CodeComprehension::TokenInfo& entry)
+inline ErrorOr<void> encode(Encoder& encoder, CodeComprehension::TokenInfo const& location)
 {
-    u32 semantic_type { 0 };
-    static_assert(sizeof(semantic_type) == sizeof(entry.type));
-
-    TRY(decoder.decode(semantic_type));
-    entry.type = static_cast<CodeComprehension::TokenInfo::SemanticType>(semantic_type);
-    TRY(decoder.decode(entry.start_line));
-    TRY(decoder.decode(entry.start_column));
-    TRY(decoder.decode(entry.end_line));
-    TRY(decoder.decode(entry.end_column));
+    TRY(encoder.encode(location.type));
+    TRY(encoder.encode(location.start_line));
+    TRY(encoder.encode(location.start_column));
+    TRY(encoder.encode(location.end_line));
+    TRY(encoder.encode(location.end_column));
     return {};
+}
+
+template<>
+inline ErrorOr<CodeComprehension::TokenInfo> decode(Decoder& decoder)
+{
+    auto type = TRY(decoder.decode<CodeComprehension::TokenInfo::SemanticType>());
+    auto start_line = TRY(decoder.decode<size_t>());
+    auto start_column = TRY(decoder.decode<size_t>());
+    auto end_line = TRY(decoder.decode<size_t>());
+    auto end_column = TRY(decoder.decode<size_t>());
+
+    return CodeComprehension::TokenInfo { type, start_line, start_column, end_line, end_column };
 }
 
 }

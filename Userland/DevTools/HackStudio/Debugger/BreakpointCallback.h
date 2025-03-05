@@ -6,8 +6,8 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Function.h>
-#include <AK/String.h>
 #include <AK/Types.h>
 
 namespace HackStudio {
@@ -17,5 +17,5 @@ enum class BreakpointChange {
     Removed,
 };
 
-using BreakpointChangeCallback = Function<void(String const& file, size_t line, BreakpointChange)>;
+using BreakpointChangeCallback = Function<void(ByteString const& file, size_t line, BreakpointChange)>;
 }

@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2024, Kenneth Myhra <kennethmyhra@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,20 +8,27 @@
 #pragma once
 
 #include <LibGfx/Forward.h>
-#include <LibJS/Heap/Handle.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/ImageDataPrototype.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::HTML {
 
-class ImageData
-    : public RefCounted<ImageData>
-    , public Bindings::Wrappable {
+struct ImageDataSettings {
+    Bindings::PredefinedColorSpace color_space;
+};
+
+class ImageData final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(ImageData, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(ImageData);
+
 public:
-    using WrapperType = Bindings::ImageDataWrapper;
+    [[nodiscard]] static WebIDL::ExceptionOr<JS::NonnullGCPtr<ImageData>> create(JS::Realm&, u32 sw, u32 sh, Optional<ImageDataSettings> const& settings = {});
+    [[nodiscard]] static WebIDL::ExceptionOr<JS::NonnullGCPtr<ImageData>> create(JS::Realm&, JS::Handle<WebIDL::BufferSource> const& data, u32 sw, Optional<u32> sh = {}, Optional<ImageDataSettings> const& settings = {});
 
-    static RefPtr<ImageData> create_with_size(JS::GlobalObject&, int width, int height);
+    [[nodiscard]] static WebIDL::ExceptionOr<JS::NonnullGCPtr<ImageData>> construct_impl(JS::Realm&, u32 sw, u32 sh, Optional<ImageDataSettings> const& settings = {});
+    [[nodiscard]] static WebIDL::ExceptionOr<JS::NonnullGCPtr<ImageData>> construct_impl(JS::Realm&, JS::Handle<WebIDL::BufferSource> const& data, u32 sw, Optional<u32> sh = {}, Optional<ImageDataSettings> const& settings = {});
 
-    ~ImageData();
+    virtual ~ImageData() override;
 
     unsigned width() const;
     unsigned height() const;
@@ -32,10 +40,13 @@ public:
     const JS::Uint8ClampedArray* data() const;
 
 private:
-    explicit ImageData(NonnullRefPtr<Gfx::Bitmap>, JS::Handle<JS::Uint8ClampedArray>);
+    ImageData(JS::Realm&, NonnullRefPtr<Gfx::Bitmap>, JS::NonnullGCPtr<JS::Uint8ClampedArray>);
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     NonnullRefPtr<Gfx::Bitmap> m_bitmap;
-    JS::Handle<JS::Uint8ClampedArray> m_data;
+    JS::NonnullGCPtr<JS::Uint8ClampedArray> m_data;
 };
 
 }

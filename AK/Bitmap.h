@@ -22,7 +22,7 @@ class Bitmap : public BitmapView {
     AK_MAKE_NONCOPYABLE(Bitmap);
 
 public:
-    static ErrorOr<Bitmap> try_create(size_t size, bool default_value)
+    static ErrorOr<Bitmap> create(size_t size, bool default_value)
     {
         VERIFY(size != 0);
 
@@ -30,14 +30,9 @@ public:
         if (!data)
             return Error::from_errno(ENOMEM);
 
-        auto bitmap = Bitmap { (u8*)data, size, true };
+        auto bitmap = Bitmap { static_cast<u8*>(data), size, true };
         bitmap.fill(default_value);
         return bitmap;
-    }
-
-    static Bitmap must_create(size_t size, bool default_value)
-    {
-        return MUST(try_create(size, default_value));
     }
 
     Bitmap() = default;
@@ -191,4 +186,6 @@ private:
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::Bitmap;
+#endif

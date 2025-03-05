@@ -12,29 +12,39 @@
 namespace Web::HTML {
 
 class HTMLOptionElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLOptionElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLOptionElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLOptionElement);
 
-    HTMLOptionElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLOptionElement() override;
 
     bool selected() const { return m_selected; }
     void set_selected(bool);
+    void set_selected_internal(bool);
 
     String value() const;
-    void set_value(String);
+    WebIDL::ExceptionOr<void> set_value(String const&);
 
     String text() const;
-    void set_text(String);
+    void set_text(String const&);
 
     int index() const;
+
+    bool disabled() const;
+
+    JS::GCPtr<HTML::HTMLFormElement> form() const;
+
+    virtual Optional<ARIA::Role> default_role() const override;
 
 private:
     friend class Bindings::OptionConstructor;
     friend class HTMLSelectElement;
 
-    void parse_attribute(FlyString const& name, String const& value) override;
-    void did_remove_attribute(FlyString const& name) override;
+    HTMLOptionElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
+
+    void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value) override;
 
     void ask_for_a_reset();
 

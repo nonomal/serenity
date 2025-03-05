@@ -28,9 +28,9 @@ bool read_items(FILE* fp, char entry_separator, Function<Decision(StringView)>);
 
 class ParsedInitialArguments {
 public:
-    ParsedInitialArguments(Vector<String>&, StringView placeholder);
+    ParsedInitialArguments(Vector<ByteString>&, StringView placeholder);
 
-    void for_each_joined_argument(StringView, Function<void(String const&)>) const;
+    void for_each_joined_argument(StringView, Function<void(ByteString const&)>) const;
 
     size_t size() const { return m_all_parts.size(); }
 
@@ -44,10 +44,10 @@ ErrorOr<int> serenity_main(Main::Arguments main_arguments)
 
     StringView placeholder;
     bool split_with_nulls = false;
-    char const* specified_delimiter = "\n";
-    Vector<String> arguments;
+    ByteString specified_delimiter = "\n"sv;
+    Vector<ByteString> arguments;
     bool verbose = false;
-    char const* file_to_read = "-";
+    ByteString file_to_read = "-"sv;
     int max_lines_for_one_command = 0;
     int max_bytes_for_one_command = ARG_MAX;
 
@@ -67,12 +67,12 @@ ErrorOr<int> serenity_main(Main::Arguments main_arguments)
     size_t max_bytes = min(ARG_MAX, max_bytes_for_one_command);
     size_t max_lines = max(max_lines_for_one_command, 0);
 
-    if (!split_with_nulls && strlen(specified_delimiter) > 1) {
+    if (!split_with_nulls && specified_delimiter.length() > 1) {
         warnln("xargs: the delimiter must be a single byte");
         return 1;
     }
 
-    char entry_separator = split_with_nulls ? '\0' : *specified_delimiter;
+    char entry_separator = split_with_nulls ? '\0' : specified_delimiter[0];
 
     if (!placeholder.is_empty())
         max_lines = 1;
@@ -87,7 +87,7 @@ ErrorOr<int> serenity_main(Main::Arguments main_arguments)
 
     if ("-"sv != file_to_read) {
         // A file was specified, try to open it.
-        fp = fopen(file_to_read, "re");
+        fp = fopen(file_to_read.characters(), "re");
         if (!fp) {
             perror("fopen");
             return 1;
@@ -121,7 +121,7 @@ ErrorOr<int> serenity_main(Main::Arguments main_arguments)
         if (items_used_for_this_command == 0) {
             child_argv.ensure_capacity(initial_arguments.size());
 
-            initial_arguments.for_each_joined_argument(item, [&](const String& string) {
+            initial_arguments.for_each_joined_argument(item, [&](ByteString const& string) {
                 total_command_length += string.length();
                 child_argv.append(strdup(string.characters()));
             });
@@ -198,7 +198,7 @@ bool run_command(Vector<char*>&& child_argv, bool verbose, bool is_stdin, int de
     if (verbose) {
         StringBuilder builder;
         builder.join(' ', child_argv);
-        warnln("xargs: {}", builder.to_string());
+        warnln("xargs: {}", builder.to_byte_string());
     }
 
     auto pid = fork();
@@ -236,7 +236,7 @@ bool run_command(Vector<char*>&& child_argv, bool verbose, bool is_stdin, int de
     return true;
 }
 
-ParsedInitialArguments::ParsedInitialArguments(Vector<String>& arguments, StringView placeholder)
+ParsedInitialArguments::ParsedInitialArguments(Vector<ByteString>& arguments, StringView placeholder)
 {
     m_all_parts.ensure_capacity(arguments.size());
     bool some_argument_has_placeholder = false;
@@ -245,7 +245,7 @@ ParsedInitialArguments::ParsedInitialArguments(Vector<String>& arguments, String
         if (placeholder.is_empty()) {
             m_all_parts.append({ arg });
         } else {
-            auto parts = arg.view().split_view(placeholder, true);
+            auto parts = arg.view().split_view(placeholder, SplitBehavior::KeepEmpty);
             some_argument_has_placeholder = some_argument_has_placeholder || parts.size() > 1;
             m_all_parts.append(move(parts));
         }
@@ -260,12 +260,12 @@ ParsedInitialArguments::ParsedInitialArguments(Vector<String>& arguments, String
     }
 }
 
-void ParsedInitialArguments::for_each_joined_argument(StringView separator, Function<void(String const&)> callback) const
+void ParsedInitialArguments::for_each_joined_argument(StringView separator, Function<void(ByteString const&)> callback) const
 {
     StringBuilder builder;
     for (auto& parts : m_all_parts) {
         builder.clear();
         builder.join(separator, parts);
-        callback(builder.to_string());
+        callback(builder.to_byte_string());
     }
 }

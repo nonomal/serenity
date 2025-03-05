@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/Concepts.h>
 #include <AK/HashMap.h>
 #include <AK/RedBlackTree.h>
 #include <LibJS/Runtime/GlobalObject.h>
@@ -18,11 +17,11 @@ namespace JS {
 
 class Map : public Object {
     JS_OBJECT(Map, Object);
+    JS_DECLARE_ALLOCATOR(Map);
 
 public:
-    static Map* create(GlobalObject&);
+    static NonnullGCPtr<Map> create(Realm&);
 
-    explicit Map(Object& prototype);
     virtual ~Map() override = default;
 
     void map_clear();
@@ -39,8 +38,8 @@ public:
     struct IteratorImpl {
         bool is_end() const
         {
-            return m_map.m_keys.begin_from(m_index).is_end()
-                && m_map.m_keys.find_smallest_not_below_iterator(m_index).is_end();
+            return m_map->m_keys.begin_from(m_index).is_end()
+                && m_map->m_keys.find_smallest_not_below_iterator(m_index).is_end();
         }
 
         IteratorImpl& operator++()
@@ -52,13 +51,13 @@ public:
         decltype(auto) operator*()
         {
             ensure_next_element();
-            return *m_map.m_entries.find(*m_map.m_keys.begin_from(m_index));
+            return *m_map->m_entries.find(*m_map->m_keys.begin_from(m_index));
         }
 
         decltype(auto) operator*() const
         {
             ensure_next_element();
-            return *m_map.m_entries.find(*m_map.m_keys.begin_from(m_index));
+            return *m_map->m_entries.find(*m_map->m_keys.begin_from(m_index));
         }
 
         bool operator==(IteratorImpl const& other) const { return m_index == other.m_index && &m_map == &other.m_map; }
@@ -66,13 +65,15 @@ public:
 
     private:
         friend class Map;
-        IteratorImpl(Map const& map) requires(IsConst)
+        IteratorImpl(Map const& map)
+        requires(IsConst)
             : m_map(map)
         {
             ensure_index();
         }
 
-        IteratorImpl(Map& map) requires(!IsConst)
+        IteratorImpl(Map& map)
+        requires(!IsConst)
             : m_map(map)
         {
             ensure_index();
@@ -80,21 +81,21 @@ public:
 
         void ensure_index() const
         {
-            if (m_map.m_keys.is_empty())
-                m_index = m_map.m_next_insertion_id;
+            if (m_map->m_keys.is_empty())
+                m_index = m_map->m_next_insertion_id;
             else
-                m_index = m_map.m_keys.begin().key();
+                m_index = m_map->m_keys.begin().key();
         }
 
         void ensure_next_element() const
         {
-            if (auto it = m_map.m_keys.find_smallest_not_below_iterator(m_index); it.is_end())
-                m_index = m_map.m_next_insertion_id;
+            if (auto it = m_map->m_keys.find_smallest_not_below_iterator(m_index); it.is_end())
+                m_index = m_map->m_next_insertion_id;
             else
                 m_index = it.key();
         }
 
-        Conditional<IsConst, Map const&, Map&> m_map;
+        Conditional<IsConst, NonnullGCPtr<Map const>, NonnullGCPtr<Map>> m_map;
         mutable size_t m_index { 0 };
     };
 
@@ -106,6 +107,7 @@ public:
     EndIterator end() const { return {}; }
 
 private:
+    explicit Map(Object& prototype);
     virtual void visit_edges(Visitor& visitor) override;
 
     size_t m_next_insertion_id { 0 };

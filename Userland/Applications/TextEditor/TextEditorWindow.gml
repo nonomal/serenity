@@ -1,4 +1,4 @@
-@GUI::Widget {
+@TextEditor::MainWidget {
     name: "main"
     fill_with_background_color: true
     layout: @GUI::VerticalBoxLayout {
@@ -14,7 +14,7 @@
     }
 
     @GUI::HorizontalSplitter {
-        fixed_resizee: "Second"
+        opportunistic_resizee: "First"
 
         @GUI::TextEditor {
             name: "editor"

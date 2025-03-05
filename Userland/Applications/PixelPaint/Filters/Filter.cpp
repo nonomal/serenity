@@ -6,6 +6,7 @@
  */
 
 #include "Filter.h"
+#include "../ImageProcessor.h"
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Label.h>
 
@@ -21,30 +22,30 @@ Filter::Filter(ImageEditor* editor)
     m_update_timer->set_active(false);
 }
 
-RefPtr<GUI::Widget> Filter::get_settings_widget()
+ErrorOr<RefPtr<GUI::Widget>> Filter::get_settings_widget()
 {
     if (!m_settings_widget) {
-        m_settings_widget = GUI::Widget::construct();
-        m_settings_widget->set_layout<GUI::VerticalBoxLayout>();
+        auto settings_widget = GUI::Widget::construct();
+        settings_widget->set_layout<GUI::VerticalBoxLayout>();
 
-        auto& name_label = m_settings_widget->add<GUI::Label>(filter_name());
+        auto& name_label = settings_widget->add<GUI::Label>(TRY(String::from_utf8(filter_name())));
         name_label.set_text_alignment(Gfx::TextAlignment::TopLeft);
 
-        m_settings_widget->add<GUI::Widget>();
+        settings_widget->add<GUI::Widget>();
+        m_settings_widget = settings_widget;
     }
 
     return m_settings_widget.ptr();
 }
 
-void Filter::apply() const
+void Filter::apply()
 {
     if (!m_editor)
         return;
-    if (auto* layer = m_editor->active_layer()) {
-        apply(layer->content_bitmap(), layer->content_bitmap());
-        layer->did_modify_bitmap(layer->rect());
-        m_editor->did_complete_action();
-    }
+    // FIXME: I am not thread-safe!
+    // If you try to edit the bitmap while the image processor is still running... :yaksplode:
+    if (auto* layer = m_editor->active_layer())
+        MUST(ImageProcessor::the()->enqueue_command(make_ref_counted<FilterApplicationCommand>(*this, *layer)));
 }
 
 void Filter::update_preview()

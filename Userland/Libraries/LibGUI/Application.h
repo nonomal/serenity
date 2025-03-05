@@ -1,17 +1,18 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibGUI/Forward.h>
 #include <LibGUI/Shortcut.h>
 #include <LibGUI/Widget.h>
@@ -20,11 +21,13 @@
 
 namespace GUI {
 
-class Application : public Core::Object {
-    C_OBJECT(Application);
+class Application : public Core::EventReceiver {
+    C_OBJECT_ABSTRACT(Application);
 
 public:
     static Application* the();
+
+    static ErrorOr<NonnullRefPtr<Application>> create(Main::Arguments const& arguments);
 
     ~Application();
 
@@ -41,7 +44,7 @@ public:
     void show_tooltip(String, Widget const* tooltip_source_widget);
     void show_tooltip_immediately(String, Widget const* tooltip_source_widget);
     void hide_tooltip();
-    Widget* tooltip_source_widget() { return m_tooltip_source_widget; };
+    Widget const* tooltip_source_widget() { return m_tooltip_source_widget; }
 
     bool quit_when_last_window_deleted() const { return m_quit_when_last_window_deleted; }
     void set_quit_when_last_window_deleted(bool b) { m_quit_when_last_window_deleted = b; }
@@ -49,11 +52,11 @@ public:
     void did_create_window(Badge<Window>);
     void did_delete_last_window(Badge<Window>);
 
-    String const& invoked_as() const { return m_invoked_as; }
-    Vector<String> const& args() const { return m_args; }
+    ByteString const& invoked_as() const { return m_invoked_as; }
+    Vector<ByteString> const& args() const { return m_args; }
 
     Gfx::Palette palette() const;
-    void set_palette(Gfx::Palette const&);
+    void set_palette(Gfx::Palette&);
 
     void set_system_palette(Core::AnonymousBuffer&);
 
@@ -75,9 +78,9 @@ public:
     Widget* pending_drop_widget() { return m_pending_drop_widget.ptr(); }
     Widget const* pending_drop_widget() const { return m_pending_drop_widget.ptr(); }
 
-    void set_drag_hovered_widget(Badge<Window>, Widget* widget, Gfx::IntPoint const& position = {}, Vector<String> mime_types = {})
+    void set_drag_hovered_widget(Badge<Window>, Widget* widget, Gfx::IntPoint position = {}, Optional<DragEvent const&> drag_event = {})
     {
-        set_drag_hovered_widget_impl(widget, position, move(mime_types));
+        set_drag_hovered_widget_impl(widget, position, move(drag_event));
     }
     void notify_drag_cancelled(Badge<ConnectionToWindowServer>);
 
@@ -87,19 +90,23 @@ public:
 
     auto const& global_shortcut_actions(Badge<GUI::CommandPalette>) const { return m_global_shortcut_actions; }
 
+    static constexpr size_t max_recently_open_files() { return 4; }
+
+    void set_config_domain(String);
+    void update_recent_file_actions();
+    void set_most_recently_open_file(ByteString path);
+
+    void register_recent_file_actions(Badge<GUI::Menu>, Vector<NonnullRefPtr<GUI::Action>>);
+
 private:
-    Application(int argc, char** argv, Core::EventLoop::MakeInspectable = Core::EventLoop::MakeInspectable::No);
-    Application(Main::Arguments const& arguments, Core::EventLoop::MakeInspectable inspectable = Core::EventLoop::MakeInspectable::No)
-        : Application(arguments.argc, arguments.argv, inspectable)
-    {
-    }
+    Application() = default;
 
     virtual void event(Core::Event&) override;
 
     void request_tooltip_show();
     void tooltip_hide_timer_did_fire();
 
-    void set_drag_hovered_widget_impl(Widget*, Gfx::IntPoint const& = {}, Vector<String> = {});
+    void set_drag_hovered_widget_impl(Widget*, Gfx::IntPoint = {}, Optional<DragEvent const&> = {});
     void set_pending_drop_widget(Widget*);
 
     OwnPtr<Core::EventLoop> m_event_loop;
@@ -110,16 +117,19 @@ private:
     RefPtr<Core::Timer> m_tooltip_show_timer;
     RefPtr<Core::Timer> m_tooltip_hide_timer;
     RefPtr<TooltipWindow> m_tooltip_window;
-    RefPtr<Widget> m_tooltip_source_widget;
+    RefPtr<Widget const> m_tooltip_source_widget;
     WeakPtr<Window> m_active_window;
     bool m_quit_when_last_window_deleted { true };
     bool m_focus_debugging_enabled { false };
     bool m_hover_debugging_enabled { false };
     bool m_dnd_debugging_enabled { false };
-    String m_invoked_as;
-    Vector<String> m_args;
+    ByteString m_invoked_as;
+    Vector<ByteString> m_args;
     WeakPtr<Widget> m_drag_hovered_widget;
     WeakPtr<Widget> m_pending_drop_widget;
+
+    String m_config_domain;
+    Vector<NonnullRefPtr<GUI::Action>> m_recent_file_actions;
 };
 
 }

@@ -10,8 +10,6 @@
 #include "ScreenLayout.h"
 #include <AK/Error.h>
 #include <AK/Span.h>
-#include <AK/String.h>
-#include <sys/ioctl_numbers.h>
 
 namespace WindowServer {
 
@@ -28,12 +26,14 @@ private:
 
     virtual void set_head_buffer(int index) override;
 
-    virtual ErrorOr<void> flush_framebuffer_rects(int, Span<FBRect const>) override { return {}; }
+    virtual ErrorOr<void> flush_framebuffer_rects(int, ReadonlySpan<FBRect>) override { return {}; }
 
     virtual ErrorOr<void> flush_framebuffer() override { return {}; }
 
     virtual ErrorOr<void> unmap_framebuffer() override;
     virtual ErrorOr<void> map_framebuffer() override;
+
+    virtual ErrorOr<void> set_safe_head_mode_setting() override;
 
     virtual ErrorOr<void> set_head_mode_setting(GraphicsHeadModeSetting) override;
     virtual ErrorOr<GraphicsHeadModeSetting> get_head_mode_setting() override;

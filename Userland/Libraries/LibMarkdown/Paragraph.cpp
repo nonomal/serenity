@@ -4,13 +4,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Forward.h>
 #include <AK/StringBuilder.h>
 #include <LibMarkdown/Paragraph.h>
 #include <LibMarkdown/Visitor.h>
 
 namespace Markdown {
 
-String Paragraph::render_to_html(bool tight) const
+ByteString Paragraph::render_to_html(bool tight) const
 {
     StringBuilder builder;
 
@@ -24,16 +25,12 @@ String Paragraph::render_to_html(bool tight) const
 
     builder.append('\n');
 
-    return builder.build();
+    return builder.to_byte_string();
 }
 
-String Paragraph::render_for_terminal(size_t) const
+Vector<ByteString> Paragraph::render_lines_for_terminal(size_t) const
 {
-    StringBuilder builder;
-    builder.append("  "sv);
-    builder.append(m_text.render_for_terminal());
-    builder.append("\n\n"sv);
-    return builder.build();
+    return Vector<ByteString> { ByteString::formatted("  {}", m_text.render_for_terminal()), "" };
 }
 
 RecursionDecision Paragraph::walk(Visitor& visitor) const

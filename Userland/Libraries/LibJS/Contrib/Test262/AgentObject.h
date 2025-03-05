@@ -13,13 +13,15 @@ namespace JS::Test262 {
 
 class AgentObject final : public Object {
     JS_OBJECT(AgentObject, Object);
+    JS_DECLARE_ALLOCATOR(AgentObject);
 
 public:
-    AgentObject(JS::GlobalObject&);
-    virtual void initialize(JS::GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~AgentObject() override = default;
 
 private:
+    explicit AgentObject(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(monotonic_now);
     JS_DECLARE_NATIVE_FUNCTION(sleep);
 };

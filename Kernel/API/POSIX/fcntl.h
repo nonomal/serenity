@@ -21,6 +21,7 @@ extern "C" {
 #define F_GETLK 6
 #define F_SETLK 7
 #define F_SETLKW 8
+#define F_DUPFD_CLOEXEC 9
 
 #define FD_CLOEXEC 1
 
@@ -48,6 +49,7 @@ extern "C" {
 #define AT_FDCWD -100
 #define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_REMOVEDIR 0x200
+#define AT_EACCESS 0x400
 
 struct flock {
     short l_type;

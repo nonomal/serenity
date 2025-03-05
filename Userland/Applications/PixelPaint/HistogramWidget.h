@@ -7,37 +7,33 @@
 #pragma once
 
 #include "Image.h"
-#include <LibGUI/AbstractScrollableWidget.h>
+#include "ScopeWidget.h"
 
 namespace PixelPaint {
 
 class HistogramWidget final
-    : public GUI::Frame
-    , ImageClient {
+    : public ScopeWidget {
     C_OBJECT(HistogramWidget);
 
 public:
-    virtual ~HistogramWidget() override;
-
-    void set_image(Image*);
-    void image_changed();
-    void set_color_at_mouseposition(Color);
+    virtual ~HistogramWidget() = default;
+    virtual void image_changed() override;
 
 private:
-    HistogramWidget();
+    HistogramWidget() = default;
 
+    virtual AK::StringView widget_config_name() const override { return "ShowHistogram"sv; }
     virtual void paint_event(GUI::PaintEvent&) override;
 
     ErrorOr<void> rebuild_histogram_data();
-    int m_widget_height = 0;
-    Color m_color_at_mouseposition = Color::Transparent;
-    RefPtr<Image> m_image;
 
     struct HistogramData {
         Vector<int> red;
         Vector<int> green;
         Vector<int> blue;
         Vector<int> brightness;
+        int max_brightness_frequency;
+        int max_color_frequency;
     };
     HistogramData m_data;
 };

@@ -42,22 +42,19 @@ class Classic : public SynthesizerProcessor {
 public:
     Classic(NonnullRefPtr<Transport>);
 
-    static Envelope compute_envelope(RollNote&);
-
     Waveform wave() const { return m_waveform.value(); }
 
 private:
     virtual void process_impl(Signal const&, Signal&) override;
 
     double volume_from_envelope(Envelope const&) const;
-    double wave_position(u8 note);
+    double wave_position(u32 sample_time, u8 note);
     double samples_per_cycle(u8 note) const;
-    double sin_position(u8 note) const;
-    double triangle_position(u8 note) const;
-    double square_position(u8 note) const;
-    double saw_position(u8 note) const;
-    double noise_position(u8 note);
-    double get_random_from_seed(u64 note);
+    double sin_position(u32 sample_time, u8 note) const;
+    double triangle_position(u32 sample_time, u8 note) const;
+    double square_position(u32 sample_time, u8 note) const;
+    double saw_position(u32 sample_time, u8 note) const;
+    double noise_position(u32 sample_time, u8 note);
 
     ProcessorEnumParameter<Waveform> m_waveform;
     ProcessorRangeParameter m_attack;

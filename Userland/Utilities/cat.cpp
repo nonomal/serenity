@@ -1,65 +1,85 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Lucas Chollet <lucas.chollet@free.fr>
+ * Copyright (c) 2024, Perrin Smith <bobstlt40@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
-#include <fcntl.h>
-#include <string.h>
-#include <unistd.h>
+
+struct LineTracker {
+    size_t line_count { 1 };
+    bool display_line_number { true };
+};
+
+static void output_buffer_with_line_numbers(LineTracker& line_tracker, ReadonlyBytes buffer_span)
+{
+    size_t span_index = 0;
+    size_t span_index_of_last_write = 0;
+    for (auto const curr_value : buffer_span) {
+        if (line_tracker.display_line_number) {
+            out("{:s}", buffer_span.slice(span_index_of_last_write, span_index - span_index_of_last_write));
+            out("{: >6}\t", line_tracker.line_count);
+            span_index_of_last_write = span_index;
+            line_tracker.line_count++;
+            line_tracker.display_line_number = false;
+        }
+        if (curr_value == '\n')
+            line_tracker.display_line_number = true;
+        span_index++;
+    }
+
+    if (span_index - span_index_of_last_write > 0)
+        out("{:s}", buffer_span.slice(span_index_of_last_write));
+}
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio rpath"));
 
     Vector<StringView> paths;
+    bool show_lines = false;
 
     Core::ArgsParser args_parser;
     args_parser.set_general_help("Concatenate files or pipes to stdout.");
     args_parser.add_positional_argument(paths, "File path", "path", Core::ArgsParser::Required::No);
+    args_parser.add_option(show_lines, "Number all output lines", "number", 'n');
     args_parser.parse(arguments);
 
-    Vector<int> fds;
-    if (paths.is_empty()) {
-        TRY(fds.try_append(STDIN_FILENO));
-    } else {
-        for (auto const& path : paths) {
-            int fd;
-            if (path == "-") {
-                fd = 0;
-            } else {
-                auto fd_or_error = Core::System::open(path, O_RDONLY);
-                if (fd_or_error.is_error()) {
-                    warnln("Failed to open {}: {}", path, fd_or_error.error());
-                    continue;
-                }
-                fd = fd_or_error.release_value();
-            }
-            TRY(fds.try_append(fd));
-        }
+    if (paths.is_empty())
+        paths.append("-"sv);
+
+    Vector<NonnullOwnPtr<Core::File>> files;
+    TRY(files.try_ensure_capacity(paths.size()));
+
+    for (auto const& path : paths) {
+        if (auto result = Core::File::open_file_or_standard_stream(path, Core::File::OpenMode::Read); result.is_error())
+            warnln("Failed to open {}: {}", path, result.release_error());
+        else
+            files.unchecked_append(result.release_value());
     }
 
     TRY(Core::System::pledge("stdio"));
 
+    // used only if we are using the -n option
+    LineTracker line_tracker;
+
     Array<u8, 32768> buffer;
-    for (auto& fd : fds) {
-        for (;;) {
-            auto buffer_span = buffer.span();
-            auto nread = TRY(Core::System::read(fd, buffer_span));
-            if (nread == 0)
-                break;
-            buffer_span = buffer_span.trim(nread);
-            while (!buffer_span.is_empty()) {
-                auto already_written = TRY(Core::System::write(STDOUT_FILENO, buffer_span));
-                buffer_span = buffer_span.slice(already_written);
+    for (auto const& file : files) {
+        while (!file->is_eof()) {
+            auto const buffer_span = TRY(file->read_some(buffer));
+            if (show_lines) {
+                output_buffer_with_line_numbers(line_tracker, buffer_span);
+            } else {
+                out("{:s}", buffer_span);
             }
         }
-        TRY(Core::System::close(fd));
     }
 
-    return 0;
+    return files.size() != paths.size();
 }

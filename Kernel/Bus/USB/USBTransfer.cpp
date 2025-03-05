@@ -5,19 +5,22 @@
  */
 
 #include <Kernel/Bus/USB/USBTransfer.h>
+#include <Kernel/Library/StdLib.h>
+#include <Kernel/Library/UserOrKernelBuffer.h>
 #include <Kernel/Memory/MemoryManager.h>
 
 namespace Kernel::USB {
 
-ErrorOr<NonnullRefPtr<Transfer>> Transfer::try_create(Pipe& pipe, u16 length, Memory::Region& dma_buffer)
+ErrorOr<NonnullLockRefPtr<Transfer>> Transfer::create(Pipe& pipe, u16 length, Memory::Region& dma_buffer, USBAsyncCallback callback)
 {
-    return adopt_nonnull_ref_or_enomem(new (nothrow) Transfer(pipe, length, dma_buffer));
+    return adopt_nonnull_lock_ref_or_enomem(new (nothrow) Transfer(pipe, length, dma_buffer, move(callback)));
 }
 
-Transfer::Transfer(Pipe& pipe, u16 len, Memory::Region& dma_buffer)
+Transfer::Transfer(Pipe& pipe, u16 len, Memory::Region& dma_buffer, USBAsyncCallback callback)
     : m_pipe(pipe)
     , m_dma_buffer(dma_buffer)
     , m_transfer_data_size(len)
+    , m_callback(move(callback))
 {
 }
 
@@ -40,13 +43,28 @@ void Transfer::set_setup_packet(USBRequestData const& request)
     m_request = request;
 }
 
-ErrorOr<void> Transfer::write_buffer(u16 len, void* data)
+ErrorOr<void> Transfer::write_buffer(u16 len, void const* data)
 {
     VERIFY(len <= m_dma_buffer.size());
     m_transfer_data_size = len;
     memcpy(buffer().as_ptr(), data, len);
 
     return {};
+}
+
+ErrorOr<void> Transfer::write_buffer(u16 len, UserOrKernelBuffer const data)
+{
+    VERIFY(len <= m_dma_buffer.size());
+    m_transfer_data_size = len;
+    return data.read(buffer().as_ptr(), len);
+}
+
+void Transfer::invoke_async_callback()
+{
+    if (transfer_data_size() == 0)
+        return;
+    if (m_callback)
+        m_callback(this);
 }
 
 }

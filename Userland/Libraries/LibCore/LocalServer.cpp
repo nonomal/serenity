@@ -6,7 +6,8 @@
 
 #include <LibCore/LocalServer.h>
 #include <LibCore/Notifier.h>
-#include <LibCore/Stream.h>
+#include <LibCore/SessionManagement.h>
+#include <LibCore/Socket.h>
 #include <LibCore/System.h>
 #include <LibCore/SystemServerTakeover.h>
 #include <fcntl.h>
@@ -21,8 +22,8 @@
 
 namespace Core {
 
-LocalServer::LocalServer(Object* parent)
-    : Object(parent)
+LocalServer::LocalServer(EventReceiver* parent)
+    : EventReceiver(parent)
 {
 }
 
@@ -32,12 +33,13 @@ LocalServer::~LocalServer()
         ::close(m_fd);
 }
 
-ErrorOr<void> LocalServer::take_over_from_system_server(String const& socket_path)
+ErrorOr<void> LocalServer::take_over_from_system_server(ByteString const& socket_path)
 {
     if (m_listening)
         return Error::from_string_literal("Core::LocalServer: Can't perform socket takeover when already listening");
 
-    auto socket = TRY(take_over_socket_from_system_server(socket_path));
+    auto const parsed_path = TRY(Core::SessionManagement::parse_path_with_sid(socket_path));
+    auto socket = TRY(take_over_socket_from_system_server(parsed_path));
     m_fd = TRY(socket->release_fd());
 
     m_listening = true;
@@ -45,14 +47,27 @@ ErrorOr<void> LocalServer::take_over_from_system_server(String const& socket_pat
     return {};
 }
 
+ErrorOr<void> LocalServer::take_over_fd(int socket_fd)
+{
+    if (m_listening)
+        return Error::from_string_literal("Core::LocalServer: Can't perform socket takeover when already listening");
+
+    m_fd = socket_fd;
+    m_listening = true;
+    setup_notifier();
+    return {};
+}
+
 void LocalServer::setup_notifier()
 {
-    m_notifier = Notifier::construct(m_fd, Notifier::Event::Read, this);
-    m_notifier->on_ready_to_read = [this] {
+    m_notifier = Notifier::construct(m_fd, Notifier::Type::Read, this);
+    m_notifier->on_activation = [this] {
         if (on_accept) {
             auto maybe_client_socket = accept();
             if (maybe_client_socket.is_error()) {
-                dbgln("LocalServer::on_ready_to_read: Error accepting a connection: {} (FIXME: should propagate!)", maybe_client_socket.error());
+                dbgln("LocalServer::on_ready_to_read: Error accepting a connection: {}", maybe_client_socket.error());
+                if (on_accept_error)
+                    on_accept_error(maybe_client_socket.release_error());
                 return;
             }
 
@@ -61,7 +76,7 @@ void LocalServer::setup_notifier()
     };
 }
 
-bool LocalServer::listen(String const& address)
+bool LocalServer::listen(ByteString const& address)
 {
     if (m_listening)
         return false;
@@ -77,7 +92,7 @@ bool LocalServer::listen(String const& address)
     fcntl(m_fd, F_SETFD, FD_CLOEXEC);
 #endif
     VERIFY(m_fd >= 0);
-#ifndef AK_OS_MACOS
+#if !defined(AK_OS_MACOS) && !defined(AK_OS_IOS)
     rc = fchmod(m_fd, 0600);
     if (rc < 0) {
         perror("fchmod");
@@ -109,12 +124,12 @@ bool LocalServer::listen(String const& address)
     return true;
 }
 
-ErrorOr<NonnullOwnPtr<Stream::LocalSocket>> LocalServer::accept()
+ErrorOr<NonnullOwnPtr<LocalSocket>> LocalServer::accept()
 {
     VERIFY(m_listening);
     sockaddr_un un;
     socklen_t un_size = sizeof(un);
-#ifndef AK_OS_MACOS
+#if !defined(AK_OS_MACOS) && !defined(AK_OS_IOS) && !defined(AK_OS_HAIKU)
     int accepted_fd = ::accept4(m_fd, (sockaddr*)&un, &un_size, SOCK_NONBLOCK | SOCK_CLOEXEC);
 #else
     int accepted_fd = ::accept(m_fd, (sockaddr*)&un, &un_size);
@@ -123,13 +138,13 @@ ErrorOr<NonnullOwnPtr<Stream::LocalSocket>> LocalServer::accept()
         return Error::from_syscall("accept"sv, -errno);
     }
 
-#ifdef AK_OS_MACOS
+#if defined(AK_OS_MACOS) || defined(AK_OS_IOS) || defined(AK_OS_HAIKU)
     int option = 1;
     ioctl(m_fd, FIONBIO, &option);
     (void)fcntl(accepted_fd, F_SETFD, FD_CLOEXEC);
 #endif
 
-    return Stream::LocalSocket::adopt_fd(accepted_fd);
+    return LocalSocket::adopt_fd(accepted_fd);
 }
 
 }

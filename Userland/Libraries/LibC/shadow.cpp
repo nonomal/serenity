@@ -5,13 +5,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/TemporaryChange.h>
 #include <AK/Vector.h>
 #include <errno.h>
 #include <shadow.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -21,8 +20,8 @@ static FILE* s_stream = nullptr;
 static unsigned s_line_number = 0;
 static struct spwd s_shadow_entry;
 
-static String s_name;
-static String s_pwdp;
+static ByteString s_name;
+static ByteString s_pwdp;
 
 void setspent()
 {
@@ -62,9 +61,9 @@ struct spwd* getspnam(char const* name)
     return nullptr;
 }
 
-static bool parse_shadow_entry(String const& line)
+static bool parse_shadow_entry(ByteString const& line)
 {
-    auto parts = line.split_view(':', true);
+    auto parts = line.split_view(':', SplitBehavior::KeepEmpty);
     if (parts.size() != 9) {
         dbgln("getspent(): Malformed entry on line {}", s_line_number);
         return false;
@@ -80,7 +79,7 @@ static bool parse_shadow_entry(String const& line)
     auto& expire_string = parts[7];
     auto& flag_string = parts[8];
 
-    auto lstchg = lstchg_string.to_int();
+    auto lstchg = lstchg_string.to_number<int>();
     if (!lstchg.has_value()) {
         dbgln("getspent(): Malformed lstchg on line {}", s_line_number);
         return false;
@@ -88,7 +87,7 @@ static bool parse_shadow_entry(String const& line)
 
     if (min_string.is_empty())
         min_string = "-1"sv;
-    auto min_value = min_string.to_int();
+    auto min_value = min_string.to_number<int>();
     if (!min_value.has_value()) {
         dbgln("getspent(): Malformed min value on line {}", s_line_number);
         return false;
@@ -96,7 +95,7 @@ static bool parse_shadow_entry(String const& line)
 
     if (max_string.is_empty())
         max_string = "-1"sv;
-    auto max_value = max_string.to_int();
+    auto max_value = max_string.to_number<int>();
     if (!max_value.has_value()) {
         dbgln("getspent(): Malformed max value on line {}", s_line_number);
         return false;
@@ -104,7 +103,7 @@ static bool parse_shadow_entry(String const& line)
 
     if (warn_string.is_empty())
         warn_string = "-1"sv;
-    auto warn = warn_string.to_int();
+    auto warn = warn_string.to_number<int>();
     if (!warn.has_value()) {
         dbgln("getspent(): Malformed warn on line {}", s_line_number);
         return false;
@@ -112,7 +111,7 @@ static bool parse_shadow_entry(String const& line)
 
     if (inact_string.is_empty())
         inact_string = "-1"sv;
-    auto inact = inact_string.to_int();
+    auto inact = inact_string.to_number<int>();
     if (!inact.has_value()) {
         dbgln("getspent(): Malformed inact on line {}", s_line_number);
         return false;
@@ -120,7 +119,7 @@ static bool parse_shadow_entry(String const& line)
 
     if (expire_string.is_empty())
         expire_string = "-1"sv;
-    auto expire = expire_string.to_int();
+    auto expire = expire_string.to_number<int>();
     if (!expire.has_value()) {
         dbgln("getspent(): Malformed expire on line {}", s_line_number);
         return false;
@@ -128,7 +127,7 @@ static bool parse_shadow_entry(String const& line)
 
     if (flag_string.is_empty())
         flag_string = "0"sv;
-    auto flag = flag_string.to_int();
+    auto flag = flag_string.to_number<int>();
     if (!flag.has_value()) {
         dbgln("getspent(): Malformed flag on line {}", s_line_number);
         return false;
@@ -169,7 +168,7 @@ struct spwd* getspent()
         if ((!s || !s[0]) && feof(s_stream))
             return nullptr;
 
-        String line(s, Chomp);
+        ByteString line(s, Chomp);
         if (parse_shadow_entry(line))
             return &s_shadow_entry;
         // Otherwise, proceed to the next line.

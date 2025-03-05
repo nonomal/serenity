@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/MappedFile.h>
 #include <LibCore/System.h>
+#include <LibDeviceTree/FlattenedDeviceTree.h>
 #include <LibDeviceTree/Validation.h>
 #include <LibMain/Main.h>
 
@@ -15,7 +16,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio rpath"));
 
-    String filename;
+    ByteString filename;
 
     Core::ArgsParser args;
     args.add_positional_argument(filename, "File to process", "file", Core::ArgsParser::Required::Yes);
@@ -24,14 +25,24 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     // FIXME: Figure out how to do this sanely from stdin
     auto file = TRY(Core::MappedFile::map(filename));
 
-    if (file->size() < sizeof(DeviceTree::FlattenedDeviceTreeHeader)) {
+    if (TRY(file->size()) < sizeof(DeviceTree::FlattenedDeviceTreeHeader)) {
         warnln("Not enough data in {} to contain a device tree header!", filename);
         return 1;
     }
 
-    auto* fdt_header = reinterpret_cast<DeviceTree::FlattenedDeviceTreeHeader const*>(file->data());
+    auto const* fdt_header = reinterpret_cast<DeviceTree::FlattenedDeviceTreeHeader const*>(file->data());
+    auto bytes = file->bytes();
 
-    bool valid = DeviceTree::dump(*fdt_header, static_cast<u8 const*>(file->data()), file->size());
+    TRY(DeviceTree::dump(*fdt_header, bytes));
 
-    return valid ? 0 : 1;
+    auto compatible = TRY(DeviceTree::slow_get_property("/compatible"sv, *fdt_header, bytes)).as_strings();
+    dbgln("compatible with: {}", compatible);
+
+    auto bootargs = TRY(DeviceTree::slow_get_property("/chosen/bootargs"sv, *fdt_header, bytes)).as_string();
+    dbgln("bootargs: {}", bootargs);
+
+    auto cpu_compatible = TRY(DeviceTree::slow_get_property("/cpus/cpu@0/compatible"sv, *fdt_header, bytes)).as_string();
+    dbgln("cpu0 compatible: {}", cpu_compatible);
+
+    return 0;
 }

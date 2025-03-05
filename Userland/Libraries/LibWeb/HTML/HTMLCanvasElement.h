@@ -14,11 +14,12 @@
 namespace Web::HTML {
 
 class HTMLCanvasElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLCanvasElementWrapper;
-    using RenderingContext = Variant<NonnullRefPtr<CanvasRenderingContext2D>, NonnullRefPtr<WebGL::WebGLRenderingContext>, Empty>;
+    WEB_PLATFORM_OBJECT(HTMLCanvasElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLCanvasElement);
 
-    HTMLCanvasElement(DOM::Document&, DOM::QualifiedName);
+public:
+    using RenderingContext = Variant<JS::Handle<CanvasRenderingContext2D>, JS::Handle<WebGL::WebGLRenderingContext>, Empty>;
+
     virtual ~HTMLCanvasElement() override;
 
     Gfx::Bitmap const* bitmap() const { return m_bitmap; }
@@ -30,15 +31,23 @@ public:
     unsigned width() const;
     unsigned height() const;
 
-    void set_width(unsigned);
-    void set_height(unsigned);
+    WebIDL::ExceptionOr<void> set_width(unsigned);
+    WebIDL::ExceptionOr<void> set_height(unsigned);
 
-    String to_data_url(String const& type, Optional<double> quality) const;
+    String to_data_url(StringView type, Optional<double> quality);
+    WebIDL::ExceptionOr<void> to_blob(JS::NonnullGCPtr<WebIDL::CallbackType> callback, StringView type, Optional<double> quality);
 
     void present();
 
 private:
-    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::StyleProperties>) override;
+    HTMLCanvasElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    virtual void apply_presentational_hints(CSS::StyleProperties&) const override;
+
+    virtual JS::GCPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::StyleProperties>) override;
 
     enum class HasOrCreatedContext {
         No,
@@ -50,7 +59,8 @@ private:
     void reset_context_to_default_state();
 
     RefPtr<Gfx::Bitmap> m_bitmap;
-    RenderingContext m_context;
+
+    Variant<JS::NonnullGCPtr<HTML::CanvasRenderingContext2D>, JS::NonnullGCPtr<WebGL::WebGLRenderingContext>, Empty> m_context;
 };
 
 }

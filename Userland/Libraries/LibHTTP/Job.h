@@ -6,11 +6,10 @@
 
 #pragma once
 
-#include <AK/FileStream.h>
 #include <AK/HashMap.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/Optional.h>
 #include <LibCore/NetworkJob.h>
+#include <LibCore/Socket.h>
 #include <LibHTTP/HttpRequest.h>
 #include <LibHTTP/HttpResponse.h>
 
@@ -20,41 +19,34 @@ class Job : public Core::NetworkJob {
     C_OBJECT(Job);
 
 public:
-    explicit Job(HttpRequest&&, Core::Stream::Stream&);
+    explicit Job(HttpRequest&&, Core::File&);
     virtual ~Job() override = default;
 
-    virtual void start(Core::Stream::Socket&) override;
+    virtual void start(Core::BufferedSocketBase&) override;
     virtual void shutdown(ShutdownMode) override;
 
-    Core::Stream::Socket const* socket() const { return m_socket; }
-    URL url() const { return m_request.url(); }
+    Core::Socket const* socket() const { return m_socket; }
+    URL::URL url() const { return m_request.url(); }
 
     HttpResponse* response() { return static_cast<HttpResponse*>(Core::NetworkJob::response()); }
     HttpResponse const* response() const { return static_cast<HttpResponse const*>(Core::NetworkJob::response()); }
 
-protected:
-    void finish_up();
-    void on_socket_connected();
-    void flush_received_buffers();
-    void register_on_ready_to_read(Function<void()>);
-    ErrorOr<String> read_line(size_t);
-    ErrorOr<ByteBuffer> receive(size_t);
-    void timer_event(Core::TimerEvent&) override;
+private:
+    auto parse_status(auto& stream) -> Coroutine<ErrorOr<void>>;
+    auto parse_headers(auto& stream, bool in_trailers) -> Coroutine<ErrorOr<void>>;
+    auto parse_body(auto& stream) -> Coroutine<ErrorOr<bool>>;
+    auto read_response() -> Coroutine<ErrorOr<void>>;
 
-    enum class State {
-        InStatus,
-        InHeaders,
-        InBody,
-        Trailers,
-        Finished,
-    };
+protected:
+    Coroutine<void> finish_up();
+    void on_socket_connected();
+    Coroutine<void> flush_received_buffers();
 
     HttpRequest m_request;
-    State m_state { State::InStatus };
-    Core::Stream::BufferedSocketBase* m_socket { nullptr };
+    Core::BufferedSocketBase* m_socket { nullptr };
+    bool m_legacy_connection { false };
     int m_code { -1 };
-    HashMap<String, String, CaseInsensitiveStringTraits> m_headers;
-    Vector<String> m_set_cookie_headers;
+    HTTP::HeaderMap m_headers;
 
     struct ReceivedBuffer {
         ReceivedBuffer(ByteBuffer d)
@@ -70,16 +62,18 @@ protected:
         ReadonlyBytes pending_flush;
     };
 
-    NonnullOwnPtrVector<ReceivedBuffer> m_received_buffers;
+    Vector<NonnullOwnPtr<ReceivedBuffer>> m_received_buffers;
 
     size_t m_buffered_size { 0 };
     size_t m_received_size { 0 };
-    Optional<u32> m_content_length;
+    Optional<u64> m_content_length;
     Optional<ssize_t> m_current_chunk_remaining_size;
     Optional<size_t> m_current_chunk_total_size;
     bool m_can_stream_response { true };
     bool m_should_read_chunk_ending_line { false };
     bool m_has_scheduled_finish { false };
+    bool m_has_scheduled_flush { false };
+    bool m_request_done { false };
 };
 
 }

@@ -8,7 +8,7 @@
 
 #include "KeyboardMapperWidget.h"
 #include "KeyPositions.h"
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/InputBox.h>
 #include <LibGUI/MessageBox.h>
@@ -27,9 +27,8 @@ bool KeyboardMapperWidget::request_close()
         return true;
     auto result = GUI::MessageBox::ask_about_unsaved_changes(window(), m_filename);
     if (result == GUI::MessageBox::ExecResult::Yes) {
-        ErrorOr<void> error_or = save();
-        if (error_or.is_error())
-            show_error_to_user(error_or.error());
+        if (auto error_or = save(); error_or.is_error())
+            show_error_to_user(error_or.release_error());
 
         if (!window()->is_modified())
             return true;
@@ -40,8 +39,7 @@ bool KeyboardMapperWidget::request_close()
 void KeyboardMapperWidget::create_frame()
 {
     set_fill_with_background_color(true);
-    set_layout<GUI::VerticalBoxLayout>();
-    layout()->set_margins(4);
+    set_layout<GUI::VerticalBoxLayout>(4);
 
     auto& main_widget = add<GUI::Widget>();
     main_widget.set_relative_rect(0, 0, 200, 200);
@@ -53,7 +51,7 @@ void KeyboardMapperWidget::create_frame()
 
         auto& tmp_button = main_widget.add<KeyButton>();
         tmp_button.set_relative_rect(rect);
-        tmp_button.set_text(keys[i].name);
+        tmp_button.set_text(String::from_byte_string(keys[i].name).release_value_but_fixme_should_propagate_errors());
         tmp_button.set_enabled(keys[i].enabled);
 
         tmp_button.on_click = [this, &tmp_button]() {
@@ -68,10 +66,10 @@ void KeyboardMapperWidget::create_frame()
                 tmp_button.set_text(value);
                 u32* map = map_from_name(m_current_map_name);
 
-                if (value.length() == 0)
+                if (value.is_empty())
                     map[index] = '\0'; // Empty string
                 else
-                    map[index] = value[0];
+                    map[index] = *value.code_points().begin();
 
                 window()->set_modified(true);
             }
@@ -90,16 +88,16 @@ void KeyboardMapperWidget::create_frame()
     m_map_group->set_layout<GUI::HorizontalBoxLayout>();
     m_map_group->set_fixed_width(450);
 
-    add_map_radio_button("map"sv, "Default"sv);
-    add_map_radio_button("shift_map"sv, "Shift"sv);
-    add_map_radio_button("altgr_map"sv, "AltGr"sv);
-    add_map_radio_button("alt_map"sv, "Alt"sv);
-    add_map_radio_button("shift_altgr_map"sv, "Shift+AltGr"sv);
+    add_map_radio_button("map"sv, "Default"_string);
+    add_map_radio_button("shift_map"sv, "Shift"_string);
+    add_map_radio_button("altgr_map"sv, "AltGr"_string);
+    add_map_radio_button("alt_map"sv, "Alt"_string);
+    add_map_radio_button("shift_altgr_map"sv, "Shift+AltGr"_string);
 
-    bottom_widget.layout()->add_spacer();
+    bottom_widget.add_spacer();
 }
 
-void KeyboardMapperWidget::add_map_radio_button(const StringView map_name, const StringView button_text)
+void KeyboardMapperWidget::add_map_radio_button(StringView const map_name, String button_text)
 {
     auto& map_radio_button = m_map_group->add<GUI::RadioButton>(button_text);
     map_radio_button.set_name(map_name);
@@ -108,7 +106,7 @@ void KeyboardMapperWidget::add_map_radio_button(const StringView map_name, const
     };
 }
 
-u32* KeyboardMapperWidget::map_from_name(const StringView map_name)
+u32* KeyboardMapperWidget::map_from_name(StringView const map_name)
 {
     u32* map;
     if (map_name == "map"sv) {
@@ -127,7 +125,7 @@ u32* KeyboardMapperWidget::map_from_name(const StringView map_name)
     return map;
 }
 
-ErrorOr<void> KeyboardMapperWidget::load_map_from_file(String const& filename)
+ErrorOr<void> KeyboardMapperWidget::load_map_from_file(ByteString const& filename)
 {
     auto character_map = TRY(Keyboard::CharacterMapFile::load_from_file(filename));
 
@@ -149,7 +147,7 @@ ErrorOr<void> KeyboardMapperWidget::load_map_from_system()
 {
     auto character_map = TRY(Keyboard::CharacterMap::fetch_system_map());
 
-    m_filename = String::formatted("/res/keymaps/{}.json", character_map.character_map_name());
+    m_filename = ByteString::formatted("/res/keymaps/{}.json", character_map.character_map_name());
     m_character_map = character_map.character_map_data();
     set_current_map("map");
 
@@ -171,15 +169,15 @@ ErrorOr<void> KeyboardMapperWidget::save_to_file(StringView filename)
 {
     JsonObject map_json;
 
-    auto add_array = [&](String name, u32* values) {
+    auto add_array = [&](ByteString name, u32* values) {
         JsonArray items;
         for (int i = 0; i < 90; i++) {
             StringBuilder sb;
             if (values[i])
                 sb.append_code_point(values[i]);
 
-            JsonValue val(sb.to_string());
-            items.append(move(val));
+            JsonValue val(sb.to_byte_string());
+            items.must_append(move(val));
         }
         map_json.set(name, move(items));
     };
@@ -191,9 +189,9 @@ ErrorOr<void> KeyboardMapperWidget::save_to_file(StringView filename)
     add_array("shift_altgr_map", m_character_map.shift_altgr_map);
 
     // Write to file.
-    String file_content = map_json.to_string();
-    auto file = TRY(Core::Stream::File::open(filename, Core::Stream::OpenMode::Write));
-    TRY(file->write(file_content.bytes()));
+    ByteString file_content = map_json.to_byte_string();
+    auto file = TRY(Core::File::open(filename, Core::File::OpenMode::Write));
+    TRY(file->write_until_depleted(file_content.bytes()));
     file->close();
 
     window()->set_modified(false);
@@ -205,7 +203,7 @@ ErrorOr<void> KeyboardMapperWidget::save_to_file(StringView filename)
 void KeyboardMapperWidget::keydown_event(GUI::KeyEvent& event)
 {
     for (int i = 0; i < KEY_COUNT; i++) {
-        if (keys[i].scancode != event.scancode())
+        if (keys[i].kernel_map_entry_index != event.map_entry_index())
             continue;
         auto& tmp_button = m_keys.at(i);
         tmp_button->set_pressed(true);
@@ -216,12 +214,14 @@ void KeyboardMapperWidget::keydown_event(GUI::KeyEvent& event)
     if (m_automatic_modifier && event.modifiers() > 0) {
         update_modifier_radio_buttons(event);
     }
+
+    event.ignore();
 }
 
 void KeyboardMapperWidget::keyup_event(GUI::KeyEvent& event)
 {
     for (int i = 0; i < KEY_COUNT; i++) {
-        if (keys[i].scancode != event.scancode())
+        if (keys[i].kernel_map_entry_index != event.map_entry_index())
             continue;
         auto& tmp_button = m_keys.at(i);
         tmp_button->set_pressed(false);
@@ -234,7 +234,7 @@ void KeyboardMapperWidget::keyup_event(GUI::KeyEvent& event)
     }
 }
 
-void KeyboardMapperWidget::set_current_map(const String current_map)
+void KeyboardMapperWidget::set_current_map(ByteString const current_map)
 {
     m_current_map_name = current_map;
     u32* map = map_from_name(m_current_map_name);
@@ -247,7 +247,7 @@ void KeyboardMapperWidget::set_current_map(const String current_map)
         StringBuilder sb;
         sb.append_code_point(map[index]);
 
-        m_keys.at(k)->set_text(sb.to_string());
+        m_keys.at(k)->set_text(sb.to_string().release_value_but_fixme_should_propagate_errors());
     }
 
     this->update();
@@ -259,7 +259,7 @@ void KeyboardMapperWidget::update_window_title()
     sb.append(m_filename);
     sb.append("[*] - Keyboard Mapper"sv);
 
-    window()->set_title(sb.to_string());
+    window()->set_title(sb.to_byte_string());
 }
 
 void KeyboardMapperWidget::show_error_to_user(Error error)

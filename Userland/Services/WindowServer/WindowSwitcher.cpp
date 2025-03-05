@@ -88,9 +88,8 @@ void WindowSwitcher::event(Core::Event& event)
 void WindowSwitcher::on_key_event(KeyEvent const& event)
 {
     if (event.type() == Event::KeyUp) {
-        if (event.key() == (m_mode == Mode::ShowAllWindows ? Key_Super : Key_Alt)) {
+        if (event.key() == (m_mode == Mode::ShowAllWindows ? Key_LeftSuper : Key_LeftAlt)) {
             if (auto* window = selected_window()) {
-                window->set_minimized(false);
                 WindowManager::the().move_to_front_and_make_active(*window);
             }
             WindowManager::the().set_highlight_window(nullptr);
@@ -192,19 +191,19 @@ void WindowSwitcher::draw()
             rect_text_color = palette.selection_text().with_alpha(0xcc);
         } else {
             if (static_cast<int>(index) == m_hovered_index)
-                Gfx::StylePainter::paint_frame(painter, item_rect, palette, Gfx::FrameShape::Panel, Gfx::FrameShadow::Raised, 2);
+                Gfx::StylePainter::paint_frame(painter, item_rect, palette, Gfx::FrameStyle::RaisedPanel);
             text_color = Color::White;
             rect_text_color = Color(Color::White).with_alpha(0xcc);
         }
         item_rect.shrink(item_padding(), 0);
         Gfx::IntRect thumbnail_rect = { item_rect.location().translated(0, 5), { thumbnail_width(), thumbnail_height() } };
         if (window.backing_store())
-            painter.draw_scaled_bitmap(thumbnail_rect, *window.backing_store(), window.backing_store()->rect(), 1.0f, Gfx::Painter::ScalingMode::BilinearBlend);
-        Gfx::IntRect icon_rect = { thumbnail_rect.bottom_right().translated(-window.icon().width(), -window.icon().height()), { window.icon().width(), window.icon().height() } };
+            painter.draw_scaled_bitmap(thumbnail_rect, *window.backing_store(), window.backing_store()->rect(), 1.0f, Gfx::ScalingMode::BilinearBlend);
+        Gfx::IntRect icon_rect = { thumbnail_rect.bottom_right().translated(-window.icon().width() - 1, -window.icon().height() - 1), { window.icon().width(), window.icon().height() } };
         painter.blit(icon_rect.location(), window.icon(), window.icon().rect());
-        painter.draw_text(item_rect.translated(thumbnail_width() + 12, 0).translated(1, 1), window.computed_title(), WindowManager::the().window_title_font(), Gfx::TextAlignment::CenterLeft, text_color.inverted());
+        painter.draw_text(item_rect.translated(thumbnail_width() + 12, 0).translated(1), window.computed_title(), WindowManager::the().window_title_font(), Gfx::TextAlignment::CenterLeft, text_color.inverted());
         painter.draw_text(item_rect.translated(thumbnail_width() + 12, 0), window.computed_title(), WindowManager::the().window_title_font(), Gfx::TextAlignment::CenterLeft, text_color);
-        auto window_details = m_windows_on_multiple_stacks ? String::formatted("{} on {}:{}", window.rect().to_string(), window.window_stack().row() + 1, window.window_stack().column() + 1) : window.rect().to_string();
+        auto window_details = m_windows_on_multiple_stacks ? ByteString::formatted("{} on {}:{}", window.rect().to_byte_string(), window.window_stack().row() + 1, window.window_stack().column() + 1) : window.rect().to_byte_string();
         painter.draw_text(item_rect, window_details, Gfx::TextAlignment::CenterRight, rect_text_color);
     }
 }
@@ -227,7 +226,7 @@ void WindowSwitcher::refresh()
     auto add_window_stack_windows = [&](WindowStack& window_stack) {
         window_stack.for_each_window_of_type_from_front_to_back(
             WindowType::Normal, [&](Window& window) {
-                if (window.is_frameless())
+                if (window.is_frameless() || window.is_modal())
                     return IterationDecision::Continue;
                 ++window_count;
                 longest_title_width = max(longest_title_width, wm.font().width(window.computed_title()));

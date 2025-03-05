@@ -7,12 +7,10 @@
 
 #include <AK/Badge.h>
 #include <AK/TemporaryChange.h>
+#include <LibConfig/Client.h>
 #include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/Desktop.h>
 #include <string.h>
-
-// Including this after to avoid LibIPC errors
-#include <LibConfig/Client.h>
 
 namespace GUI {
 
@@ -51,7 +49,7 @@ void Desktop::set_wallpaper_mode(StringView mode)
     ConnectionToWindowServer::the().async_set_wallpaper_mode(mode);
 }
 
-String Desktop::wallpaper_path() const
+ByteString Desktop::wallpaper_path() const
 {
     return Config::read_string("WindowManager"sv, "Background"sv, "Wallpaper"sv);
 }
@@ -61,20 +59,20 @@ RefPtr<Gfx::Bitmap> Desktop::wallpaper_bitmap() const
     return ConnectionToWindowServer::the().get_wallpaper().bitmap();
 }
 
-bool Desktop::set_wallpaper(RefPtr<Gfx::Bitmap> wallpaper_bitmap, Optional<String> path)
+bool Desktop::set_wallpaper(RefPtr<Gfx::Bitmap const> wallpaper_bitmap, Optional<StringView> path)
 {
     if (m_is_setting_desktop_wallpaper)
         return false;
 
     TemporaryChange is_setting_desktop_wallpaper_change(m_is_setting_desktop_wallpaper, true);
-    ConnectionToWindowServer::the().async_set_wallpaper(wallpaper_bitmap ? wallpaper_bitmap->to_shareable_bitmap() : Gfx::ShareableBitmap {});
-    auto ret_val = ConnectionToWindowServer::the().wait_for_specific_message<Messages::WindowClient::SetWallpaperFinished>()->success();
+    auto result = ConnectionToWindowServer::the().set_wallpaper(wallpaper_bitmap ? wallpaper_bitmap->to_shareable_bitmap() : Gfx::ShareableBitmap {});
 
-    if (ret_val && path.has_value()) {
+    if (result && path.has_value()) {
         dbgln("Saving wallpaper path '{}' to ConfigServer", *path);
         Config::write_string("WindowManager"sv, "Background"sv, "Wallpaper"sv, *path);
     }
 
-    return ret_val;
+    return result;
 }
+
 }

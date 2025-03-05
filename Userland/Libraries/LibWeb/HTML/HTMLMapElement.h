@@ -6,16 +6,27 @@
 
 #pragma once
 
+#include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/HTML/HTMLElement.h>
 
 namespace Web::HTML {
 
 class HTMLMapElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLMapElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLMapElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLMapElement);
 
-    HTMLMapElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLMapElement() override;
+
+    JS::NonnullGCPtr<DOM::HTMLCollection> areas();
+
+private:
+    HTMLMapElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    JS::GCPtr<DOM::HTMLCollection> m_areas;
 };
 
 }

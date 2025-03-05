@@ -1,91 +1,97 @@
 /*
  * Copyright (c) 2021, Brandon Scott <xeon.productions@gmail.com>
  * Copyright (c) 2020, Hunter Salyer <thefalsehonesty@gmail.com>
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2024, Gasim Gasimzada <gasim@gasimzada.net>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "WebContentConsoleClient.h"
-#include <LibJS/Interpreter.h>
+#include <AK/MemoryStream.h>
+#include <AK/StringBuilder.h>
+#include <AK/TemporaryChange.h>
 #include <LibJS/MarkupGenerator.h>
-#include <LibWeb/Bindings/WindowObject.h>
+#include <LibJS/Print.h>
+#include <LibJS/Runtime/AbstractOperations.h>
+#include <LibJS/Runtime/GlobalEnvironment.h>
+#include <LibJS/Runtime/ObjectEnvironment.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibJS/Runtime/VM.h>
+#include <LibWeb/HTML/PolicyContainers.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
-#include <WebContent/ConsoleGlobalObject.h>
+#include <LibWeb/HTML/Window.h>
+#include <WebContent/ConsoleGlobalEnvironmentExtensions.h>
+#include <WebContent/PageClient.h>
+#include <WebContent/WebContentConsoleClient.h>
 
 namespace WebContent {
 
-WebContentConsoleClient::WebContentConsoleClient(JS::Console& console, WeakPtr<JS::Interpreter> interpreter, ConnectionFromClient& client)
+JS_DEFINE_ALLOCATOR(WebContentConsoleClient);
+
+WebContentConsoleClient::WebContentConsoleClient(JS::Console& console, JS::Realm& realm, PageClient& client)
     : ConsoleClient(console)
     , m_client(client)
-    , m_interpreter(interpreter)
 {
-    JS::DeferGC defer_gc(m_interpreter->heap());
-
-    auto& vm = m_interpreter->vm();
-    auto& global_object = m_interpreter->global_object();
-
-    auto console_global_object = m_interpreter->heap().allocate_without_global_object<ConsoleGlobalObject>(static_cast<Web::Bindings::WindowObject&>(global_object));
-
-    // NOTE: We need to push an execution context here for NativeFunction::create() to succeed during global object initialization.
-    // It gets removed immediately after creating the interpreter in Document::interpreter().
-    auto& eso = verify_cast<Web::HTML::EnvironmentSettingsObject>(*m_interpreter->realm().host_defined());
-    vm.push_execution_context(eso.realm_execution_context());
-    console_global_object->initialize_global_object();
-    vm.pop_execution_context();
-
-    m_console_global_object = JS::make_handle(console_global_object);
+    auto& window = verify_cast<Web::HTML::Window>(realm.global_object());
+    m_console_global_environment_extensions = realm.heap().allocate<ConsoleGlobalEnvironmentExtensions>(realm, realm, window);
 }
 
-void WebContentConsoleClient::handle_input(String const& js_source)
+WebContentConsoleClient::~WebContentConsoleClient() = default;
+
+void WebContentConsoleClient::visit_edges(JS::Cell::Visitor& visitor)
 {
-    auto& settings = verify_cast<Web::HTML::EnvironmentSettingsObject>(*m_interpreter->realm().host_defined());
+    Base::visit_edges(visitor);
+    visitor.visit(m_client);
+    visitor.visit(m_console_global_environment_extensions);
+}
+
+void WebContentConsoleClient::handle_input(ByteString const& js_source)
+{
+    if (!m_console_global_environment_extensions)
+        return;
+
+    auto& settings = Web::HTML::relevant_settings_object(*m_console_global_environment_extensions);
     auto script = Web::HTML::ClassicScript::create("(console)", js_source, settings, settings.api_base_url());
 
+    JS::NonnullGCPtr<JS::Environment> with_scope = JS::new_object_environment(*m_console_global_environment_extensions, true, &settings.realm().global_environment());
+
     // FIXME: Add parse error printouts back once ClassicScript can report parse errors.
+    auto result = script->run(Web::HTML::ClassicScript::RethrowErrors::No, with_scope);
 
-    auto result = script->run();
-
-    StringBuilder output_html;
-
-    if (result.is_abrupt()) {
-        output_html.append("Uncaught exception: "sv);
-        auto error = *result.release_error().value();
-        if (error.is_object())
-            output_html.append(JS::MarkupGenerator::html_from_error(error.as_object()));
-        else
-            output_html.append(JS::MarkupGenerator::html_from_value(error));
-        print_html(output_html.string_view());
-        return;
+    if (result.value().has_value()) {
+        m_console_global_environment_extensions->set_most_recent_result(result.value().value());
+        print_html(JS::MarkupGenerator::html_from_value(*result.value()).release_value_but_fixme_should_propagate_errors().to_byte_string());
     }
-
-    if (result.value().has_value())
-        print_html(JS::MarkupGenerator::html_from_value(*result.value()));
 }
 
-void WebContentConsoleClient::print_html(String const& line)
+void WebContentConsoleClient::report_exception(JS::Error const& exception, bool in_promise)
+{
+    print_html(JS::MarkupGenerator::html_from_error(exception, in_promise).release_value_but_fixme_should_propagate_errors().to_byte_string());
+}
+
+void WebContentConsoleClient::print_html(ByteString const& line)
 {
     m_message_log.append({ .type = ConsoleOutput::Type::HTML, .data = line });
-    m_client.async_did_output_js_console_message(m_message_log.size() - 1);
+    m_client->did_output_js_console_message(m_message_log.size() - 1);
 }
 
 void WebContentConsoleClient::clear_output()
 {
     m_message_log.append({ .type = ConsoleOutput::Type::Clear, .data = "" });
-    m_client.async_did_output_js_console_message(m_message_log.size() - 1);
+    m_client->did_output_js_console_message(m_message_log.size() - 1);
 }
 
-void WebContentConsoleClient::begin_group(String const& label, bool start_expanded)
+void WebContentConsoleClient::begin_group(ByteString const& label, bool start_expanded)
 {
     m_message_log.append({ .type = start_expanded ? ConsoleOutput::Type::BeginGroup : ConsoleOutput::Type::BeginGroupCollapsed, .data = label });
-    m_client.async_did_output_js_console_message(m_message_log.size() - 1);
+    m_client->did_output_js_console_message(m_message_log.size() - 1);
 }
 
 void WebContentConsoleClient::end_group()
 {
     m_message_log.append({ .type = ConsoleOutput::Type::EndGroup, .data = "" });
-    m_client.async_did_output_js_console_message(m_message_log.size() - 1);
+    m_client->did_output_js_console_message(m_message_log.size() - 1);
 }
 
 void WebContentConsoleClient::send_messages(i32 start_index)
@@ -97,13 +103,13 @@ void WebContentConsoleClient::send_messages(i32 start_index)
         // then, by requesting with start_index=0. If we don't have any messages at all, that
         // is still a valid request, and we can just ignore it.
         if (start_index != 0)
-            m_client.did_misbehave("Requested non-existent console message index.");
+            m_client->console_peer_did_misbehave("Requested non-existent console message index.");
         return;
     }
 
     // FIXME: Replace with a single Vector of message structs
-    Vector<String> message_types;
-    Vector<String> messages;
+    Vector<ByteString> message_types;
+    Vector<ByteString> messages;
     message_types.ensure_capacity(messages_to_send);
     messages.ensure_capacity(messages_to_send);
 
@@ -130,7 +136,7 @@ void WebContentConsoleClient::send_messages(i32 start_index)
         messages.append(message.data);
     }
 
-    m_client.async_did_get_js_console_messages(start_index, message_types, messages);
+    m_client->did_get_js_console_messages(start_index, message_types, messages);
 }
 
 void WebContentConsoleClient::clear()
@@ -141,11 +147,90 @@ void WebContentConsoleClient::clear()
 // 2.3. Printer(logLevel, args[, options]), https://console.spec.whatwg.org/#printer
 JS::ThrowCompletionOr<JS::Value> WebContentConsoleClient::printer(JS::Console::LogLevel log_level, PrinterArguments arguments)
 {
+    auto styling = escape_html_entities(m_current_message_style.string_view());
+    m_current_message_style.clear();
+
+    if (log_level == JS::Console::LogLevel::Table) {
+        auto& vm = m_console->realm().vm();
+
+        auto table_args = arguments.get<JS::MarkedVector<JS::Value>>();
+        auto& table = table_args.at(0).as_object();
+        auto& columns = TRY(table.get(JS::PropertyKey("columns"))).as_array().indexed_properties();
+        auto& rows = TRY(table.get(JS::PropertyKey("rows"))).as_array().indexed_properties();
+
+        StringBuilder html;
+
+        html.appendff("<div class=\"console-log-table\">");
+        html.appendff("<table>");
+        html.appendff("<thead>");
+        html.appendff("<tr>");
+        for (auto const& col : columns) {
+            auto index = col.index();
+            auto value = columns.storage()->get(index).value().value;
+            html.appendff("<td>{}</td>", value);
+        }
+
+        html.appendff("</tr>");
+        html.appendff("</thead>");
+        html.appendff("<tbody>");
+
+        for (auto const& row : rows) {
+            auto row_index = row.index();
+            auto& row_obj = rows.storage()->get(row_index).value().value.as_object();
+            html.appendff("<tr>");
+
+            for (auto const& col : columns) {
+                auto col_index = col.index();
+                auto col_name = columns.storage()->get(col_index).value().value;
+
+                auto property_key = TRY(JS::PropertyKey::from_value(vm, col_name));
+                auto cell = TRY(row_obj.get(property_key));
+                html.appendff("<td>");
+                if (TRY(cell.is_array(vm))) {
+                    AllocatingMemoryStream stream;
+                    JS::PrintContext ctx { vm, stream, true };
+                    TRY_OR_THROW_OOM(vm, stream.write_until_depleted(" "sv.bytes()));
+                    TRY_OR_THROW_OOM(vm, JS::print(cell, ctx));
+                    auto output = TRY_OR_THROW_OOM(vm, String::from_stream(stream, stream.used_buffer_size()));
+
+                    auto size = cell.as_array().indexed_properties().array_like_size();
+                    html.appendff("<details><summary>Array({})</summary>{}</details>", size, output);
+
+                } else if (cell.is_object()) {
+                    AllocatingMemoryStream stream;
+                    JS::PrintContext ctx { vm, stream, true };
+                    TRY_OR_THROW_OOM(vm, stream.write_until_depleted(" "sv.bytes()));
+                    TRY_OR_THROW_OOM(vm, JS::print(cell, ctx));
+                    auto output = TRY_OR_THROW_OOM(vm, String::from_stream(stream, stream.used_buffer_size()));
+
+                    html.appendff("<details><summary>Object({{...}})</summary>{}</details>", output);
+                } else if (cell.is_function() || cell.is_constructor()) {
+                    html.appendff("ƒ");
+                } else if (!cell.is_undefined()) {
+                    html.appendff("{}", cell);
+                }
+                html.appendff("</td>");
+            }
+
+            html.appendff("</tr>");
+        }
+
+        html.appendff("</tbody>");
+        html.appendff("</table>");
+        html.appendff("</div>");
+        print_html(html.string_view());
+
+        auto output = TRY(generically_format_values(table_args));
+        m_console->output_debug_message(log_level, output);
+
+        return JS::js_undefined();
+    }
+
     if (log_level == JS::Console::LogLevel::Trace) {
         auto trace = arguments.get<JS::Console::Trace>();
         StringBuilder html;
         if (!trace.label.is_empty())
-            html.appendff("<span class='title'>{}</span><br>", escape_html_entities(trace.label));
+            html.appendff("<span class='title' style='{}'>{}</span><br>", styling, escape_html_entities(trace.label));
 
         html.append("<span class='trace'>"sv);
         for (auto& function_name : trace.stack)
@@ -158,39 +243,40 @@ JS::ThrowCompletionOr<JS::Value> WebContentConsoleClient::printer(JS::Console::L
 
     if (log_level == JS::Console::LogLevel::Group || log_level == JS::Console::LogLevel::GroupCollapsed) {
         auto group = arguments.get<JS::Console::Group>();
-        begin_group(group.label, log_level == JS::Console::LogLevel::Group);
+        begin_group(ByteString::formatted("<span style='{}'>{}</span>", styling, escape_html_entities(group.label)), log_level == JS::Console::LogLevel::Group);
         return JS::js_undefined();
     }
 
-    auto output = String::join(' ', arguments.get<JS::MarkedVector<JS::Value>>());
-    m_console.output_debug_message(log_level, output);
+    auto output = TRY(generically_format_values(arguments.get<JS::MarkedVector<JS::Value>>()));
+    m_console->output_debug_message(log_level, output);
 
     StringBuilder html;
     switch (log_level) {
     case JS::Console::LogLevel::Debug:
-        html.append("<span class=\"debug\">(d) "sv);
+        html.appendff("<span class=\"debug\" style=\"{}\">(d) "sv, styling);
         break;
     case JS::Console::LogLevel::Error:
-        html.append("<span class=\"error\">(e) "sv);
+        html.appendff("<span class=\"error\" style=\"{}\">(e) "sv, styling);
         break;
     case JS::Console::LogLevel::Info:
-        html.append("<span class=\"info\">(i) "sv);
+        html.appendff("<span class=\"info\" style=\"{}\">(i) "sv, styling);
         break;
     case JS::Console::LogLevel::Log:
-        html.append("<span class=\"log\"> "sv);
+        html.appendff("<span class=\"log\" style=\"{}\"> "sv, styling);
         break;
     case JS::Console::LogLevel::Warn:
     case JS::Console::LogLevel::CountReset:
-        html.append("<span class=\"warn\">(w) "sv);
+        html.appendff("<span class=\"warn\" style=\"{}\">(w) "sv, styling);
         break;
     default:
-        html.append("<span>"sv);
+        html.appendff("<span style=\"{}\">"sv, styling);
         break;
     }
 
     html.append(escape_html_entities(output));
     html.append("</span>"sv);
     print_html(html.string_view());
+
     return JS::js_undefined();
 }
 }

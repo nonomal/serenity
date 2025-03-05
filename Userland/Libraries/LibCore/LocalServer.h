@@ -6,27 +6,28 @@
 
 #pragma once
 
+#include <LibCore/EventReceiver.h>
 #include <LibCore/Notifier.h>
-#include <LibCore/Object.h>
-#include <LibCore/Stream.h>
 
 namespace Core {
 
-class LocalServer : public Object {
+class LocalServer : public EventReceiver {
     C_OBJECT(LocalServer)
 public:
     virtual ~LocalServer() override;
 
-    ErrorOr<void> take_over_from_system_server(String const& path = String());
+    ErrorOr<void> take_over_from_system_server(ByteString const& path = ByteString());
+    ErrorOr<void> take_over_fd(int socket_fd);
     bool is_listening() const { return m_listening; }
-    bool listen(String const& address);
+    bool listen(ByteString const& address);
 
-    ErrorOr<NonnullOwnPtr<Stream::LocalSocket>> accept();
+    ErrorOr<NonnullOwnPtr<LocalSocket>> accept();
 
-    Function<void(NonnullOwnPtr<Stream::LocalSocket>)> on_accept;
+    Function<void(NonnullOwnPtr<LocalSocket>)> on_accept;
+    Function<void(Error)> on_accept_error;
 
 private:
-    explicit LocalServer(Object* parent = nullptr);
+    explicit LocalServer(EventReceiver* parent = nullptr);
 
     void setup_notifier();
 

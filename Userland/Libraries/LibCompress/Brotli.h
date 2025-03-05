@@ -6,17 +6,40 @@
 
 #pragma once
 
+#include <AK/BitStream.h>
 #include <AK/CircularQueue.h>
 #include <AK/FixedArray.h>
-#include <LibCore/InputBitStream.h>
-#include <LibCore/Stream.h>
+#include <AK/Vector.h>
 
 namespace Compress {
 
-using Core::Stream::LittleEndianInputBitStream;
-using Core::Stream::Stream;
+namespace Brotli {
+
+class CanonicalCode {
+public:
+    CanonicalCode() = default;
+    CanonicalCode(Vector<size_t> codes, Vector<size_t> values)
+        : m_symbol_codes(move(codes))
+        , m_symbol_values(move(values)) {};
+
+    static ErrorOr<CanonicalCode> read_prefix_code(LittleEndianInputBitStream&, size_t alphabet_size);
+    static ErrorOr<CanonicalCode> read_simple_prefix_code(LittleEndianInputBitStream&, size_t alphabet_size);
+    static ErrorOr<CanonicalCode> read_complex_prefix_code(LittleEndianInputBitStream&, size_t alphabet_size, size_t hskip);
+
+    ErrorOr<size_t> read_symbol(LittleEndianInputBitStream&) const;
+
+private:
+    static ErrorOr<size_t> read_complex_prefix_code_length(LittleEndianInputBitStream&);
+
+    Vector<size_t> m_symbol_codes;
+    Vector<size_t> m_symbol_values;
+};
+
+}
 
 class BrotliDecompressionStream : public Stream {
+    using CanonicalCode = Brotli::CanonicalCode;
+
 public:
     enum class State {
         WindowSize,
@@ -27,23 +50,6 @@ public:
         CompressedDistance,
         CompressedCopy,
         CompressedDictionary,
-    };
-
-    class CanonicalCode {
-        friend class BrotliDecompressionStream;
-
-    public:
-        CanonicalCode() = default;
-        ErrorOr<size_t> read_symbol(LittleEndianInputBitStream&);
-        void clear()
-        {
-            m_symbol_codes.clear();
-            m_symbol_values.clear();
-        }
-
-    private:
-        Vector<size_t> m_symbol_codes;
-        Vector<size_t> m_symbol_values;
     };
 
     struct Block {
@@ -67,7 +73,7 @@ public:
     public:
         static ErrorOr<LookbackBuffer> try_create(size_t size)
         {
-            auto buffer = TRY(FixedArray<u8>::try_create(size));
+            auto buffer = TRY(FixedArray<u8>::create(size));
             return LookbackBuffer { buffer };
         }
 
@@ -105,12 +111,10 @@ public:
     };
 
 public:
-    BrotliDecompressionStream(Stream&);
+    BrotliDecompressionStream(MaybeOwned<Stream>);
 
-    bool is_readable() const override { return m_input_stream.is_readable(); }
-    ErrorOr<Bytes> read(Bytes output_buffer) override;
-    bool is_writable() const override { return m_input_stream.is_writable(); }
-    ErrorOr<size_t> write(ReadonlyBytes bytes) override { return m_input_stream.write(bytes); }
+    ErrorOr<Bytes> read_some(Bytes output_buffer) override;
+    ErrorOr<size_t> write_some(ReadonlyBytes bytes) override { return m_input_stream.write_some(bytes); }
     bool is_eof() const override;
     bool is_open() const override { return m_input_stream.is_open(); }
     void close() override { m_input_stream.close(); }
@@ -119,11 +123,7 @@ private:
     ErrorOr<size_t> read_window_length();
     ErrorOr<size_t> read_size_number_of_nibbles();
     ErrorOr<size_t> read_variable_length();
-    ErrorOr<size_t> read_complex_prefix_code_length();
 
-    ErrorOr<void> read_prefix_code(CanonicalCode&, size_t alphabet_size);
-    ErrorOr<void> read_simple_prefix_code(CanonicalCode&, size_t alphabet_size);
-    ErrorOr<void> read_complex_prefix_code(CanonicalCode&, size_t alphabet_size, size_t hskip);
     ErrorOr<void> read_context_map(size_t number_of_codes, Vector<u8>& context_map, size_t context_map_size);
     ErrorOr<void> read_block_configuration(Block&);
 

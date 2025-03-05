@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,8 +10,8 @@
 #include <LibCore/ArgsParser.h>
 #include <LibMain/Main.h>
 
-ErrorOr<void> generate_header_file(JsonObject& media_feature_data, Core::Stream::File& file);
-ErrorOr<void> generate_implementation_file(JsonObject& media_feature_data, Core::Stream::File& file);
+ErrorOr<void> generate_header_file(JsonObject& media_feature_data, Core::File& file);
+ErrorOr<void> generate_implementation_file(JsonObject& media_feature_data, Core::File& file);
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
@@ -29,8 +29,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     VERIFY(json.is_object());
     auto media_feature_data = json.as_object();
 
-    auto generated_header_file = TRY(Core::Stream::File::open(generated_header_path, Core::Stream::OpenMode::Write));
-    auto generated_implementation_file = TRY(Core::Stream::File::open(generated_implementation_path, Core::Stream::OpenMode::Write));
+    auto generated_header_file = TRY(Core::File::open(generated_header_path, Core::File::OpenMode::Write));
+    auto generated_implementation_file = TRY(Core::File::open(generated_implementation_path, Core::File::OpenMode::Write));
 
     TRY(generate_header_file(media_feature_data, *generated_header_file));
     TRY(generate_implementation_file(media_feature_data, *generated_implementation_file));
@@ -38,7 +38,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     return 0;
 }
 
-ErrorOr<void> generate_header_file(JsonObject& media_feature_data, Core::Stream::File& file)
+ErrorOr<void> generate_header_file(JsonObject& media_feature_data, Core::File& file)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -46,7 +46,7 @@ ErrorOr<void> generate_header_file(JsonObject& media_feature_data, Core::Stream:
 
 #include <AK/StringView.h>
 #include <AK/Traits.h>
-#include <LibWeb/CSS/ValueID.h>
+#include <LibWeb/CSS/Keyword.h>
 
 namespace Web::CSS {
 
@@ -71,24 +71,26 @@ enum class MediaFeatureID {)~~~");
 };
 
 Optional<MediaFeatureID> media_feature_id_from_string(StringView);
-char const* string_from_media_feature_id(MediaFeatureID);
+StringView string_from_media_feature_id(MediaFeatureID);
 
 bool media_feature_type_is_range(MediaFeatureID);
 bool media_feature_accepts_type(MediaFeatureID, MediaFeatureValueType);
-bool media_feature_accepts_identifier(MediaFeatureID, ValueID);
+bool media_feature_accepts_keyword(MediaFeatureID, Keyword);
 
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
-ErrorOr<void> generate_implementation_file(JsonObject& media_feature_data, Core::Stream::File& file)
+ErrorOr<void> generate_implementation_file(JsonObject& media_feature_data, Core::File& file)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
-    generator.append(R"~~~(#include <LibWeb/CSS/MediaFeatureID.h>
+    generator.append(R"~~~(
+#include <LibWeb/CSS/MediaFeatureID.h>
+#include <LibWeb/Infra/Strings.h>
 
 namespace Web::CSS {
 
@@ -100,7 +102,7 @@ Optional<MediaFeatureID> media_feature_id_from_string(StringView string)
         member_generator.set("name", name);
         member_generator.set("name:titlecase", title_casify(name));
         member_generator.append(R"~~~(
-    if (string.equals_ignoring_case("@name@"sv))
+    if (Infra::is_ascii_case_insensitive_match(string, "@name@"sv))
         return MediaFeatureID::@name:titlecase@;
 )~~~");
     });
@@ -109,7 +111,7 @@ Optional<MediaFeatureID> media_feature_id_from_string(StringView string)
     return {};
 }
 
-char const* string_from_media_feature_id(MediaFeatureID media_feature_id)
+StringView string_from_media_feature_id(MediaFeatureID media_feature_id)
 {
     switch (media_feature_id) {)~~~");
 
@@ -119,7 +121,7 @@ char const* string_from_media_feature_id(MediaFeatureID media_feature_id)
         member_generator.set("name:titlecase", title_casify(name));
         member_generator.append(R"~~~(
     case MediaFeatureID::@name:titlecase@:
-        return "@name@";)~~~");
+        return "@name@"sv;)~~~");
     });
 
     generator.append(R"~~~(
@@ -138,9 +140,9 @@ bool media_feature_type_is_range(MediaFeatureID media_feature_id)
         auto member_generator = generator.fork();
         member_generator.set("name:titlecase", title_casify(name));
         VERIFY(feature.has("type"sv));
-        auto feature_type = feature.get("type"sv);
-        VERIFY(feature_type.is_string());
-        member_generator.set("is_range", feature_type.as_string() == "range" ? "true" : "false");
+        auto feature_type = feature.get_byte_string("type"sv);
+        VERIFY(feature_type.has_value());
+        member_generator.set("is_range", feature_type.value() == "range" ? "true"_string : "false"_string);
         member_generator.append(R"~~~(
     case MediaFeatureID::@name:titlecase@:
         return @is_range@;)~~~");
@@ -166,20 +168,20 @@ bool media_feature_accepts_type(MediaFeatureID media_feature_id, MediaFeatureVal
 
         bool have_output_value_type_switch = false;
         if (feature.has("values"sv)) {
-            auto append_value_type_switch_if_needed = [&]() {
+            auto append_value_type_switch_if_needed = [&] {
                 if (!have_output_value_type_switch) {
                     member_generator.append(R"~~~(
         switch (value_type) {)~~~");
                 }
                 have_output_value_type_switch = true;
             };
-            auto& values = feature.get("values"sv);
-            VERIFY(values.is_array());
-            auto& values_array = values.as_array();
+            auto values = feature.get_array("values"sv);
+            VERIFY(values.has_value());
+            auto& values_array = values.value();
             for (auto& type : values_array.values()) {
                 VERIFY(type.is_string());
                 auto type_name = type.as_string();
-                // Skip identifiers.
+                // Skip keywords.
                 if (type_name[0] != '<')
                     continue;
                 if (type_name == "<mq-boolean>") {
@@ -229,7 +231,7 @@ bool media_feature_accepts_type(MediaFeatureID media_feature_id, MediaFeatureVal
     VERIFY_NOT_REACHED();
 }
 
-bool media_feature_accepts_identifier(MediaFeatureID media_feature_id, ValueID identifier)
+bool media_feature_accepts_keyword(MediaFeatureID media_feature_id, Keyword keyword)
 {
     switch (media_feature_id) {)~~~");
 
@@ -242,34 +244,34 @@ bool media_feature_accepts_identifier(MediaFeatureID media_feature_id, ValueID i
         member_generator.append(R"~~~(
     case MediaFeatureID::@name:titlecase@:)~~~");
 
-        bool have_output_identifier_switch = false;
+        bool have_output_keyword_switch = false;
         if (feature.has("values"sv)) {
-            auto append_identifier_switch_if_needed = [&]() {
-                if (!have_output_identifier_switch) {
+            auto append_keyword_switch_if_needed = [&] {
+                if (!have_output_keyword_switch) {
                     member_generator.append(R"~~~(
-        switch (identifier) {)~~~");
+        switch (keyword) {)~~~");
                 }
-                have_output_identifier_switch = true;
+                have_output_keyword_switch = true;
             };
-            auto& values = feature.get("values"sv);
-            VERIFY(values.is_array());
-            auto& values_array = values.as_array();
-            for (auto& identifier : values_array.values()) {
-                VERIFY(identifier.is_string());
-                auto identifier_name = identifier.as_string();
+            auto values = feature.get_array("values"sv);
+            VERIFY(values.has_value());
+            auto& values_array = values.value();
+            for (auto& keyword : values_array.values()) {
+                VERIFY(keyword.is_string());
+                auto keyword_name = keyword.as_string();
                 // Skip types.
-                if (identifier_name[0] == '<')
+                if (keyword_name[0] == '<')
                     continue;
-                append_identifier_switch_if_needed();
+                append_keyword_switch_if_needed();
 
-                auto ident_generator = member_generator.fork();
-                ident_generator.set("identifier:titlecase", title_casify(identifier_name));
-                ident_generator.append(R"~~~(
-        case ValueID::@identifier:titlecase@:
+                auto keyword_generator = member_generator.fork();
+                keyword_generator.set("keyword:titlecase", title_casify(keyword_name));
+                keyword_generator.append(R"~~~(
+        case Keyword::@keyword:titlecase@:
             return true;)~~~");
             }
         }
-        if (have_output_identifier_switch) {
+        if (have_output_keyword_switch) {
             member_generator.append(R"~~~(
         default:
             return false;
@@ -288,6 +290,6 @@ bool media_feature_accepts_identifier(MediaFeatureID media_feature_id, ValueID i
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }

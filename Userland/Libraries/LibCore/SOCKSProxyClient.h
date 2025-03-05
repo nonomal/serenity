@@ -8,10 +8,10 @@
 
 #include <AK/OwnPtr.h>
 #include <LibCore/Proxy.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Socket.h>
 
 namespace Core {
-class SOCKSProxyClient final : public Stream::Socket {
+class SOCKSProxyClient final : public Socket {
 public:
     enum class Version : u8 {
         V4 = 0x04,
@@ -19,8 +19,8 @@ public:
     };
 
     struct UsernamePasswordAuthenticationData {
-        String username;
-        String password;
+        ByteString username;
+        ByteString password;
     };
 
     enum class Command : u8 {
@@ -29,16 +29,19 @@ public:
         UDPAssociate = 0x03,
     };
 
-    using HostOrIPV4 = Variant<String, u32>;
+    using HostOrIPV4 = Variant<ByteString, u32>;
 
     static ErrorOr<NonnullOwnPtr<SOCKSProxyClient>> connect(Socket& underlying, Version, HostOrIPV4 const& target, int target_port, Variant<UsernamePasswordAuthenticationData, Empty> const& auth_data = {}, Command = Command::Connect);
     static ErrorOr<NonnullOwnPtr<SOCKSProxyClient>> connect(HostOrIPV4 const& server, int server_port, Version, HostOrIPV4 const& target, int target_port, Variant<UsernamePasswordAuthenticationData, Empty> const& auth_data = {}, Command = Command::Connect);
 
+    static Coroutine<ErrorOr<NonnullOwnPtr<SOCKSProxyClient>>> async_connect(Socket& underlying, Version, HostOrIPV4 const& target, int target_port, Variant<UsernamePasswordAuthenticationData, Empty> const& auth_data = {}, Command = Command::Connect);
+    static Coroutine<ErrorOr<NonnullOwnPtr<SOCKSProxyClient>>> async_connect(HostOrIPV4 const& server, int server_port, Version, HostOrIPV4 const& target, int target_port, Variant<UsernamePasswordAuthenticationData, Empty> const& auth_data = {}, Command = Command::Connect);
+
     virtual ~SOCKSProxyClient() override;
 
     // ^Stream::Stream
-    virtual ErrorOr<Bytes> read(Bytes bytes) override { return m_socket.read(bytes); }
-    virtual ErrorOr<size_t> write(ReadonlyBytes bytes) override { return m_socket.write(bytes); }
+    virtual ErrorOr<Bytes> read_some(Bytes bytes) override { return m_socket.read_some(bytes); }
+    virtual ErrorOr<size_t> write_some(ReadonlyBytes bytes) override { return m_socket.write_some(bytes); }
     virtual bool is_eof() const override { return m_socket.is_eof(); }
     virtual bool is_open() const override { return m_socket.is_open(); }
     virtual void close() override { m_socket.close(); }

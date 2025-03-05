@@ -11,11 +11,18 @@
 namespace Web::HTML {
 
 class HTMLLegendElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLLegendElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLLegendElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLLegendElement);
 
-    HTMLLegendElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLLegendElement() override;
+
+    HTMLFormElement* form();
+
+private:
+    HTMLLegendElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

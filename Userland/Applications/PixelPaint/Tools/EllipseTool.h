@@ -24,11 +24,13 @@ public:
     virtual void on_mousemove(Layer*, MouseEvent&) override;
     virtual void on_mouseup(Layer*, MouseEvent&) override;
     virtual void on_second_paint(Layer const*, GUI::PaintEvent&) override;
-    virtual void on_keydown(GUI::KeyEvent&) override;
-    virtual GUI::Widget* get_properties_widget() override;
-    virtual Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> cursor() override { return Gfx::StandardCursor::Crosshair; }
+    virtual bool on_keydown(GUI::KeyEvent&) override;
+    virtual NonnullRefPtr<GUI::Widget> get_properties_widget() override;
+    virtual Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap const>> cursor() override { return Gfx::StandardCursor::Crosshair; }
 
 private:
+    virtual StringView tool_name() const override { return "Ellipse Tool"sv; }
+
     enum class FillMode {
         Outline,
         Fill
@@ -39,7 +41,7 @@ private:
         FromCorner,
     };
 
-    void draw_using(GUI::Painter&, Gfx::IntPoint const& start_position, Gfx::IntPoint const& end_position, int thickness);
+    void draw_using(GUI::Painter&, Gfx::IntPoint start_position, Gfx::IntPoint end_position, int thickness);
 
     RefPtr<GUI::Widget> m_properties_widget;
     RefPtr<GUI::TextBox> m_aspect_w_textbox;

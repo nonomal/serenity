@@ -4,13 +4,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Forward.h>
 #include <AK/StringBuilder.h>
 #include <LibMarkdown/CommentBlock.h>
 #include <LibMarkdown/Visitor.h>
 
 namespace Markdown {
 
-String CommentBlock::render_to_html(bool) const
+ByteString CommentBlock::render_to_html(bool) const
 {
     StringBuilder builder;
 
@@ -19,12 +20,12 @@ String CommentBlock::render_to_html(bool) const
     // TODO: This is probably incorrect, because we technically need to escape "--" in some form. However, Browser does not care about this.
     builder.append("-->\n"sv);
 
-    return builder.build();
+    return builder.to_byte_string();
 }
 
-String CommentBlock::render_for_terminal(size_t) const
+Vector<ByteString> CommentBlock::render_lines_for_terminal(size_t) const
 {
-    return "";
+    return Vector<ByteString> {};
 }
 
 RecursionDecision CommentBlock::walk(Visitor& visitor) const
@@ -53,7 +54,7 @@ OwnPtr<CommentBlock> CommentBlock::parse(LineIterator& lines)
     StringBuilder builder;
 
     while (true) {
-        // Invariant: At the beginning of the loop, `line` is valid and should be added the the builder.
+        // Invariant: At the beginning of the loop, `line` is valid and should be added to the builder.
         bool ends_here = line.ends_with(comment_end);
         if (ends_here)
             line = line.substring_view(0, line.length() - comment_end.length());
@@ -68,7 +69,7 @@ OwnPtr<CommentBlock> CommentBlock::parse(LineIterator& lines)
         line = *lines;
     }
 
-    return make<CommentBlock>(builder.build());
+    return make<CommentBlock>(builder.to_byte_string());
 }
 
 }

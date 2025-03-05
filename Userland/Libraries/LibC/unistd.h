@@ -14,8 +14,10 @@
 #pragma once
 
 #include <Kernel/API/POSIX/unistd.h>
+#include <bits/getopt.h>
 #include <fd_set.h>
 #include <limits.h>
+#include <sys/cdefs.h>
 
 __BEGIN_DECLS
 
@@ -34,7 +36,6 @@ int get_process_name(char* buffer, int buffer_size);
 int set_process_name(char const* name, size_t name_length);
 void dump_backtrace(void);
 int fsync(int fd);
-int sysbeep(void);
 int gettid(void);
 int getpagesize(void);
 pid_t fork(void);
@@ -70,6 +71,7 @@ int setuid(uid_t);
 int setgid(gid_t);
 int setreuid(uid_t, uid_t);
 int setresuid(uid_t, uid_t, uid_t);
+int setregid(gid_t, gid_t);
 int setresgid(gid_t, gid_t, gid_t);
 pid_t tcgetpgrp(int fd);
 int tcsetpgrp(int fd, pid_t pgid);
@@ -87,6 +89,7 @@ int usleep(useconds_t);
 int gethostname(char*, size_t);
 int sethostname(char const*, ssize_t);
 ssize_t readlink(char const* path, char* buffer, size_t);
+ssize_t readlinkat(int dirfd, char const* path, char* buffer, size_t);
 char* ttyname(int fd);
 int ttyname_r(int fd, char* buffer, size_t);
 off_t lseek(int fd, off_t, int whence);
@@ -94,6 +97,7 @@ int link(char const* oldpath, char const* newpath);
 int unlink(char const* pathname);
 int unlinkat(int dirfd, char const* pathname, int flags);
 int symlink(char const* target, char const* linkpath);
+int symlinkat(char const* target, int newdirfd, char const* linkpath);
 int rmdir(char const* pathname);
 int dup(int old_fd);
 int dup2(int old_fd, int new_fd);
@@ -101,8 +105,10 @@ int pipe(int pipefd[2]);
 int pipe2(int pipefd[2], int flags);
 unsigned int alarm(unsigned int seconds);
 int access(char const* pathname, int mode);
+int faccessat(int dirfd, char const* pathname, int mode, int flags);
 int isatty(int fd);
 int mknod(char const* pathname, mode_t, dev_t);
+int mknodat(int dirfd, char const* pathname, mode_t, dev_t);
 long fpathconf(int fd, int name);
 long pathconf(char const* path, int name);
 char* getlogin(void);
@@ -112,6 +118,9 @@ int fchown(int fd, uid_t, gid_t);
 int fchownat(int fd, char const* pathname, uid_t uid, gid_t gid, int flags);
 int ftruncate(int fd, off_t length);
 int truncate(char const* path, off_t length);
+int fsopen(char const* fs_type, int flags);
+int fsmount(int vfs_context_id, int mount_fd, int source_fd, char const* target);
+int bindmount(int vfs_context_id, int source_fd, char const* target, int flags);
 int mount(int source_fd, char const* target, char const* fs_type, int flags);
 int umount(char const* mountpoint);
 int pledge(char const* promises, char const* execpromises);
@@ -153,22 +162,5 @@ enum {
 #define _POSIX_VDISABLE '\0'
 
 long sysconf(int name);
-
-// If opterr is set (the default), print error messages to stderr.
-extern int opterr;
-// On errors, optopt is set to the erroneous *character*.
-extern int optopt;
-// Index of the next argument to process upon a getopt*() call.
-extern int optind;
-// If set, reset the internal state kept by getopt*(). You may also want to set
-// optind to 1 in that case. Alternatively, setting optind to 0 is treated like
-// doing both of the above.
-extern int optreset;
-// After parsing an option that accept an argument, set to point to the argument
-// value.
-extern char* optarg;
-
-int getopt(int argc, char* const* argv, char const* short_options);
-int getsubopt(char** optionp, char* const* tokens, char** valuep);
 
 __END_DECLS

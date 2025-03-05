@@ -14,34 +14,19 @@ BlockContainer::BlockContainer(DOM::Document& document, DOM::Node* node, Nonnull
 {
 }
 
-BlockContainer::BlockContainer(DOM::Document& document, DOM::Node* node, CSS::ComputedValues computed_values)
+BlockContainer::BlockContainer(DOM::Document& document, DOM::Node* node, NonnullOwnPtr<CSS::ComputedValues> computed_values)
     : Box(document, node, move(computed_values))
 {
 }
 
 BlockContainer::~BlockContainer() = default;
 
-bool BlockContainer::is_scrollable() const
+Painting::PaintableWithLines const* BlockContainer::paintable_with_lines() const
 {
-    // FIXME: Support horizontal scroll as well (overflow-x)
-    return computed_values().overflow_y() == CSS::Overflow::Scroll;
+    return static_cast<Painting::PaintableWithLines const*>(Box::paintable_box());
 }
 
-void BlockContainer::set_scroll_offset(Gfx::FloatPoint const& offset)
-{
-    // FIXME: If there is horizontal and vertical scroll ignore only part of the new offset
-    if (offset.y() < 0 || m_scroll_offset == offset)
-        return;
-    m_scroll_offset = offset;
-    set_needs_display();
-}
-
-Painting::PaintableWithLines const* BlockContainer::paint_box() const
-{
-    return static_cast<Painting::PaintableWithLines const*>(Box::paint_box());
-}
-
-RefPtr<Painting::Paintable> BlockContainer::create_paintable() const
+JS::GCPtr<Painting::Paintable> BlockContainer::create_paintable() const
 {
     return Painting::PaintableWithLines::create(*this);
 }

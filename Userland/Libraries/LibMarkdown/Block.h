@@ -18,8 +18,8 @@ class Block {
 public:
     virtual ~Block() = default;
 
-    virtual String render_to_html(bool tight = false) const = 0;
-    virtual String render_for_terminal(size_t view_width = 0) const = 0;
+    virtual ByteString render_to_html(bool tight = false) const = 0;
+    virtual Vector<ByteString> render_lines_for_terminal(size_t view_width = 0) const = 0;
     virtual RecursionDecision walk(Visitor&) const = 0;
 };
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-
 port='x264'
-version='baee400fa9ced6f5481a728138fed6e867b0ff7f'
-files="https://code.videolan.org/videolan/x264/-/archive/${version}/x264-master.tar.gz libx264-${version}.tar.gz 436a2be54d8bc0cb05dd33ecbbcb7df9c3b57362714fcdaa3a5991189a33319b"
-auth_type='sha256'
+version='4613ac3c15fd75cebc4b9f65b7fb95e70a3acce1'
+files=(
+    "https://code.videolan.org/videolan/x264/-/archive/${version}/x264-master.tar.gz#44ce79258656d7dbe06165321cb989cc242a66effa308e25d2f0a197b50f8398"
+)
 useconfigure='true'
 use_fresh_config_sub='true'
-configopts=("--enable-shared")
+configopts=(
+    '--enable-shared'
+)

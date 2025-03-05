@@ -7,12 +7,13 @@
 #pragma once
 
 #include <AK/OwnPtr.h>
-#include <Kernel/Arch/x86/IO.h>
+#include <AK/SetOnce.h>
 #include <Kernel/Bus/PCI/Access.h>
 #include <Kernel/Bus/PCI/Device.h>
 #include <Kernel/Interrupts/IRQHandler.h>
+#include <Kernel/Library/IOWindow.h>
 #include <Kernel/Net/NetworkAdapter.h>
-#include <Kernel/Random.h>
+#include <Kernel/Security/Random.h>
 
 namespace Kernel {
 
@@ -20,52 +21,61 @@ class E1000NetworkAdapter : public NetworkAdapter
     , public PCI::Device
     , public IRQHandler {
 public:
-    static RefPtr<E1000NetworkAdapter> try_to_initialize(PCI::DeviceIdentifier const&);
-
-    virtual bool initialize();
+    static ErrorOr<bool> probe(PCI::DeviceIdentifier const&);
+    static ErrorOr<NonnullRefPtr<NetworkAdapter>> create(PCI::DeviceIdentifier const&);
+    virtual ErrorOr<void> initialize(Badge<NetworkingManagement>) override;
 
     virtual ~E1000NetworkAdapter() override;
 
     virtual void send_raw(ReadonlyBytes) override;
-    virtual bool link_up() override { return m_link_up; };
+    virtual bool link_up() override { return m_link_up; }
     virtual i32 link_speed() override;
     virtual bool link_full_duplex() override;
 
     virtual StringView purpose() const override { return class_name(); }
+    virtual StringView device_name() const override { return "E1000"sv; }
+    virtual Type adapter_type() const override { return Type::Ethernet; }
 
 protected:
+    static constexpr size_t rx_buffer_size = 8192;
+    static constexpr size_t tx_buffer_size = 8192;
+
+    struct RxDescriptor {
+        uint64_t addr { 0 };
+        uint16_t length { 0 };
+        uint16_t checksum { 0 };
+        uint8_t status { 0 };
+        uint8_t errors { 0 };
+        uint16_t special { 0 };
+    };
+    static_assert(AssertSize<RxDescriptor, 16>());
+
+    struct TxDescriptor {
+        uint64_t addr { 0 };
+        uint16_t length { 0 };
+        uint8_t cso { 0 };
+        uint8_t cmd { 0 };
+        uint8_t status { 0 };
+        uint8_t css { 0 };
+        uint16_t special { 0 };
+    };
+    static_assert(AssertSize<TxDescriptor, 16>());
+
     void setup_interrupts();
     void setup_link();
 
-    E1000NetworkAdapter(PCI::Address, u8 irq, NonnullOwnPtr<KString>);
-    virtual bool handle_irq(RegisterState const&) override;
+    E1000NetworkAdapter(StringView, PCI::DeviceIdentifier const&, u8 irq,
+        NonnullOwnPtr<IOWindow> registers_io_window, NonnullOwnPtr<Memory::Region> rx_buffer_region,
+        NonnullOwnPtr<Memory::Region> tx_buffer_region,
+        Memory::TypedMapping<RxDescriptor volatile[]> rx_descriptors,
+        Memory::TypedMapping<TxDescriptor volatile[]> tx_descriptors);
+
+    virtual bool handle_irq() override;
     virtual StringView class_name() const override { return "E1000NetworkAdapter"sv; }
-
-    struct [[gnu::packed]] e1000_rx_desc {
-        volatile uint64_t addr { 0 };
-        volatile uint16_t length { 0 };
-        volatile uint16_t checksum { 0 };
-        volatile uint8_t status { 0 };
-        volatile uint8_t errors { 0 };
-        volatile uint16_t special { 0 };
-    };
-
-    struct [[gnu::packed]] e1000_tx_desc {
-        volatile uint64_t addr { 0 };
-        volatile uint16_t length { 0 };
-        volatile uint8_t cso { 0 };
-        volatile uint8_t cmd { 0 };
-        volatile uint8_t status { 0 };
-        volatile uint8_t css { 0 };
-        volatile uint16_t special { 0 };
-    };
 
     virtual void detect_eeprom();
     virtual u32 read_eeprom(u8 address);
     void read_mac_address();
-
-    void write_command(u16 address, u32);
-    u32 read_command(u16 address);
 
     void initialize_rx_descriptors();
     void initialize_tx_descriptors();
@@ -82,17 +92,16 @@ protected:
     static constexpr size_t number_of_rx_descriptors = 256;
     static constexpr size_t number_of_tx_descriptors = 256;
 
-    IOAddress m_io_base;
-    VirtualAddress m_mmio_base;
-    OwnPtr<Memory::Region> m_rx_descriptors_region;
-    OwnPtr<Memory::Region> m_tx_descriptors_region;
-    OwnPtr<Memory::Region> m_rx_buffer_region;
-    OwnPtr<Memory::Region> m_tx_buffer_region;
+    NonnullOwnPtr<IOWindow> m_registers_io_window;
+
+    Memory::TypedMapping<RxDescriptor volatile[]> m_rx_descriptors;
+    Memory::TypedMapping<TxDescriptor volatile[]> m_tx_descriptors;
+
+    NonnullOwnPtr<Memory::Region> m_rx_buffer_region;
+    NonnullOwnPtr<Memory::Region> m_tx_buffer_region;
     Array<void*, number_of_rx_descriptors> m_rx_buffers;
     Array<void*, number_of_tx_descriptors> m_tx_buffers;
-    OwnPtr<Memory::Region> m_mmio_region;
-    bool m_has_eeprom { false };
-    bool m_use_mmio { false };
+    SetOnce m_has_eeprom;
     bool m_link_up { false };
     EntropySource m_entropy_source;
 

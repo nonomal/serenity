@@ -8,7 +8,6 @@
 
 #include <AK/Checked.h>
 #include <AK/Span.h>
-#include <AK/StdLibExtras.h>
 #include <string.h>
 
 TEST_CASE(constexpr_default_constructor_is_empty)
@@ -103,7 +102,7 @@ TEST_CASE(can_subspan_as_intended)
 {
     static constexpr u16 buffer[8] { 1, 2, 3, 4, 5, 6, 7, 8 };
 
-    constexpr Span<const u16> span { buffer, 8 };
+    constexpr ReadonlySpan<u16> span { buffer, 8 };
     constexpr auto slice = span.slice(3, 2);
 
     static_assert(slice.size() == 2u);
@@ -135,7 +134,28 @@ TEST_CASE(starts_with)
     ReadonlyBytes nah_bytes { str_nah, strlen(str_nah) };
     EXPECT(!bytes.starts_with(nah_bytes));
 
-    const u8 hey_array[3] = { 'H', 'e', 'y' };
+    u8 const hey_array[3] = { 'H', 'e', 'y' };
     ReadonlyBytes hey_bytes_u8 { hey_array, 3 };
     EXPECT(bytes.starts_with(hey_bytes_u8));
+}
+
+TEST_CASE(contains_slow)
+{
+    Vector<String> list { "abc"_string, "def"_string, "ghi"_string };
+    auto span = list.span();
+
+    EXPECT(span.contains_slow("abc"_string));
+    EXPECT(span.contains_slow("abc"sv));
+
+    EXPECT(span.contains_slow("def"_string));
+    EXPECT(span.contains_slow("def"sv));
+
+    EXPECT(span.contains_slow("ghi"_string));
+    EXPECT(span.contains_slow("ghi"sv));
+
+    EXPECT(!span.contains_slow("whf"_string));
+    EXPECT(!span.contains_slow("whf"sv));
+
+    EXPECT(!span.contains_slow(String {}));
+    EXPECT(!span.contains_slow(StringView {}));
 }

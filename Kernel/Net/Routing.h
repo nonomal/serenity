@@ -7,14 +7,15 @@
 #pragma once
 
 #include <AK/IPv4Address.h>
-#include <AK/NonnullRefPtr.h>
+#include <AK/IPv6Address.h>
+#include <AK/RefPtr.h>
 #include <Kernel/Locking/MutexProtected.h>
 #include <Kernel/Net/NetworkAdapter.h>
-#include <Kernel/Thread.h>
+#include <Kernel/Tasks/Thread.h>
 
 namespace Kernel {
 
-struct Route : public RefCounted<Route> {
+struct Route final : public AtomicRefCounted<Route> {
     Route(IPv4Address const& destination, IPv4Address const& gateway, IPv4Address const& netmask, u16 flags, NonnullRefPtr<NetworkAdapter> adapter)
         : destination(destination)
         , gateway(gateway)
@@ -34,11 +35,11 @@ struct Route : public RefCounted<Route> {
         return destination == other.destination && (gateway == other.gateway || other.gateway.is_zero()) && netmask == other.netmask && flags == other.flags && adapter.ptr() == other.adapter.ptr();
     }
 
-    const IPv4Address destination;
-    const IPv4Address gateway;
-    const IPv4Address netmask;
-    const u16 flags;
-    NonnullRefPtr<NetworkAdapter> adapter;
+    IPv4Address const destination;
+    IPv4Address const gateway;
+    IPv4Address const netmask;
+    u16 const flags;
+    NonnullRefPtr<NetworkAdapter> const adapter;
 
     IntrusiveListNode<Route, RefPtr<Route>> route_list_node {};
     using RouteList = IntrusiveList<&Route::route_list_node>;
@@ -64,9 +65,14 @@ enum class AllowUsingGateway {
     No,
 };
 
-RoutingDecision route_to(IPv4Address const& target, IPv4Address const& source, RefPtr<NetworkAdapter> const through = nullptr, AllowUsingGateway = AllowUsingGateway::Yes);
+enum class AllowBroadcast {
+    Yes,
+    No,
+};
 
-SpinlockProtected<HashMap<IPv4Address, MACAddress>>& arp_table();
-SpinlockProtected<Route::RouteList>& routing_table();
+RoutingDecision route_to(IPv4Address const& target, IPv4Address const& source, RefPtr<NetworkAdapter> const through = nullptr, AllowBroadcast = AllowBroadcast::No, AllowUsingGateway = AllowUsingGateway::Yes);
+
+SpinlockProtected<HashMap<IPv4Address, MACAddress>, LockRank::None>& arp_table();
+SpinlockProtected<Route::RouteList, LockRank::None>& routing_table();
 
 }

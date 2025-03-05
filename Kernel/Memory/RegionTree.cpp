@@ -8,7 +8,7 @@
 #include <Kernel/Memory/AnonymousVMObject.h>
 #include <Kernel/Memory/MemoryManager.h>
 #include <Kernel/Memory/RegionTree.h>
-#include <Kernel/Random.h>
+#include <Kernel/Security/Random.h>
 
 namespace Kernel::Memory {
 
@@ -121,26 +121,6 @@ ErrorOr<VirtualRange> RegionTree::allocate_range_randomized(size_t size, size_t 
         if (!m_total_range.contains(random_address, size))
             continue;
 
-#if ARCH(I386)
-        // Attempt to limit the amount of wasted address space on platforms with small address sizes (read: i686).
-        // This works by only allowing arbitrary random allocations until a certain threshold, to create more possibilities for placing mappings.
-        // After the threshold has been reached, new allocations can only be placed randomly within a certain range from the adjacent allocations.
-        VirtualAddress random_address_end { random_address.get() + size };
-        constexpr size_t max_allocations_until_limited = 200;
-        constexpr size_t max_space_between_allocations = 1 * MiB;
-
-        if (m_regions.size() >= max_allocations_until_limited) {
-            auto* lower_allocation = m_regions.find_largest_not_above(random_address.get());
-            auto* upper_allocation = m_regions.find_smallest_not_below(random_address_end.get());
-
-            bool lower_in_range = (!lower_allocation || random_address - lower_allocation->range().end() <= VirtualAddress(max_space_between_allocations));
-            bool upper_in_range = (!upper_allocation || upper_allocation->range().base() - random_address_end <= VirtualAddress(max_space_between_allocations));
-
-            if (!upper_in_range && !lower_in_range)
-                continue;
-        }
-#endif
-
         auto range_or_error = allocate_range_specific(random_address, size);
         if (!range_or_error.is_error())
             return range_or_error.release_value();
@@ -151,7 +131,6 @@ ErrorOr<VirtualRange> RegionTree::allocate_range_randomized(size_t size, size_t 
 
 ErrorOr<void> RegionTree::place_anywhere(Region& region, RandomizeVirtualAddress randomize_virtual_address, size_t size, size_t alignment)
 {
-    SpinlockLocker locker(m_lock);
     auto range = TRY(randomize_virtual_address == RandomizeVirtualAddress::Yes ? allocate_range_randomized(size, alignment) : allocate_range_anywhere(size, alignment));
     region.m_range = range;
     m_regions.insert(region.vaddr().get(), region);
@@ -160,7 +139,6 @@ ErrorOr<void> RegionTree::place_anywhere(Region& region, RandomizeVirtualAddress
 
 ErrorOr<void> RegionTree::place_specifically(Region& region, VirtualRange const& range)
 {
-    SpinlockLocker locker(m_lock);
     auto allocated_range = TRY(allocate_range_specific(range.base(), range.size()));
     region.m_range = allocated_range;
     m_regions.insert(region.vaddr().get(), region);
@@ -169,13 +147,11 @@ ErrorOr<void> RegionTree::place_specifically(Region& region, VirtualRange const&
 
 bool RegionTree::remove(Region& region)
 {
-    SpinlockLocker locker(m_lock);
     return m_regions.remove(region.range().base().get());
 }
 
 Region* RegionTree::find_region_containing(VirtualAddress address)
 {
-    SpinlockLocker locker(m_lock);
     auto* region = m_regions.find_largest_not_above(address.get());
     if (!region || !region->contains(address))
         return nullptr;
@@ -184,7 +160,6 @@ Region* RegionTree::find_region_containing(VirtualAddress address)
 
 Region* RegionTree::find_region_containing(VirtualRange range)
 {
-    SpinlockLocker lock(m_lock);
     auto* region = m_regions.find_largest_not_above(range.base().get());
     if (!region || !region->contains(range))
         return nullptr;

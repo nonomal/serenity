@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibCore/NetworkResponse.h>
 
 namespace Gemini {
@@ -14,19 +14,19 @@ namespace Gemini {
 class GeminiResponse : public Core::NetworkResponse {
 public:
     virtual ~GeminiResponse() override = default;
-    static NonnullRefPtr<GeminiResponse> create(int status, String meta)
+    static NonnullRefPtr<GeminiResponse> create(int status, ByteString meta)
     {
         return adopt_ref(*new GeminiResponse(status, meta));
     }
 
     int status() const { return m_status; }
-    String meta() const { return m_meta; }
+    ByteString meta() const { return m_meta; }
 
 private:
-    GeminiResponse(int status, String);
+    GeminiResponse(int status, ByteString);
 
     int m_status { 0 };
-    String m_meta;
+    ByteString m_meta;
 };
 
 }

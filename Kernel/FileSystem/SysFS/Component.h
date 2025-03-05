@@ -1,20 +1,21 @@
 /*
- * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2021-2024, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/AtomicRefCounted.h>
 #include <AK/Error.h>
 #include <AK/Function.h>
-#include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
 #include <AK/StringView.h>
 #include <AK/Types.h>
 #include <Kernel/FileSystem/File.h>
 #include <Kernel/FileSystem/FileSystem.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
+#include <Kernel/FileSystem/RAMBackedFileType.h>
 #include <Kernel/Forward.h>
 
 namespace Kernel {
@@ -24,24 +25,27 @@ struct SysFSInodeData : public OpenFileDescriptionData {
 };
 
 class SysFSDirectory;
-class SysFSComponent : public RefCounted<SysFSComponent> {
+class SysFSComponent : public AtomicRefCounted<SysFSComponent> {
     friend class SysFSDirectory;
 
 public:
+    // NOTE: It is safe to assume that the regular file type is largely
+    // the most used file type in the SysFS filesystem.
+    virtual RAMBackedFileType type() const { return RAMBackedFileType::Regular; }
+
     virtual StringView name() const = 0;
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer&, OpenFileDescription*) const { return Error::from_errno(ENOTIMPL); }
     virtual ErrorOr<void> traverse_as_directory(FileSystemID, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)>) const { VERIFY_NOT_REACHED(); }
-    virtual RefPtr<SysFSComponent> lookup(StringView) { VERIFY_NOT_REACHED(); };
+    virtual RefPtr<SysFSComponent> lookup(StringView) { VERIFY_NOT_REACHED(); }
     virtual mode_t permissions() const;
     virtual ErrorOr<void> truncate(u64) { return EPERM; }
     virtual size_t size() const { return 0; }
-    virtual ErrorOr<void> set_mtime(time_t) { return ENOTIMPL; }
     virtual ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const&, OpenFileDescription*) { return EROFS; }
     virtual ErrorOr<void> refresh_data(OpenFileDescription&) const { return {}; }
 
     virtual ErrorOr<NonnullRefPtr<SysFSInode>> to_inode(SysFS const&) const;
 
-    InodeIndex component_index() const { return m_component_index; };
+    InodeIndex component_index() const { return m_component_index; }
 
     virtual ~SysFSComponent() = default;
 
@@ -52,7 +56,7 @@ protected:
     explicit SysFSComponent(SysFSDirectory const& parent_directory);
     SysFSComponent();
 
-    RefPtr<SysFSDirectory> m_parent_directory;
+    RefPtr<SysFSDirectory> const m_parent_directory;
 
     IntrusiveListNode<SysFSComponent, NonnullRefPtr<SysFSComponent>> m_list_node;
 
@@ -62,6 +66,7 @@ private:
 
 class SysFSSymbolicLink : public SysFSComponent {
 public:
+    virtual RAMBackedFileType type() const override final { return RAMBackedFileType::Link; }
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer&, OpenFileDescription*) const override final;
     virtual ErrorOr<NonnullRefPtr<SysFSInode>> to_inode(SysFS const& sysfs_instance) const override final;
 
@@ -71,24 +76,25 @@ protected:
 
     explicit SysFSSymbolicLink(SysFSDirectory const& parent_directory, SysFSComponent const& pointed_component);
 
-    RefPtr<SysFSComponent> m_pointed_component;
+    NonnullRefPtr<SysFSComponent> const m_pointed_component;
 };
 
 class SysFSDirectory : public SysFSComponent {
 public:
+    virtual RAMBackedFileType type() const override final { return RAMBackedFileType::Directory; }
     virtual ErrorOr<void> traverse_as_directory(FileSystemID, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)>) const override final;
     virtual RefPtr<SysFSComponent> lookup(StringView name) override final;
 
     virtual ErrorOr<NonnullRefPtr<SysFSInode>> to_inode(SysFS const& sysfs_instance) const override final;
 
-    using ChildList = SpinlockProtected<IntrusiveList<&SysFSComponent::m_list_node>>;
+    using ChildList = SpinlockProtected<IntrusiveList<&SysFSComponent::m_list_node>, LockRank::None>;
 
 protected:
     virtual bool is_root_directory() const { return false; }
 
     SysFSDirectory() {};
     explicit SysFSDirectory(SysFSDirectory const& parent_directory);
-    ChildList m_child_components;
+    ChildList m_child_components {};
 };
 
 }

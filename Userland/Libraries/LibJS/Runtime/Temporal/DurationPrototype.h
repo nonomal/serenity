@@ -13,13 +13,15 @@ namespace JS::Temporal {
 
 class DurationPrototype final : public PrototypeObject<DurationPrototype, Duration> {
     JS_PROTOTYPE_OBJECT(DurationPrototype, Duration, Temporal.Duration);
+    JS_DECLARE_ALLOCATOR(DurationPrototype);
 
 public:
-    explicit DurationPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~DurationPrototype() override = default;
 
 private:
+    explicit DurationPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(years_getter);
     JS_DECLARE_NATIVE_FUNCTION(months_getter);
     JS_DECLARE_NATIVE_FUNCTION(weeks_getter);

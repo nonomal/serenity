@@ -6,14 +6,17 @@
 
 #pragma once
 
-#include <LibWeb/Layout/RadioButton.h>
+#include <LibWeb/Forward.h>
 #include <LibWeb/Painting/LabelablePaintable.h>
 
 namespace Web::Painting {
 
 class RadioButtonPaintable final : public LabelablePaintable {
+    JS_CELL(RadioButtonPaintable, LabelablePaintable);
+    JS_DECLARE_ALLOCATOR(RadioButtonPaintable);
+
 public:
-    static NonnullRefPtr<RadioButtonPaintable> create(Layout::RadioButton const&);
+    static JS::NonnullGCPtr<RadioButtonPaintable> create(Layout::RadioButton const&);
 
     virtual void paint(PaintContext&, PaintPhase) const override;
 

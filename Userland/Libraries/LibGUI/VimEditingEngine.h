@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibGUI/EditingEngine.h>
 #include <LibGUI/TextRange.h>
 
@@ -122,7 +122,6 @@ private:
     void calculate_document_range(TextEditor&);
     void calculate_line_range(TextEditor&, bool normalize_for_position);
     void calculate_word_range(VimCursor&, int amount, bool normalize_for_position);
-    void calculate_WORD_range(VimCursor&, int amount, bool normalize_for_position);
     void calculate_character_range(VimCursor&, int amount, bool normalize_for_position);
     void calculate_find_range(VimCursor&, int amount);
 
@@ -152,7 +151,8 @@ private:
     enum VimMode {
         Normal,
         Insert,
-        Visual
+        Visual,
+        VisualLine
     };
 
     enum YankType {
@@ -170,7 +170,7 @@ private:
     VimMotion m_motion;
 
     YankType m_yank_type {};
-    String m_yank_buffer {};
+    ByteString m_yank_buffer {};
     void yank(YankType);
     void yank(TextRange, YankType yank_type);
     void put_before();
@@ -185,6 +185,7 @@ private:
     void switch_to_normal_mode();
     void switch_to_insert_mode();
     void switch_to_visual_mode();
+    void switch_to_visual_line_mode();
     void move_half_page_up();
     void move_half_page_down();
     void move_to_previous_empty_lines_block();
@@ -193,6 +194,7 @@ private:
     bool on_key_in_insert_mode(KeyEvent const& event);
     bool on_key_in_normal_mode(KeyEvent const& event);
     bool on_key_in_visual_mode(KeyEvent const& event);
+    bool on_key_in_visual_line_mode(KeyEvent const& event);
 
     void casefold_selection(Casing);
 

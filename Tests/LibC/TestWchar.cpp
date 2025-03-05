@@ -215,7 +215,7 @@ TEST_CASE(mbsinit)
     size_t ret = mbrtowc(nullptr, "\xdf", 1, &state);
 
     if (ret != -2ul)
-        FAIL(String::formatted("mbrtowc accepted partial multibyte sequence with return code {} (expected -2)", static_cast<ssize_t>(ret)));
+        FAIL(ByteString::formatted("mbrtowc accepted partial multibyte sequence with return code {} (expected -2)", static_cast<ssize_t>(ret)));
 
     // Ensure that we are not in an initial state.
     EXPECT(mbsinit(&state) == 0);
@@ -224,7 +224,7 @@ TEST_CASE(mbsinit)
     ret = mbrtowc(nullptr, "\xbf", 1, &state);
 
     if (ret != 1ul)
-        FAIL(String::formatted("mbrtowc did not consume the expected number of bytes (1), returned {} instead", static_cast<ssize_t>(ret)));
+        FAIL(ByteString::formatted("mbrtowc did not consume the expected number of bytes (1), returned {} instead", static_cast<ssize_t>(ret)));
 
     // Ensure that we are in an initial state again.
     EXPECT(mbsinit(&state) != 0);
@@ -239,17 +239,17 @@ TEST_CASE(mbrtowc)
     // Ensure that we can parse normal ASCII characters.
     ret = mbrtowc(&wc, "Hello", 5, &state);
     EXPECT_EQ(ret, 1ul);
-    EXPECT_EQ(wc, 'H');
+    EXPECT_EQ(wc, static_cast<wchar_t>('H'));
 
     // Try two three-byte codepoints (™™), only one of which should be consumed.
     ret = mbrtowc(&wc, "\xe2\x84\xa2\xe2\x84\xa2", 6, &state);
     EXPECT_EQ(ret, 3ul);
-    EXPECT_EQ(wc, 0x2122);
+    EXPECT_EQ(wc, static_cast<wchar_t>(0x2122));
 
     // Try a null character, which should return 0 and reset the state to the initial state.
     ret = mbrtowc(&wc, "\x00\x00", 2, &state);
     EXPECT_EQ(ret, 0ul);
-    EXPECT_EQ(wc, 0);
+    EXPECT_EQ(wc, static_cast<wchar_t>(0));
     EXPECT_NE(mbsinit(&state), 0);
 
     // Try an incomplete multibyte character.
@@ -262,7 +262,7 @@ TEST_CASE(mbrtowc)
     // Finish the previous multibyte character.
     ret = mbrtowc(&wc, "\xa2", 1, &state);
     EXPECT_EQ(ret, 1ul);
-    EXPECT_EQ(wc, 0x2122);
+    EXPECT_EQ(wc, static_cast<wchar_t>(0x2122));
 
     // Try an invalid multibyte sequence.
     // Reset the state afterwards because the effects are undefined.
@@ -323,8 +323,8 @@ TEST_CASE(wcsrtombs)
 {
     mbstate_t state = {};
     char buf[MB_LEN_MAX * 4];
-    const wchar_t good_chars[] = { L'\U0001F41E', L'\U0001F41E', L'\0' };
-    const wchar_t bad_chars[] = { L'\U0001F41E', static_cast<wchar_t>(0x1111F41E), L'\0' };
+    wchar_t const good_chars[] = { L'\U0001F41E', L'\U0001F41E', L'\0' };
+    wchar_t const bad_chars[] = { L'\U0001F41E', static_cast<wchar_t>(0x1111F41E), L'\0' };
     wchar_t const* src;
     size_t ret = 0;
 
@@ -369,7 +369,7 @@ TEST_CASE(wcsrtombs)
 TEST_CASE(wcsnrtombs)
 {
     mbstate_t state = {};
-    const wchar_t good_chars[] = { L'\U0001F41E', L'\U0001F41E', L'\0' };
+    wchar_t const good_chars[] = { L'\U0001F41E', L'\U0001F41E', L'\0' };
     wchar_t const* src;
     size_t ret = 0;
 
@@ -550,17 +550,17 @@ TEST_CASE(mbtowc)
     // Ensure that we can parse normal ASCII characters.
     ret = mbtowc(&wc, "Hello", 5);
     EXPECT_EQ(ret, 1);
-    EXPECT_EQ(wc, 'H');
+    EXPECT_EQ(wc, static_cast<wchar_t>('H'));
 
     // Try two three-byte codepoints (™™), only one of which should be consumed.
     ret = mbtowc(&wc, "\xe2\x84\xa2\xe2\x84\xa2", 6);
     EXPECT_EQ(ret, 3);
-    EXPECT_EQ(wc, 0x2122);
+    EXPECT_EQ(wc, static_cast<wchar_t>(0x2122));
 
     // Try a null character, which should return 0.
     ret = mbtowc(&wc, "\x00\x00", 2);
     EXPECT_EQ(ret, 0);
-    EXPECT_EQ(wc, 0);
+    EXPECT_EQ(wc, static_cast<wchar_t>(0));
 
     // Try an incomplete multibyte character.
     ret = mbtowc(&wc, "\xe2\x84", 2);

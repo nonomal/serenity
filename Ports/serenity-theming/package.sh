@@ -1,9 +1,10 @@
 #!/usr/bin/env -S bash ../.port_include.sh
 port=serenity-theming
-version=98ea1b3065b09f976e0f52d41a01474f5d99ff7e
+version=955c25365c2e2e47af73b9f3acb68e8dcbc76520
 workdir="theming-${version}"
-files="https://github.com/SerenityOS/theming/archive/${version}.zip serenity-theming-${version}.zip d67cd56d04469d64d95f2d4516f8bccaa2efb996a47c124430c5b60fdaafabdf"
-auth_type="sha256"
+files=(
+    "https://github.com/SerenityOS/theming/archive/${version}.zip#976bc81bd3191e3acaa6dce1a6f5277b74f775a2203e2d8ea917cefbdecf0b4c"
+)
 
 build() {
     :
@@ -19,4 +20,10 @@ post_install() {
     cp -r "${workdir}/icons" "${SERENITY_INSTALL_ROOT}/res/"
     cp -r "${workdir}/themes" "${SERENITY_INSTALL_ROOT}/res/"
     cp -r "${workdir}/fonts" "${SERENITY_INSTALL_ROOT}/res/"
+    cp -r "${workdir}/color-palettes" "${SERENITY_INSTALL_ROOT}/res/"
+    cp -r "${workdir}/emoji" "${SERENITY_INSTALL_ROOT}/res/"
+    cp -r "${workdir}/graphics" "${SERENITY_INSTALL_ROOT}/res/"
+    cp -r "${workdir}/color-schemes" "${SERENITY_INSTALL_ROOT}/res/color-schemes/"
+    cp -r "${workdir}/wallpapers" "${SERENITY_INSTALL_ROOT}/res/"
+    cp "${workdir}/emoji-theming.txt" "${SERENITY_INSTALL_ROOT}/home/anon/Documents/emoji-theming.txt"
 }

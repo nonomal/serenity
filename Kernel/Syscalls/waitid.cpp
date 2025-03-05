@@ -6,7 +6,7 @@
 
 #include <AK/Variant.h>
 #include <Kernel/Debug.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
@@ -21,7 +21,7 @@ ErrorOr<siginfo_t> Process::do_waitid(Variant<Empty, NonnullRefPtr<Process>, Non
 
 ErrorOr<FlatPtr> Process::sys$waitid(Userspace<Syscall::SC_waitid_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
     TRY(require_promise(Pledge::proc));
     auto params = TRY(copy_typed_from_user(user_params));
 
@@ -30,7 +30,7 @@ ErrorOr<FlatPtr> Process::sys$waitid(Userspace<Syscall::SC_waitid_params const*>
     case P_ALL:
         break;
     case P_PID: {
-        auto waitee_process = Process::from_pid(params.id);
+        auto waitee_process = Process::from_pid_in_same_process_list(params.id);
         if (!waitee_process)
             return ECHILD;
         bool waitee_is_child = waitee_process->ppid() == Process::current().pid();

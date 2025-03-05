@@ -1,11 +1,12 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibGUI/AbstractTableView.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Button.h>
@@ -58,9 +59,9 @@ void AbstractTableView::auto_resize_column(int column)
     auto& model = *this->model();
     int row_count = model.row_count();
 
-    int header_width = m_column_header->font().width(model.column_name(column));
+    int header_width = m_column_header->font().width(model.column_name(column).release_value_but_fixme_should_propagate_errors());
     if (column == m_key_column && model.is_column_sortable(column))
-        header_width += font().width(" \xE2\xAC\x86"sv);
+        header_width += HeaderView::sorting_arrow_width + HeaderView::sorting_arrow_offset;
 
     int column_width = header_width;
     bool is_empty = true;
@@ -72,7 +73,7 @@ void AbstractTableView::auto_resize_column(int column)
         } else if (cell_data.is_bitmap()) {
             cell_width = cell_data.as_bitmap().width();
         } else if (cell_data.is_valid()) {
-            cell_width = font().width(cell_data.to_string());
+            cell_width = font().width(cell_data.to_byte_string());
         }
         if (is_empty && cell_width > 0)
             is_empty = false;
@@ -97,9 +98,9 @@ void AbstractTableView::update_column_sizes()
     for (int column = 0; column < column_count; ++column) {
         if (!column_header().is_section_visible(column))
             continue;
-        int header_width = m_column_header->font().width(model.column_name(column));
+        int header_width = m_column_header->font().width(model.column_name(column).release_value_but_fixme_should_propagate_errors());
         if (column == m_key_column && model.is_column_sortable(column))
-            header_width += font().width(" \xE2\xAC\x86"sv); // UPWARDS BLACK ARROW
+            header_width += HeaderView::sorting_arrow_width + HeaderView::sorting_arrow_offset;
         int column_width = header_width;
         for (int row = 0; row < row_count; ++row) {
             auto cell_data = model.index(row, column).data();
@@ -110,7 +111,7 @@ void AbstractTableView::update_column_sizes()
             } else if (cell_data.is_bitmap()) {
                 cell_width = cell_data.as_bitmap().width();
             } else if (cell_data.is_valid()) {
-                cell_width = font().width(cell_data.to_string());
+                cell_width = font().width(cell_data.to_byte_string());
             }
             column_width = max(column_width, cell_width);
         }
@@ -222,7 +223,7 @@ void AbstractTableView::mousedown_event(MouseEvent& event)
     AbstractView::mousedown_event(event);
 }
 
-ModelIndex AbstractTableView::index_at_event_position(Gfx::IntPoint const& position, bool& is_toggle) const
+ModelIndex AbstractTableView::index_at_event_position(Gfx::IntPoint position, bool& is_toggle) const
 {
     is_toggle = false;
     if (!model())
@@ -242,7 +243,7 @@ ModelIndex AbstractTableView::index_at_event_position(Gfx::IntPoint const& posit
     return {};
 }
 
-ModelIndex AbstractTableView::index_at_event_position(Gfx::IntPoint const& position) const
+ModelIndex AbstractTableView::index_at_event_position(Gfx::IntPoint position) const
 {
     bool is_toggle;
     auto index = index_at_event_position(position, is_toggle);
@@ -343,7 +344,7 @@ Gfx::IntRect AbstractTableView::row_rect(int item_index) const
         row_height() };
 }
 
-Gfx::IntPoint AbstractTableView::adjusted_position(Gfx::IntPoint const& position) const
+Gfx::IntPoint AbstractTableView::adjusted_position(Gfx::IntPoint position) const
 {
     return position.translated(horizontal_scrollbar().value() - frame_thickness(), vertical_scrollbar().value() - frame_thickness());
 }
@@ -352,7 +353,9 @@ void AbstractTableView::model_did_update(unsigned flags)
 {
     AbstractView::model_did_update(flags);
     update_row_sizes();
-    update_column_sizes();
+    if (!(flags & Model::UpdateFlag::DontResizeColumns))
+        update_column_sizes();
+
     update_content_size();
     update();
 }
@@ -373,6 +376,9 @@ void AbstractTableView::header_did_change_section_visibility(Badge<HeaderView>, 
 {
     update_content_size();
     update();
+
+    if (on_visible_columns_changed)
+        on_visible_columns_changed();
 }
 
 void AbstractTableView::set_default_column_width(int column, int width)
@@ -383,6 +389,38 @@ void AbstractTableView::set_default_column_width(int column, int width)
 void AbstractTableView::set_column_visible(int column, bool visible)
 {
     column_header().set_section_visible(column, visible);
+}
+
+ErrorOr<String> AbstractTableView::get_visible_columns() const
+{
+    StringBuilder builder;
+
+    bool first = true;
+    for (int column = 0; column < model()->column_count(); ++column) {
+        if (!column_header().is_section_visible(column))
+            continue;
+
+        if (first) {
+            TRY(builder.try_appendff("{}", column));
+            first = false;
+        } else {
+            TRY(builder.try_appendff(",{}", column));
+        }
+    }
+
+    return builder.to_string();
+}
+
+void AbstractTableView::set_visible_columns(StringView column_names)
+{
+    for (int column = 0; column < model()->column_count(); ++column)
+        column_header().set_section_visible(column, false);
+
+    column_names.for_each_split_view(',', SplitBehavior::Nothing, [&, this](StringView column_id_string) {
+        if (auto column = column_id_string.to_number<int>(); column.has_value()) {
+            column_header().set_section_visible(column.value(), true);
+        }
+    });
 }
 
 void AbstractTableView::set_column_headers_visible(bool visible)
@@ -477,7 +515,7 @@ bool AbstractTableView::is_navigation(GUI::KeyEvent& event)
     }
 }
 
-Gfx::IntPoint AbstractTableView::automatic_scroll_delta_from_position(Gfx::IntPoint const& pos) const
+Gfx::IntPoint AbstractTableView::automatic_scroll_delta_from_position(Gfx::IntPoint pos) const
 {
     if (pos.y() > column_header().height() + autoscroll_threshold())
         return AbstractScrollableWidget::automatic_scroll_delta_from_position(pos);

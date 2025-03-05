@@ -14,7 +14,7 @@
 
 namespace WindowServer {
 
-class MenuManager final : public Core::Object {
+class MenuManager final : public Core::EventReceiver {
     C_OBJECT(MenuManager);
 
 public:
@@ -26,6 +26,7 @@ public:
     bool has_open_menu() const { return !m_open_menu_stack.is_empty(); }
 
     Menu* current_menu() { return m_current_menu.ptr(); }
+    Menu* closest_open_ancestor_of(Menu const&) const;
     void set_current_menu(Menu*);
     void clear_current_menu();
     void open_menu(Menu&, bool as_current_menu = true);
@@ -57,7 +58,6 @@ private:
     void refresh();
 
     WeakPtr<Menu> m_current_menu;
-    WeakPtr<Window> m_previous_input_window;
     Vector<WeakPtr<Menu>> m_open_menu_stack;
 
     int m_theme_index { 0 };

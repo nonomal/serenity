@@ -28,8 +28,9 @@ public:
     void set_orientation(Orientation value);
     Orientation orientation() const { return m_orientation; }
 
-    String text() const { return m_text; }
-    void set_text(String text) { m_text = move(text); }
+    ByteString text() const { return m_text; }
+    void set_text(ByteString text) { m_text = move(text); }
+    void set_text(String const& text) { m_text = ByteString(text); }
 
     enum Format {
         NoText,
@@ -45,11 +46,13 @@ protected:
     virtual void paint_event(PaintEvent&) override;
 
 private:
+    virtual Optional<UISize> calculated_preferred_size() const override;
+
     Format m_format { Percentage };
     int m_min { 0 };
     int m_max { 100 };
     int m_value { 0 };
-    String m_text;
+    ByteString m_text;
     Orientation m_orientation { Orientation::Horizontal };
 };
 

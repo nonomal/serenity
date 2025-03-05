@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibProtocol/RequestClient.h>
 #include <LibProtocol/WebSocket.h>
-#include <LibProtocol/WebSocketClient.h>
 #include <LibWebView/WebSocketClientAdapter.h>
 
 namespace WebView {
@@ -51,7 +51,7 @@ WebSocketClientSocketAdapter::WebSocketClientSocketAdapter(NonnullRefPtr<Protoco
             }
         }
     };
-    m_websocket->on_close = [weak_this = make_weak_ptr()](u16 code, String reason, bool was_clean) {
+    m_websocket->on_close = [weak_this = make_weak_ptr()](u16 code, ByteString reason, bool was_clean) {
         if (auto strong_this = weak_this.strong_ref())
             if (strong_this->on_close)
                 strong_this->on_close(code, move(reason), was_clean);
@@ -87,6 +87,11 @@ Web::WebSockets::WebSocket::ReadyState WebSocketClientSocketAdapter::ready_state
     VERIFY_NOT_REACHED();
 }
 
+ByteString WebSocketClientSocketAdapter::subprotocol_in_use()
+{
+    return m_websocket->subprotocol_in_use();
+}
+
 void WebSocketClientSocketAdapter::send(ByteBuffer binary_or_text_message, bool is_text)
 {
     m_websocket->send(binary_or_text_message, is_text);
@@ -97,30 +102,9 @@ void WebSocketClientSocketAdapter::send(StringView text_message)
     m_websocket->send(text_message);
 }
 
-void WebSocketClientSocketAdapter::close(u16 code, String reason)
+void WebSocketClientSocketAdapter::close(u16 code, ByteString reason)
 {
     m_websocket->close(code, reason);
-}
-
-ErrorOr<NonnullRefPtr<WebSocketClientManagerAdapter>> WebSocketClientManagerAdapter::try_create()
-{
-    auto websocket_client = TRY(Protocol::WebSocketClient::try_create());
-    return adopt_nonnull_ref_or_enomem(new (nothrow) WebSocketClientManagerAdapter(move(websocket_client)));
-}
-
-WebSocketClientManagerAdapter::WebSocketClientManagerAdapter(NonnullRefPtr<Protocol::WebSocketClient> websocket_client)
-    : m_websocket_client(move(websocket_client))
-{
-}
-
-WebSocketClientManagerAdapter::~WebSocketClientManagerAdapter() = default;
-
-RefPtr<Web::WebSockets::WebSocketClientSocket> WebSocketClientManagerAdapter::connect(const AK::URL& url, String const& origin)
-{
-    auto underlying_websocket = m_websocket_client->connect(url, origin);
-    if (!underlying_websocket)
-        return {};
-    return WebSocketClientSocketAdapter::create(underlying_websocket.release_nonnull());
 }
 
 }

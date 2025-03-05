@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/Notifier.h>
 #include <LibCore/Timer.h>
@@ -42,7 +42,7 @@ public:
     void apply_size_increments_to_window(GUI::Window&);
 
     void set_opacity(u8);
-    float opacity() { return m_opacity; };
+    float opacity() { return m_opacity; }
 
     void set_show_scrollbar(bool);
 
@@ -53,14 +53,22 @@ public:
     };
 
     BellMode bell_mode() { return m_bell_mode; }
-    void set_bell_mode(BellMode bm) { m_bell_mode = bm; };
+    void set_bell_mode(BellMode bm) { m_bell_mode = bm; }
+
+    enum class AutoMarkMode {
+        MarkNothing,
+        MarkInteractiveShellPrompt,
+    };
+
+    AutoMarkMode auto_mark_mode() { return m_auto_mark_mode; }
+    void set_auto_mark_mode(AutoMarkMode am) { m_auto_mark_mode = am; }
 
     bool has_selection() const;
     bool selection_contains(const VT::Position&) const;
-    String selected_text() const;
+    ByteString selected_text() const;
     VT::Range normalized_selection() const { return m_selection.normalized(); }
     void set_selection(const VT::Range& selection);
-    VT::Position buffer_position_at(Gfx::IntPoint const&) const;
+    VT::Position buffer_position_at(Gfx::IntPoint) const;
 
     VT::Range find_next(StringView, const VT::Position& start = {}, bool case_sensitivity = false, bool should_wrap = false);
     VT::Range find_previous(StringView, const VT::Position& start = {}, bool case_sensitivity = false, bool should_wrap = false);
@@ -77,15 +85,19 @@ public:
     GUI::Action& copy_action() { return *m_copy_action; }
     GUI::Action& paste_action() { return *m_paste_action; }
     GUI::Action& clear_including_history_action() { return *m_clear_including_history_action; }
+    GUI::Action& clear_to_previous_mark_action() { return *m_clear_to_previous_mark_action; }
 
     void copy();
     void paste();
     void clear_including_history();
+    void clear_to_previous_mark();
 
-    const StringView color_scheme_name() const { return m_color_scheme_name; }
+    void set_startup_process_id(pid_t pid) { m_startup_process_id = pid; }
+
+    StringView const color_scheme_name() const { return m_color_scheme_name; }
 
     Function<void(StringView)> on_title_change;
-    Function<void(Gfx::IntSize const&)> on_terminal_size_change;
+    Function<void(Gfx::IntSize)> on_terminal_size_change;
     Function<void()> on_command_exit;
 
     GUI::Menu& context_menu() { return *m_context_menu; }
@@ -94,14 +106,20 @@ public:
 
     void set_font_and_resize_to_fit(Gfx::Font const&);
 
-    void set_color_scheme(StringView);
+    void update_color_scheme();
+
+    void set_logical_focus(bool);
 
     VT::CursorShape cursor_shape() { return m_cursor_shape; }
     virtual void set_cursor_blinking(bool) override;
     virtual void set_cursor_shape(CursorShape) override;
 
     static Optional<VT::CursorShape> parse_cursor_shape(StringView);
-    static String stringify_cursor_shape(VT::CursorShape);
+    static Optional<BellMode> parse_bell(StringView);
+    static Optional<AutoMarkMode> parse_automark_mode(StringView);
+    static ByteString stringify_cursor_shape(VT::CursorShape);
+    static ByteString stringify_bell(BellMode);
+    static ByteString stringify_automark_mode(AutoMarkMode);
 
 private:
     TerminalWidget(int ptm_fd, bool automatic_size_policy);
@@ -120,6 +138,7 @@ private:
     virtual void focusin_event(GUI::FocusEvent&) override;
     virtual void focusout_event(GUI::FocusEvent&) override;
     virtual void context_menu_event(GUI::ContextMenuEvent&) override;
+    virtual void drag_enter_event(GUI::DragEvent&) override;
     virtual void drop_event(GUI::DropEvent&) override;
     virtual void leave_event(Core::Event&) override;
     virtual void did_change_font() override;
@@ -130,12 +149,11 @@ private:
     virtual void set_window_progress(int value, int max) override;
     virtual void terminal_did_resize(u16 columns, u16 rows) override;
     virtual void terminal_history_changed(int delta) override;
+    virtual void terminal_did_perform_possibly_partial_clear() override;
     virtual void emit(u8 const*, size_t) override;
 
     // ^GUI::Clipboard::ClipboardClient
-    virtual void clipboard_content_did_change(String const&) override { update_paste_action(); }
-
-    void set_logical_focus(bool);
+    virtual void clipboard_content_did_change(ByteString const&) override { update_paste_action(); }
 
     void send_non_user_input(ReadonlyBytes);
 
@@ -147,7 +165,7 @@ private:
     void update_cursor();
     void invalidate_cursor();
 
-    void relayout(Gfx::IntSize const&);
+    void relayout(Gfx::IntSize);
 
     void update_copy_action();
     void update_paste_action();
@@ -160,25 +178,31 @@ private:
     VT::Position next_position_after(const VT::Position&, bool should_wrap) const;
     VT::Position previous_position_before(const VT::Position&, bool should_wrap) const;
 
+    void update_cached_font_metrics();
+
+    void handle_pty_owner_change(pid_t new_owner);
+
     VT::Terminal m_terminal;
 
     VT::Range m_selection;
 
-    String m_hovered_href;
-    String m_hovered_href_id;
+    ByteString m_hovered_href;
+    Optional<ByteString> m_hovered_href_id;
 
-    String m_active_href;
-    String m_active_href_id;
+    ByteString m_active_href;
+    Optional<ByteString> m_active_href_id;
 
     // Snapshot of m_hovered_href when opening a context menu for a hyperlink.
-    String m_context_menu_href;
+    ByteString m_context_menu_href;
 
-    unsigned m_colors[256];
+    Array<Gfx::Color, 256> m_colors;
     Gfx::Color m_default_foreground_color;
     Gfx::Color m_default_background_color;
     bool m_show_bold_text_as_bright { true };
 
-    String m_color_scheme_name;
+    ByteString m_color_scheme_name;
+
+    AutoMarkMode m_auto_mark_mode { AutoMarkMode::MarkInteractiveShellPrompt };
 
     BellMode m_bell_mode { BellMode::Visible };
     bool m_alt_key_held { false };
@@ -190,6 +214,8 @@ private:
     int m_inset { 2 };
     int m_line_spacing { 4 };
     int m_line_height { 0 };
+    int m_cell_height { 0 };
+    int m_column_width { 0 };
 
     int m_ptm_fd { -1 };
 
@@ -224,6 +250,7 @@ private:
     RefPtr<GUI::Action> m_copy_action;
     RefPtr<GUI::Action> m_paste_action;
     RefPtr<GUI::Action> m_clear_including_history_action;
+    RefPtr<GUI::Action> m_clear_to_previous_mark_action;
 
     RefPtr<GUI::Menu> m_context_menu;
     RefPtr<GUI::Menu> m_context_menu_for_hyperlink;
@@ -232,6 +259,9 @@ private:
 
     Gfx::IntPoint m_left_mousedown_position;
     VT::Position m_left_mousedown_position_buffer;
+
+    bool m_startup_process_owns_pty { false };
+    pid_t m_startup_process_id { -1 };
 };
 
 }

@@ -6,19 +6,20 @@
 
 #include "Project.h"
 #include "HackStudio.h"
-#include <LibCore/File.h>
+#include <LibFileSystem/FileSystem.h>
 
 namespace HackStudio {
 
-Project::Project(String const& root_path)
+Project::Project(ByteString const& root_path)
     : m_root_path(root_path)
 {
     m_model = GUI::FileSystemModel::create(root_path, GUI::FileSystemModel::Mode::FilesAndDirectories);
 }
 
-OwnPtr<Project> Project::open_with_root_path(String const& root_path)
+OwnPtr<Project> Project::open_with_root_path(ByteString const& root_path)
 {
-    if (!Core::File::is_directory(root_path))
+    VERIFY(LexicalPath(root_path).is_absolute());
+    if (!FileSystem::is_directory(root_path))
         return {};
     return adopt_own(*new Project(root_path));
 }
@@ -45,18 +46,18 @@ void Project::for_each_text_file(Function<void(ProjectFile const&)> callback) co
     });
 }
 
-NonnullRefPtr<ProjectFile> Project::create_file(String const& path) const
+NonnullRefPtr<ProjectFile> Project::create_file(ByteString const& path) const
 {
     auto full_path = to_absolute_path(path);
     return ProjectFile::construct_with_name(full_path);
 }
 
-String Project::to_absolute_path(String const& path) const
+ByteString Project::to_absolute_path(ByteString const& path) const
 {
     if (LexicalPath { path }.is_absolute()) {
         return path;
     }
-    return LexicalPath { String::formatted("{}/{}", m_root_path, path) }.string();
+    return LexicalPath { ByteString::formatted("{}/{}", m_root_path, path) }.string();
 }
 
 bool Project::project_is_serenity() const

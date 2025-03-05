@@ -13,13 +13,15 @@ namespace JS::Intl {
 
 class RelativeTimeFormatPrototype final : public PrototypeObject<RelativeTimeFormatPrototype, RelativeTimeFormat> {
     JS_PROTOTYPE_OBJECT(RelativeTimeFormatPrototype, RelativeTimeFormat, Intl.RelativeTimeFormat);
+    JS_DECLARE_ALLOCATOR(RelativeTimeFormatPrototype);
 
 public:
-    explicit RelativeTimeFormatPrototype(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~RelativeTimeFormatPrototype() override = default;
 
 private:
+    explicit RelativeTimeFormatPrototype(Realm&);
+
     JS_DECLARE_NATIVE_FUNCTION(format);
     JS_DECLARE_NATIVE_FUNCTION(format_to_parts);
     JS_DECLARE_NATIVE_FUNCTION(resolved_options);

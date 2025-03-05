@@ -7,15 +7,12 @@
 
 #pragma once
 
+#include <AK/IntegralMath.h>
 #include <LibGUI/Model.h>
 
 namespace Profiler {
 
 class Profile;
-
-// Number of digits after the decimal point for sample percentages.
-static constexpr int const number_of_percent_digits = 3;
-static constexpr float const percent_digits_rounding_constant = AK::pow(10, number_of_percent_digits);
 
 class ProfileModel final : public GUI::Model {
 public:
@@ -37,7 +34,7 @@ public:
 
     virtual int row_count(GUI::ModelIndex const& = GUI::ModelIndex()) const override;
     virtual int column_count(GUI::ModelIndex const& = GUI::ModelIndex()) const override;
-    virtual String column_name(int) const override;
+    virtual ErrorOr<String> column_name(int) const override;
     virtual GUI::Variant data(GUI::ModelIndex const&, GUI::ModelRole) const override;
     virtual GUI::ModelIndex index(int row, int column, GUI::ModelIndex const& parent = GUI::ModelIndex()) const override;
     virtual GUI::ModelIndex parent_index(GUI::ModelIndex const&) const override;

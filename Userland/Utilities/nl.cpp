@@ -4,13 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/File.h>
 #include <LibMain/Main.h>
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
 
 enum NumberStyle {
     NumberAllLines,
@@ -22,10 +20,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     NumberStyle number_style = NumberNonEmptyLines;
     int increment = 1;
-    char const* separator = "  ";
+    StringView separator = "  "sv;
     int start_number = 1;
     int number_width = 6;
-    Vector<String> files;
+    Vector<StringView> filenames;
 
     Core::ArgsParser args_parser;
 
@@ -35,12 +33,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         "body-numbering",
         'b',
         "style",
-        [&number_style](char const* s) {
-            if (!strcmp(s, "t"))
+        [&number_style](StringView s) {
+            if (s == "t"sv)
                 number_style = NumberNonEmptyLines;
-            else if (!strcmp(s, "a"))
+            else if (s == "a"sv)
                 number_style = NumberAllLines;
-            else if (!strcmp(s, "n"))
+            else if (s == "n"sv)
                 number_style = NumberNoLines;
             else
                 return false;
@@ -54,29 +52,26 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(separator, "Separator between line numbers and lines", "separator", 's', "string");
     args_parser.add_option(start_number, "Initial line number", "startnum", 'v', "number");
     args_parser.add_option(number_width, "Number width", "width", 'w', "number");
-    args_parser.add_positional_argument(files, "Files to process", "file", Core::ArgsParser::Required::No);
+    args_parser.add_positional_argument(filenames, "Files to process", "file", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
-    Vector<FILE*> file_pointers;
-    if (!files.is_empty()) {
-        for (auto& file : files) {
-            FILE* file_pointer = fopen(file.characters(), "r");
-            if (!file_pointer) {
-                warnln("Failed to open {}: {}", file, strerror(errno));
-                continue;
-            }
-            file_pointers.append(file_pointer);
-        }
-    } else {
-        file_pointers.append(stdin);
-    }
+    if (filenames.is_empty())
+        filenames.append(""sv);
 
-    for (auto& file_pointer : file_pointers) {
+    for (auto const filename : filenames) {
+        auto maybe_file = Core::File::open_file_or_standard_stream(filename, Core::File::OpenMode::Read);
+        if (maybe_file.is_error()) {
+            warnln("Failed to open {}: {}", filename, maybe_file.release_error());
+            continue;
+        }
+
+        auto file = maybe_file.release_value();
+
         int line_number = start_number - increment; // so the line number can start at 1 when added below
-        int previous_character = 0;
-        int next_character = 0;
-        while ((next_character = fgetc(file_pointer)) != EOF) {
-            if (previous_character == 0 || previous_character == '\n') {
+        Optional<u8> previous_character;
+        u8 next_character;
+        for (Bytes bytes = TRY(file->read_some({ &next_character, 1 })); bytes.size() != 0; bytes = TRY(file->read_some(bytes))) {
+            if (!previous_character.has_value() || previous_character == '\n') {
                 if (next_character == '\n' && number_style != NumberAllLines) {
                     // Skip printing line count on empty lines.
                     outln();
@@ -90,8 +85,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             putchar(next_character);
             previous_character = next_character;
         }
-        fclose(file_pointer);
-        if (previous_character != '\n')
+
+        if (previous_character.has_value() && previous_character != '\n')
             outln(); // for cases where files have no trailing newline
     }
     return 0;

@@ -6,19 +6,18 @@
 
 #include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
-#include <stdio.h>
-#include <unistd.h>
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio"));
 
-    char const* string = "yes";
+    StringView string = "y"sv;
 
     Core::ArgsParser args_parser;
-    args_parser.add_positional_argument(string, "String to output (defaults to 'yes')", "string", Core::ArgsParser::Required::No);
+    args_parser.set_general_help("Repeatedly output a line with the specified string, or 'y'.");
+    args_parser.add_positional_argument(string, "String to output (default 'y')", "string", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
     for (;;)
-        puts(string);
+        outln("{}", string);
 }

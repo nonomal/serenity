@@ -10,10 +10,11 @@
 
 namespace Web::Layout {
 
+JS_DEFINE_ALLOCATOR(BreakNode);
+
 BreakNode::BreakNode(DOM::Document& document, HTML::HTMLBRElement& element, NonnullRefPtr<CSS::StyleProperties> style)
     : Layout::NodeWithStyleAndBoxModelMetrics(document, &element, move(style))
 {
-    set_inline(true);
 }
 
 BreakNode::~BreakNode() = default;

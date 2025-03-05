@@ -1,8 +1,26 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=mold
-version=1.0.3
-files="https://github.com/rui314/mold/archive/refs/tags/v${version}.tar.gz mold-${version}.tgz 488c12058b4c7c77bff94c6f919e40b2f12c304214e2e0d7d4833c21167837c0"
-auth_type=sha256
-depends=("zlib" "openssl")
-makeopts=("OS=SerenityOS" "LDFLAGS=-L${DESTDIR}/usr/local/lib" "-j$(nproc)")
-installopts=("OS=SerenityOS")
+port='mold'
+version='2.34.1'
+files=(
+    "https://github.com/rui314/mold/archive/refs/tags/v${version}.tar.gz#a8cf638045b4a4b2697d0bcc77fd96eae93d54d57ad3021bf03b0333a727a59d"
+)
+depends=("zlib" "openssl" "zstd")
+useconfigure='true'
+configopts=(
+    "-B build"
+    "-DCMAKE_TOOLCHAIN_FILE=${SERENITY_BUILD_DIR}/CMakeToolchain.txt"
+    "-DMOLD_USE_MIMALLOC=OFF"
+    "-DBUILD_TESTING=OFF"
+)
+
+configure() {
+    run cmake "${configopts[@]}"
+}
+
+build() {
+    run make -C build "${makeopts[@]}"
+}
+
+install() {
+    run make -C build install "${installopts[@]}"
+}

@@ -6,14 +6,14 @@
 
 #pragma once
 
+#include <AK/CPUFeatures.h>
 #include <LibCrypto/Hash/HashFunction.h>
 
 #ifndef KERNEL
-#    include <AK/String.h>
+#    include <AK/ByteString.h>
 #endif
 
-namespace Crypto {
-namespace Hash {
+namespace Crypto::Hash {
 
 namespace SHA1Constants {
 
@@ -42,24 +42,24 @@ public:
     virtual DigestType digest() override;
     virtual DigestType peek() override;
 
-    inline static DigestType hash(u8 const* data, size_t length)
+    static DigestType hash(u8 const* data, size_t length)
     {
         SHA1 sha;
         sha.update(data, length);
         return sha.digest();
     }
 
-    inline static DigestType hash(ByteBuffer const& buffer) { return hash(buffer.data(), buffer.size()); }
-    inline static DigestType hash(StringView buffer) { return hash((u8 const*)buffer.characters_without_null_termination(), buffer.length()); }
+    static DigestType hash(ByteBuffer const& buffer) { return hash(buffer.data(), buffer.size()); }
+    static DigestType hash(StringView buffer) { return hash((u8 const*)buffer.characters_without_null_termination(), buffer.length()); }
 
 #ifndef KERNEL
-    virtual String class_name() const override
+    virtual ByteString class_name() const override
     {
         return "SHA1";
     }
 #endif
 
-    inline virtual void reset() override
+    virtual void reset() override
     {
         m_data_length = 0;
         m_bit_length = 0;
@@ -68,7 +68,11 @@ public:
     }
 
 private:
-    inline void transform(u8 const*);
+    template<CPUFeatures>
+    void transform_impl();
+
+    static void (SHA1::*const transform_dispatched)();
+    void transform() { return (this->*transform_dispatched)(); }
 
     u8 m_data_buffer[BlockSize] {};
     size_t m_data_length { 0 };
@@ -80,5 +84,4 @@ private:
     constexpr static auto Rounds = 80;
 };
 
-}
 }

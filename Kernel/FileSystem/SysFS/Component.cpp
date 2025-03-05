@@ -1,17 +1,19 @@
 /*
- * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2021-2024, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/FileSystem/SysFS.h>
 #include <Kernel/FileSystem/SysFS/Component.h>
+#include <Kernel/FileSystem/SysFS/DirectoryInode.h>
+#include <Kernel/FileSystem/SysFS/Inode.h>
+#include <Kernel/FileSystem/SysFS/LinkInode.h>
 #include <Kernel/FileSystem/SysFS/Registry.h>
-#include <Kernel/KLexicalPath.h>
+#include <Kernel/Library/KLexicalPath.h>
 
 namespace Kernel {
 
-static Spinlock s_index_lock;
+static Spinlock<LockRank::None> s_index_lock {};
 static InodeIndex s_next_inode_index { 0 };
 
 static size_t allocate_inode_index()
@@ -72,8 +74,6 @@ ErrorOr<size_t> SysFSSymbolicLink::read_bytes(off_t offset, size_t count, UserOr
 ErrorOr<NonnullOwnPtr<KBuffer>> SysFSSymbolicLink::try_to_generate_buffer() const
 {
     auto return_path_to_mount_point = TRY(try_generate_return_path_to_mount_point());
-    if (!m_pointed_component)
-        return Error::from_errno(EIO);
     auto pointed_component_base_name = MUST(KString::try_create(m_pointed_component->name()));
     auto pointed_component_relative_path = MUST(m_pointed_component->relative_path(move(pointed_component_base_name), 0));
     auto full_return_and_target_path = TRY(KString::formatted("{}{}", return_path_to_mount_point->view(), pointed_component_relative_path->view()));
@@ -91,7 +91,8 @@ static ErrorOr<NonnullOwnPtr<KString>> generate_return_path_to_mount_point(Nonnu
 
 ErrorOr<NonnullOwnPtr<KString>> SysFSSymbolicLink::try_generate_return_path_to_mount_point() const
 {
-    auto hops_from_mountpoint = TRY(relative_path_hops_count_from_mountpoint());
+    VERIFY(m_parent_directory);
+    auto hops_from_mountpoint = TRY(m_parent_directory->relative_path_hops_count_from_mountpoint());
     if (hops_from_mountpoint == 0)
         return KString::try_create("./"sv);
     auto start_return_path = TRY(KString::try_create("./"sv));
@@ -106,18 +107,18 @@ SysFSSymbolicLink::SysFSSymbolicLink(SysFSDirectory const& parent_directory, Sys
 
 ErrorOr<void> SysFSDirectory::traverse_as_directory(FileSystemID fsid, Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)> callback) const
 {
-    TRY(callback({ "."sv, { fsid, component_index() }, 0 }));
+    TRY(callback({ "."sv, { fsid, component_index() }, to_underlying(RAMBackedFileType::Directory) }));
     if (is_root_directory()) {
-        TRY(callback({ ".."sv, { fsid, component_index() }, 0 }));
+        TRY(callback({ ".."sv, { fsid, component_index() }, to_underlying(RAMBackedFileType::Directory) }));
     } else {
         VERIFY(m_parent_directory);
-        TRY(callback({ ".."sv, { fsid, m_parent_directory->component_index() }, 0 }));
+        TRY(callback({ ".."sv, { fsid, m_parent_directory->component_index() }, to_underlying(RAMBackedFileType::Directory) }));
     }
 
     return m_child_components.with([&](auto& list) -> ErrorOr<void> {
         for (auto& child_component : list) {
             InodeIdentifier identifier = { fsid, child_component.component_index() };
-            TRY(callback({ child_component.name(), identifier, 0 }));
+            TRY(callback({ child_component.name(), identifier, to_underlying(child_component.type()) }));
         }
         return {};
     });

@@ -5,24 +5,23 @@
  */
 
 #include <Kernel/KSyms.h>
-#include <Kernel/PerformanceManager.h>
-#include <Kernel/Process.h>
-#include <Kernel/Thread.h>
+#include <Kernel/Tasks/PerformanceManager.h>
+#include <Kernel/Tasks/Process.h>
+#include <Kernel/Tasks/Thread.h>
 
 namespace Kernel {
 
 void Process::sys$exit(int status)
 {
     // FIXME: We have callers from kernel which don't acquire the big process lock.
-    if (Thread::current()->previous_mode() == Thread::PreviousMode::UserMode) {
+    if (Thread::current()->previous_mode() == ExecutionMode::User) {
         VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
     }
 
-    {
-        ProtectedDataMutationScope scope { *this };
-        m_protected_values.termination_status = status;
-        m_protected_values.termination_signal = 0;
-    }
+    with_mutable_protected_data([status](auto& protected_data) {
+        protected_data.termination_status = status;
+        protected_data.termination_signal = 0;
+    });
 
     auto* current_thread = Thread::current();
     current_thread->set_profiling_suppressed();

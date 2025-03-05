@@ -1,5 +1,5 @@
 set(AK_TEST_SOURCES
-    TestFixedPoint.cpp
+    TestAKMath.cpp
     TestAllOf.cpp
     TestAnyOf.cpp
     TestArbitrarySizedEnum.cpp
@@ -11,22 +11,33 @@ set(AK_TEST_SOURCES
     TestBinarySearch.cpp
     TestBitCast.cpp
     TestBitmap.cpp
+    TestBitStream.cpp
     TestBuiltinWrappers.cpp
     TestByteBuffer.cpp
+    TestByteString.cpp
     TestCharacterTypes.cpp
     TestChecked.cpp
+    TestCircularBuffer.cpp
     TestCircularDeque.cpp
-    TestCircularDuplexStream.cpp
     TestCircularQueue.cpp
     TestComplex.cpp
+    TestCoroutine.cpp
     TestDisjointChunks.cpp
     TestDistinctNumeric.cpp
     TestDoublyLinkedList.cpp
     TestEndian.cpp
     TestEnumBits.cpp
+    TestEnumerate.cpp
     TestFind.cpp
     TestFixedArray.cpp
+    TestFixedPoint.cpp
+    TestFloatingPoint.cpp
+    TestFloatingPointParsing.cpp
+    TestFlyString.cpp
     TestFormat.cpp
+    TestFunction.cpp
+    TestFuzzyMatch.cpp
+    TestGeneratorAK.cpp
     TestGenericLexer.cpp
     TestHashFunctions.cpp
     TestHashMap.cpp
@@ -35,6 +46,7 @@ set(AK_TEST_SOURCES
     TestIPv4Address.cpp
     TestIPv6Address.cpp
     TestIndexSequence.cpp
+    TestInsertionSort.cpp
     TestIntegerMath.cpp
     TestIntrusiveList.cpp
     TestIntrusiveRedBlackTree.cpp
@@ -45,30 +57,39 @@ set(AK_TEST_SOURCES
     TestMemory.cpp
     TestMemoryStream.cpp
     TestNeverDestroyed.cpp
+    TestNonnullOwnPtr.cpp
     TestNonnullRefPtr.cpp
     TestNumberFormat.cpp
     TestOptional.cpp
+    TestOptionParser.cpp
+    TestOwnPtr.cpp
     TestPrint.cpp
     TestQueue.cpp
+    TestQuickSelect.cpp
     TestQuickSort.cpp
     TestRedBlackTree.cpp
     TestRefPtr.cpp
+    TestSegmentedVector.cpp
+    TestSIMD.cpp
+    TestSIMDExtras.cpp
     TestSinglyLinkedList.cpp
+    TestSlugify.cpp
     TestSourceGenerator.cpp
     TestSourceLocation.cpp
     TestSpan.cpp
     TestStack.cpp
+    TestStatistics.cpp
     TestStdLibExtras.cpp
     TestString.cpp
+    TestStringFloatingPointConversions.cpp
     TestStringUtils.cpp
     TestStringView.cpp
-    TestTime.cpp
+    TestDuration.cpp
     TestTrie.cpp
     TestTuple.cpp
     TestTypeTraits.cpp
     TestTypedTransfer.cpp
     TestUFixedBigInt.cpp
-    TestURL.cpp
     TestUtf16.cpp
     TestUtf8.cpp
     TestVariant.cpp
@@ -79,3 +100,5 @@ set(AK_TEST_SOURCES
 foreach(source IN LISTS AK_TEST_SOURCES)
     serenity_test("${source}" AK)
 endforeach()
+
+target_link_libraries(TestString PRIVATE LibUnicode)

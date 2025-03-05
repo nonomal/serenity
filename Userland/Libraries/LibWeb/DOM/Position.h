@@ -7,21 +7,28 @@
 
 #pragma once
 
+#include <AK/Error.h>
 #include <AK/RefPtr.h>
+#include <AK/String.h>
+#include <LibJS/Heap/Heap.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::DOM {
 
-class Position {
+class Position final : public JS::Cell {
+    JS_CELL(Position, JS::Cell);
+    JS_DECLARE_ALLOCATOR(Position);
+
 public:
-    Position() = default;
-    Position(Node&, unsigned offset);
+    [[nodiscard]] static JS::NonnullGCPtr<Position> create(JS::Realm& realm, JS::NonnullGCPtr<Node> node, unsigned offset)
+    {
+        return realm.heap().allocate<Position>(realm, node, offset);
+    }
 
-    bool is_valid() const { return m_node; }
-
-    Node* node() { return m_node; }
-    Node const* node() const { return m_node; }
+    JS::GCPtr<Node> node() { return m_node; }
+    JS::GCPtr<Node const> node() const { return m_node; }
+    void set_node(JS::NonnullGCPtr<Node> node) { m_node = node; }
 
     unsigned offset() const { return m_offset; }
     bool offset_is_at_end_of_node() const;
@@ -29,32 +36,31 @@ public:
     bool increment_offset();
     bool decrement_offset();
 
-    bool operator==(Position const& other) const
+    bool increment_offset_to_next_word();
+    bool decrement_offset_to_previous_word();
+
+    bool equals(JS::NonnullGCPtr<Position> other) const
     {
-        return m_node == other.m_node && m_offset == other.m_offset;
+        return m_node.ptr() == other->m_node.ptr() && m_offset == other->m_offset;
     }
 
-    bool operator!=(Position const& other) const
-    {
-        return !(*this == other);
-    }
-
-    String to_string() const;
+    ErrorOr<String> to_string() const;
 
 private:
-    RefPtr<Node> m_node;
+    Position(JS::GCPtr<Node>, unsigned offset);
+
+    virtual void visit_edges(Visitor&) override;
+
+    JS::GCPtr<Node> m_node;
     unsigned m_offset { 0 };
 };
 
 }
 
-namespace AK {
 template<>
-struct Formatter<Web::DOM::Position> : Formatter<StringView> {
+struct AK::Formatter<Web::DOM::Position> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, Web::DOM::Position const& value)
     {
-        return Formatter<StringView>::format(builder, value.to_string());
+        return Formatter<StringView>::format(builder, TRY(value.to_string()));
     }
 };
-
-}

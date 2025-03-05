@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteString.h>
 #include <AK/Hex.h>
-#include <AK/String.h>
 #include <AK/StringView.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DirIterator.h>
@@ -13,7 +13,7 @@
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 
-static constexpr StringView format_row = "{:10s}\t{:10s}\t{:10s}\t{:10s}\t{:10s}"sv;
+static constexpr StringView format_row = "{:10s}\t{:10s}\t{:10s}\t{:10s}"sv;
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
@@ -27,43 +27,58 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     Core::DirIterator di("/sys/devices/storage/", Core::DirIterator::SkipParentAndBaseDir);
     if (di.has_error()) {
-        warnln("Failed to open /sys/devices/storage - {}", di.error());
-        return 1;
+        auto error = di.error();
+        warnln("Failed to open /sys/devices/storage - {}", error);
+        return error;
     }
 
-    outln(format_row, "LUN"sv, "Interface type"sv, "Command set"sv, "Block Size"sv, "Last LBA"sv);
+    outln(format_row, "LUN"sv, "Command set"sv, "Block Size"sv, "Last LBA"sv);
 
     TRY(Core::System::pledge("stdio rpath"));
 
     while (di.has_next()) {
         auto dir = di.next_path();
-        auto command_set_file = Core::File::construct(String::formatted("/sys/devices/storage/{}/command_set", dir));
-        if (!command_set_file->open(Core::OpenMode::ReadOnly)) {
-            dbgln("Error: Could not open {}: {}", command_set_file->name(), command_set_file->error_string());
+        auto command_set_filename = ByteString::formatted("/sys/devices/storage/{}/command_set", dir);
+        auto command_set_file = Core::File::open(command_set_filename, Core::File::OpenMode::Read);
+        if (command_set_file.is_error()) {
+            dbgln("Error: Could not open {}: {}", command_set_filename, command_set_file.error());
             continue;
         }
-        auto interface_type_file = Core::File::construct(String::formatted("/sys/devices/storage/{}/interface_type", dir));
-        if (!interface_type_file->open(Core::OpenMode::ReadOnly)) {
-            dbgln("Error: Could not open {}: {}", interface_type_file->name(), interface_type_file->error_string());
+        auto last_lba_filename = ByteString::formatted("/sys/devices/storage/{}/last_lba", dir);
+        auto last_lba_file = Core::File::open(last_lba_filename, Core::File::OpenMode::Read);
+        if (last_lba_file.is_error()) {
+            dbgln("Error: Could not open {}: {}", last_lba_filename, last_lba_file.error());
             continue;
         }
-        auto last_lba_file = Core::File::construct(String::formatted("/sys/devices/storage/{}/last_lba", dir));
-        if (!last_lba_file->open(Core::OpenMode::ReadOnly)) {
-            dbgln("Error: Could not open {}: {}", last_lba_file->name(), last_lba_file->error_string());
-            continue;
-        }
-        auto sector_size_file = Core::File::construct(String::formatted("/sys/devices/storage/{}/sector_size", dir));
-        if (!sector_size_file->open(Core::OpenMode::ReadOnly)) {
-            dbgln("Error: Could not open {}: {}", sector_size_file->name(), sector_size_file->error_string());
+        auto sector_size_filename = ByteString::formatted("/sys/devices/storage/{}/sector_size", dir);
+        auto sector_size_file = Core::File::open(sector_size_filename, Core::File::OpenMode::Read);
+        if (sector_size_file.is_error()) {
+            dbgln("Error: Could not open {}: {}", sector_size_filename, sector_size_file.error());
             continue;
         }
 
-        String command_set = StringView(command_set_file->read_all().bytes());
-        String interface_type = StringView(interface_type_file->read_all().bytes());
-        String last_lba = StringView(last_lba_file->read_all().bytes());
-        String sector_size = StringView(sector_size_file->read_all().bytes());
+        auto maybe_command_set = command_set_file.value()->read_until_eof();
+        if (maybe_command_set.is_error()) {
+            dbgln("Error: Could not read {}: {}", command_set_filename, maybe_command_set.error());
+            continue;
+        }
+        ByteString command_set = StringView(maybe_command_set.value().bytes());
 
-        outln(format_row, dir, interface_type, command_set, sector_size, last_lba);
+        auto maybe_last_lba = last_lba_file.value()->read_until_eof();
+        if (maybe_last_lba.is_error()) {
+            dbgln("Error: Could not read {}: {}", last_lba_filename, maybe_last_lba.error());
+            continue;
+        }
+        ByteString last_lba = StringView(maybe_last_lba.value().bytes());
+
+        auto maybe_sector_size = sector_size_file.value()->read_until_eof();
+        if (maybe_sector_size.is_error()) {
+            dbgln("Error: Could not read {}: {}", sector_size_filename, maybe_sector_size.error());
+            continue;
+        }
+        ByteString sector_size = StringView(maybe_sector_size.value().bytes());
+
+        outln(format_row, dir, command_set, sector_size, last_lba);
     }
 
     return 0;

@@ -13,7 +13,7 @@
 #include <LibVT/Color.h>
 #include <LibVT/Terminal.h>
 #ifdef KERNEL
-#    include <Kernel/TTY/VirtualConsole.h>
+#    include <Kernel/Devices/TTY/VirtualConsole.h>
 #endif
 
 namespace VT {
@@ -33,8 +33,11 @@ void Terminal::clear()
 {
     dbgln_if(TERMINAL_DEBUG, "Clear the entire screen");
     for (size_t i = 0; i < rows(); ++i)
-        active_buffer()[i].clear();
+        active_buffer()[i]->clear();
     set_cursor(0, 0);
+
+    if (!m_use_alternate_screen_buffer)
+        m_client.terminal_did_perform_possibly_partial_clear();
 }
 
 void Terminal::clear_history()
@@ -44,6 +47,68 @@ void Terminal::clear_history()
     m_history.clear();
     m_history_start = 0;
     m_client.terminal_history_changed(-previous_history_size);
+}
+
+void Terminal::clear_to_mark(Mark mark)
+{
+    auto cursor_row = this->cursor_row();
+    ScopeGuard send_sigwinch = [&] {
+        set_cursor(cursor_row, 1);
+        mark_cursor();
+        m_client.terminal_did_perform_possibly_partial_clear();
+    };
+    m_valid_marks.remove(mark);
+
+    {
+        auto it = active_buffer().rbegin();
+        size_t row = m_rows - 1;
+        // Skip to the cursor line.
+        for (size_t i = this->cursor_row() + 1; i < active_buffer().size(); ++i, row--)
+            ++it;
+        for (; it != active_buffer().rend(); ++it, row--) {
+            auto& line = *it;
+            auto line_mark = line->mark();
+            auto is_target_line = line_mark == mark;
+            if (line_mark.has_value())
+                m_valid_marks.remove(*line_mark);
+            line->clear();
+            if (is_target_line) {
+                cursor_row = row;
+                return;
+            }
+        }
+    }
+
+    // If the mark is not found, go through the history.
+    auto it = AK::find_if(
+        m_history.rbegin(),
+        m_history.rend(),
+        [mark](auto& line) {
+            return line->mark() == mark;
+        });
+    auto index = it == m_history.rend() ? 0 : m_history.size() - it.index();
+    m_client.terminal_history_changed(m_history.size() - index);
+    auto count = m_history.size() - index;
+    for (size_t i = 0; i < count; ++i) {
+        if (auto mark = m_history[index + i]->mark(); mark.has_value())
+            m_valid_marks.remove(*mark);
+    }
+    m_history.remove(index, count);
+    cursor_row = 0;
+}
+
+void Terminal::mark_cursor()
+{
+    static u32 next_mark_id { 0 };
+
+    auto& line = active_buffer()[cursor_row()];
+    if (line->mark().has_value()) {
+        return;
+    }
+
+    auto mark = Mark(next_mark_id++);
+    line->set_marked(mark);
+    m_valid_marks.set(mark);
 }
 #endif
 
@@ -237,6 +302,9 @@ void Terminal::SGR(Parameters params)
             case 7:
                 m_current_state.attribute.flags |= Attribute::Flags::Negative;
                 break;
+            case 8:
+                m_current_state.attribute.flags |= Attribute::Flags::Concealed;
+                break;
             case 22:
                 m_current_state.attribute.flags &= ~Attribute::Flags::Bold;
                 break;
@@ -251,6 +319,9 @@ void Terminal::SGR(Parameters params)
                 break;
             case 27:
                 m_current_state.attribute.flags &= ~Attribute::Flags::Negative;
+                break;
+            case 28:
+                m_current_state.attribute.flags &= ~Attribute::Flags::Concealed;
                 break;
             case 30:
             case 31:
@@ -715,7 +786,7 @@ void Terminal::linefeed()
     u16 new_row = cursor_row();
 #ifndef KERNEL
     if (!m_controls_are_logically_generated)
-        active_buffer()[new_row].set_terminated(m_column_before_carriage_return.value_or(cursor_column()));
+        active_buffer()[new_row]->set_terminated(m_column_before_carriage_return.value_or(cursor_column()));
 #endif
     if (cursor_row() == m_scroll_region_bottom) {
         scroll_up();
@@ -763,26 +834,26 @@ void Terminal::scroll_up(u16 region_top, u16 region_bottom, size_t count)
         auto remaining_lines = max_history_size() - history_size();
         history_delta = (count > remaining_lines) ? remaining_lines - count : 0;
         for (size_t i = 0; i < count; ++i)
-            add_line_to_history(move(active_buffer().ptr_at(region_top + i)));
+            add_line_to_history(move(active_buffer().at(region_top + i)));
     }
 
     // Move lines into their new place.
     for (u16 row = region_top; row + count <= region_bottom; ++row)
-        swap(active_buffer().ptr_at(row), active_buffer().ptr_at(row + count));
+        swap(active_buffer().at(row), active_buffer().at(row + count));
     // Clear 'new' lines at the bottom.
     if (should_move_to_scrollback) {
         // Since we moved the previous lines into history, we can't just clear them.
         for (u16 row = region_bottom + 1 - count; row <= region_bottom; ++row)
-            active_buffer().ptr_at(row) = make<Line>(columns());
+            active_buffer().at(row) = make<Line>(columns());
     } else {
         // The new lines haven't been moved and we don't want to leak memory.
         for (u16 row = region_bottom + 1 - count; row <= region_bottom; ++row)
-            active_buffer()[row].clear();
+            active_buffer()[row]->clear();
     }
     // Set dirty flag on swapped lines.
     // The other lines have implicitly been set dirty by being cleared.
-    for (u16 row = region_top; row <= region_bottom - count; ++row)
-        active_buffer()[row].set_dirty(true);
+    for (u16 row = region_top; row + count <= region_bottom; ++row)
+        active_buffer()[row]->set_dirty(true);
     m_client.terminal_history_changed(history_delta);
 }
 
@@ -800,14 +871,14 @@ void Terminal::scroll_down(u16 region_top, u16 region_bottom, size_t count)
 
     // Move lines into their new place.
     for (int row = region_bottom; row >= static_cast<int>(region_top + count); --row)
-        swap(active_buffer().ptr_at(row), active_buffer().ptr_at(row - count));
+        swap(active_buffer().at(row), active_buffer().at(row - count));
     // Clear the 'new' lines at the top.
     for (u16 row = region_top; row < region_top + count; ++row)
-        active_buffer()[row].clear();
+        active_buffer()[row]->clear();
     // Set dirty flag on swapped lines.
     // The other lines have implicitly been set dirty by being cleared.
     for (u16 row = region_top + count; row <= region_bottom; ++row)
-        active_buffer()[row].set_dirty(true);
+        active_buffer()[row]->set_dirty(true);
 }
 
 // Insert `count` blank cells at the end of the line. Text moves left.
@@ -820,9 +891,9 @@ void Terminal::scroll_left(u16 row, u16 column, size_t count)
 
     auto& line = active_buffer()[row];
     for (size_t i = column; i < columns() - count; ++i)
-        swap(line.cell_at(i), line.cell_at(i + count));
+        swap(line->cell_at(i), line->cell_at(i + count));
     clear_in_line(row, columns() - count, columns() - 1);
-    line.set_dirty(true);
+    line->set_dirty(true);
 }
 
 // Insert `count` blank cells after `row`. Text moves right.
@@ -835,9 +906,9 @@ void Terminal::scroll_right(u16 row, u16 column, size_t count)
 
     auto& line = active_buffer()[row];
     for (int i = columns() - 1; i >= static_cast<int>(column + count); --i)
-        swap(line.cell_at(i), line.cell_at(i - count));
+        swap(line->cell_at(i), line->cell_at(i - count));
     clear_in_line(row, column, column + count - 1);
-    line.set_dirty(true);
+    line->set_dirty(true);
 }
 
 void Terminal::put_character_at(unsigned row, unsigned column, u32 code_point)
@@ -845,10 +916,10 @@ void Terminal::put_character_at(unsigned row, unsigned column, u32 code_point)
     VERIFY(row < rows());
     VERIFY(column < columns());
     auto& line = active_buffer()[row];
-    line.set_code_point(column, code_point);
-    line.attribute_at(column) = m_current_state.attribute;
-    line.attribute_at(column).flags |= Attribute::Flags::Touched;
-    line.set_dirty(true);
+    line->set_code_point(column, code_point);
+    line->attribute_at(column) = m_current_state.attribute;
+    line->attribute_at(column).flags |= Attribute::Flags::Touched;
+    line->set_dirty(true);
 
     m_last_code_point = code_point;
 }
@@ -856,7 +927,7 @@ void Terminal::put_character_at(unsigned row, unsigned column, u32 code_point)
 void Terminal::clear_in_line(u16 row, u16 first_column, u16 last_column)
 {
     VERIFY(row < rows());
-    active_buffer()[row].clear_range(first_column, last_column);
+    active_buffer()[row]->clear_range(first_column, last_column, m_current_state.attribute);
 }
 #endif
 
@@ -941,14 +1012,14 @@ void Terminal::DECDC(Parameters params)
         scroll_left(row, cursor_column(), num);
 }
 
-void Terminal::DECPNM()
+void Terminal::DECKPNM()
 {
-    dbgln("FIXME: implement setting the keypad to numeric mode");
+    m_in_application_keypad_mode = false;
 }
 
-void Terminal::DECPAM()
+void Terminal::DECKPAM()
 {
-    dbgln("FIXME: implement setting the keypad to application mode");
+    m_in_application_keypad_mode = true;
 }
 
 void Terminal::DSR(Parameters params)
@@ -1081,10 +1152,10 @@ void Terminal::execute_escape_sequence(Intermediates intermediates, bool ignore,
             DECFI();
             return;
         case '=':
-            DECPAM();
+            DECKPAM();
             return;
         case '>':
-            DECPNM();
+            DECKPNM();
             return;
         }
         unimplemented_escape_sequence(intermediates, last_byte);
@@ -1248,7 +1319,7 @@ void Terminal::execute_osc_sequence(OscParameters parameters, u8 last_byte)
         return;
     }
 
-    auto command_number = stringview_ify(0).to_uint();
+    auto command_number = stringview_ify(0).to_number<unsigned>();
     if (!command_number.has_value()) {
         unimplemented_osc_sequence(parameters, last_byte);
         return;
@@ -1264,7 +1335,7 @@ void Terminal::execute_osc_sequence(OscParameters parameters, u8 last_byte)
             // FIXME: the split breaks titles containing semicolons.
             // Should we expose the raw OSC string from the parser? Or join by semicolon?
 #ifndef KERNEL
-            m_current_window_title = stringview_ify(1).to_string();
+            m_current_window_title = stringview_ify(1).to_byte_string();
             m_client.set_window_title(m_current_window_title);
 #endif
         }
@@ -1275,12 +1346,12 @@ void Terminal::execute_osc_sequence(OscParameters parameters, u8 last_byte)
             dbgln("Attempted to set href but gave too few parameters");
         } else if (parameters[1].is_empty() && parameters[2].is_empty()) {
             // Clear hyperlink
-            m_current_state.attribute.href = String();
-            m_current_state.attribute.href_id = String();
+            m_current_state.attribute.href = {};
+            m_current_state.attribute.href_id = {};
         } else {
             m_current_state.attribute.href = stringview_ify(2);
             // FIXME: Respect the provided ID
-            m_current_state.attribute.href_id = String::number(m_next_href_id++);
+            m_current_state.attribute.href_id = ByteString::number(m_next_href_id++);
         }
 #endif
         break;
@@ -1288,9 +1359,9 @@ void Terminal::execute_osc_sequence(OscParameters parameters, u8 last_byte)
         if (parameters.size() < 2)
             dbgln("Atttempted to set window progress but gave too few parameters");
         else if (parameters.size() == 2)
-            m_client.set_window_progress(stringview_ify(1).to_int().value_or(-1), 0);
+            m_client.set_window_progress(stringview_ify(1).to_number<int>().value_or(-1), 0);
         else
-            m_client.set_window_progress(stringview_ify(1).to_int().value_or(-1), stringview_ify(2).to_int().value_or(0));
+            m_client.set_window_progress(stringview_ify(1).to_number<int>().value_or(-1), stringview_ify(2).to_number<int>().value_or(0));
         break;
     default:
         unimplemented_osc_sequence(parameters, last_byte);
@@ -1327,6 +1398,7 @@ void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
     bool ctrl = flags & Mod_Ctrl;
     bool alt = flags & Mod_Alt;
     bool shift = flags & Mod_Shift;
+    bool keypad = flags & Mod_Keypad;
     unsigned modifier_mask = int(shift) + (int(alt) << 1) + (int(ctrl) << 2);
 
     auto emit_final_with_modifier = [this, modifier_mask](char final) {
@@ -1346,6 +1418,64 @@ void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
             MUST(builder.try_appendff("\e[{}~", num)); // StringBuilder's inline capacity of 256 is enough to guarantee no allocations
         emit_string(builder.string_view());
     };
+
+    auto emit_application_code = [this](KeyCode key) {
+        // The table providing mapping from numeric keys to application keys can be found at https://vt100.net/docs/vt100-ug/chapter3.html#T3-7
+        StringBuilder builder;
+        builder.append("\x1bO"sv);
+        switch (key) {
+        case KeyCode::Key_0:
+            builder.append('p');
+            break;
+        case KeyCode::Key_1:
+            builder.append('q');
+            break;
+        case KeyCode::Key_2:
+            builder.append('r');
+            break;
+        case KeyCode::Key_3:
+            builder.append('s');
+            break;
+        case KeyCode::Key_4:
+            builder.append('t');
+            break;
+        case KeyCode::Key_5:
+            builder.append('u');
+            break;
+        case KeyCode::Key_6:
+            builder.append('v');
+            break;
+        case KeyCode::Key_7:
+            builder.append('w');
+            break;
+        case KeyCode::Key_8:
+            builder.append('x');
+            break;
+        case KeyCode::Key_9:
+            builder.append('y');
+            break;
+        case KeyCode::Key_Minus:
+            builder.append('m');
+            break;
+        case KeyCode::Key_Comma:
+            builder.append('l');
+            break;
+        case KeyCode::Key_Period:
+            builder.append('n');
+            break;
+        case KeyCode::Key_Return:
+            builder.append('M');
+            break;
+        default:
+            break;
+        }
+        emit_string(builder.string_view());
+    };
+
+    if (keypad && m_in_application_keypad_mode) {
+        emit_application_code(key);
+        return;
+    }
 
     switch (key) {
     case KeyCode::Key_Up:
@@ -1378,6 +1508,17 @@ void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
     case KeyCode::Key_PageDown:
         emit_tilde_with_modifier(6);
         return;
+    case KeyCode::Key_Backspace:
+        if (ctrl) {
+            // This is an extension that allows Editor.cpp to delete whole words when
+            // Ctrl+Backspace is pressed. Ctrl cannot be transmitted without a CSI, and
+            // ANSI delete (127) is within the valid range for CSI codes in Editor.cpp.
+            // The code also has the same behavior as backspace when emitted with no CSI,
+            // though the backspace code (8) is preserved when Ctrl is not pressed.
+            emit_final_with_modifier(127);
+            return;
+        }
+        break;
     case KeyCode::Key_Return:
         // The standard says that CR should be generated by the return key.
         // The TTY will take care of translating it to CR LF for the terminal.
@@ -1400,11 +1541,25 @@ void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
     // Key event was not one of the above special cases,
     // attempt to treat it as a character...
     if (ctrl) {
-        if (code_point >= 'a' && code_point <= 'z') {
-            code_point = code_point - 'a' + 1;
-        } else if (code_point == '\\') {
-            code_point = 0x1c;
-        }
+        constexpr auto ESC = '\033';
+        constexpr auto NUL = 0;
+        constexpr auto DEL = 0x7f;
+
+        if (code_point >= '@' && code_point < DEL)
+            code_point &= 0x1f;
+        // Legacy aliases
+        else if (code_point == '2' || code_point == ' ')
+            // Ctrl+{2, Space, @, `} -> ^@ (NUL)
+            code_point = NUL;
+        else if (code_point >= '3' && code_point <= '7')
+            // Ctrl+3 -> ^[ (ESC), Ctrl+4 -> ^\, Ctrl+5 -> ^], Ctrl+6 -> ^^, Ctrl+7 -> ^_
+            code_point = ESC + (code_point - '3');
+        else if (code_point == '8')
+            // Ctrl+8 -> ^? (DEL)
+            code_point = DEL;
+        else if (code_point == '/')
+            // Ctrl+/ -> ^_
+            code_point = '_' & 0x1f;
     }
 
     // Alt modifier sends escape prefix.
@@ -1493,46 +1648,44 @@ void Terminal::set_size(u16 columns, u16 rows)
             if (forwards) {
                 for (size_t i = 1; i <= buffer.size(); ++i) {
                     auto is_at_seam = i == 1;
-                    auto next_line = is_at_seam ? nullptr : &buffer[buffer.size() - i + 1];
-                    auto& line = buffer[buffer.size() - i];
+                    Line* next_line = is_at_seam ? nullptr : buffer[buffer.size() - i + 1].ptr();
+                    Line* line = buffer[buffer.size() - i].ptr();
                     auto next_cursor = cursor_on_line(buffer.size() - i + 1);
-                    line.rewrap(columns, next_line, next_cursor ?: cursor_on_line(buffer.size() - i), !!next_cursor);
+                    line->rewrap(columns, next_line, next_cursor ?: cursor_on_line(buffer.size() - i), !!next_cursor);
                 }
             } else {
                 for (size_t i = 0; i < buffer.size(); ++i) {
                     auto is_at_seam = i + 1 == buffer.size();
-                    auto next_line = is_at_seam ? nullptr : &buffer[i + 1];
+                    Line* next_line = is_at_seam ? nullptr : buffer[i + 1].ptr();
                     auto next_cursor = cursor_on_line(i + 1);
-                    buffer[i].rewrap(columns, next_line, next_cursor ?: cursor_on_line(i), !!next_cursor);
+                    buffer[i]->rewrap(columns, next_line, next_cursor ?: cursor_on_line(i), !!next_cursor);
                 }
             }
 
             Queue<size_t> lines_to_reevaluate;
             for (size_t i = 0; i < buffer.size(); ++i) {
-                if (buffer[i].length() != columns)
+                if (buffer[i]->length() != columns)
                     lines_to_reevaluate.enqueue(i);
             }
-            size_t rows_inserted = 0;
             while (!lines_to_reevaluate.is_empty()) {
                 auto index = lines_to_reevaluate.dequeue();
                 auto is_at_seam = index + 1 == buffer.size();
-                auto next_line = is_at_seam ? nullptr : &buffer[index + 1];
-                auto& line = buffer[index];
+                Line* const next_line = is_at_seam ? nullptr : buffer[index + 1].ptr();
+                Line* const line = buffer[index].ptr();
                 auto next_cursor = cursor_on_line(index + 1);
-                line.rewrap(columns, next_line, next_cursor ?: cursor_on_line(index), !!next_cursor);
-                if (line.length() > columns) {
+                line->rewrap(columns, next_line, next_cursor ?: cursor_on_line(index), !!next_cursor);
+                if (line->length() > columns) {
                     auto current_cursor = cursor_on_line(index);
                     // Split the line into two (or more)
                     ++index;
-                    ++rows_inserted;
                     buffer.insert(index, make<Line>(0));
-                    VERIFY(buffer[index].length() == 0);
-                    line.rewrap(columns, &buffer[index], current_cursor, false);
+                    VERIFY(buffer[index]->length() == 0);
+                    line->rewrap(columns, buffer[index].ptr(), current_cursor, false);
                     // If we inserted a line and the old cursor was after that line, increment its row
                     if (!current_cursor && old_cursor.row >= index)
                         ++old_cursor.row;
 
-                    if (buffer[index].length() != columns)
+                    if (buffer[index]->length() != columns)
                         lines_to_reevaluate.enqueue(index);
                 }
                 if (next_line && next_line->length() != columns)
@@ -1541,7 +1694,7 @@ void Terminal::set_size(u16 columns, u16 rows)
         }
 
         for (auto& line : buffer)
-            line.set_length(columns);
+            line->set_length(columns);
 
         return old_cursor;
     };
@@ -1554,8 +1707,8 @@ void Terminal::set_size(u16 columns, u16 rows)
         while (extra_lines > 0) {
             if (m_history.size() <= cursor_tracker.row)
                 break;
-            if (m_history.last().is_empty()) {
-                if (m_history.size() >= 2 && m_history[m_history.size() - 2].termination_column().has_value())
+            if (m_history.last()->is_empty()) {
+                if (m_history.size() >= 2 && m_history[m_history.size() - 2]->termination_column().has_value())
                     break;
                 --extra_lines;
                 (void)m_history.take_last();
@@ -1626,7 +1779,7 @@ void Terminal::set_size(u16 columns, u16 rows)
 void Terminal::invalidate_cursor()
 {
     if (cursor_row() < active_buffer().size())
-        active_buffer()[cursor_row()].set_dirty(true);
+        active_buffer()[cursor_row()]->set_dirty(true);
 }
 
 Attribute Terminal::attribute_at(Position const& position) const

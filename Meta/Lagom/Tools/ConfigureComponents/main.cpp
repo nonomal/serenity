@@ -4,15 +4,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteString.h>
 #include <AK/Format.h>
 #include <AK/LexicalPath.h>
 #include <AK/QuickSort.h>
 #include <AK/Result.h>
-#include <AK/String.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
 #include <LibCore/ConfigFile.h>
-#include <LibCore/File.h>
+#include <LibFileSystem/FileSystem.h>
 #include <spawn.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
@@ -25,18 +25,18 @@ enum class ComponentCategory {
 };
 
 struct ComponentData {
-    String name;
-    String description;
+    ByteString name;
+    ByteString description;
     ComponentCategory category { ComponentCategory::Optional };
     bool was_selected { false };
-    Vector<String> dependencies;
+    Vector<ByteString> dependencies;
     bool is_selected { false };
 };
 
 struct WhiptailOption {
-    String tag;
-    String name;
-    String description;
+    ByteString tag;
+    ByteString name;
+    ByteString description;
     bool checked { false };
 };
 
@@ -77,7 +77,7 @@ static Vector<ComponentData> read_component_data(Core::ConfigFile const& config_
     return components;
 }
 
-static Result<Vector<String>, int> run_whiptail(WhiptailMode mode, Vector<WhiptailOption> const& options, StringView title, StringView description)
+static Result<Vector<ByteString>, int> run_whiptail(WhiptailMode mode, Vector<WhiptailOption> const& options, StringView title, StringView description)
 {
     struct winsize w;
     if (ioctl(0, TIOCGWINSZ, &w) < 0) {
@@ -97,7 +97,7 @@ static Result<Vector<String>, int> run_whiptail(WhiptailMode mode, Vector<Whipta
     int read_fd = pipefd[0];
     int write_fd = pipefd[1];
 
-    Vector<String> arguments = { "whiptail", "--notags", "--separate-output", "--output-fd", String::number(write_fd) };
+    Vector<ByteString> arguments = { "whiptail", "--notags", "--separate-output", "--output-fd", ByteString::number(write_fd) };
 
     if (!title.is_empty()) {
         arguments.append("--title");
@@ -116,13 +116,13 @@ static Result<Vector<String>, int> run_whiptail(WhiptailMode mode, Vector<Whipta
     }
 
     if (description.is_empty())
-        arguments.append(String::empty());
+        arguments.append(ByteString::empty());
     else
-        arguments.append(String::formatted("\n {}", description));
+        arguments.append(ByteString::formatted("\n {}", description));
 
-    arguments.append(String::number(height));
-    arguments.append(String::number(width));
-    arguments.append(String::number(height - 9));
+    arguments.append(ByteString::number(height));
+    arguments.append(ByteString::number(width));
+    arguments.append(ByteString::number(height - 9));
 
     // Check how wide the name field needs to be.
     size_t max_name_width = 0;
@@ -133,7 +133,7 @@ static Result<Vector<String>, int> run_whiptail(WhiptailMode mode, Vector<Whipta
 
     for (auto& option : options) {
         arguments.append(option.tag);
-        arguments.append(String::formatted("{:{2}}    {}", option.name, option.description, max_name_width));
+        arguments.append(ByteString::formatted("{:{2}}    {}", option.name, option.description, max_name_width));
         if (mode == WhiptailMode::Checklist)
             arguments.append(option.checked ? "1" : "0");
     }
@@ -151,7 +151,7 @@ static Result<Vector<String>, int> run_whiptail(WhiptailMode mode, Vector<Whipta
         return -1;
     }
 
-    auto full_term_variable = String::formatted("TERM={}", term_variable);
+    auto full_term_variable = ByteString::formatted("TERM={}", term_variable);
     auto colors = "NEWT_COLORS=root=,black\ncheckbox=black,lightgray";
 
     char* env[3];
@@ -192,13 +192,20 @@ static Result<Vector<String>, int> run_whiptail(WhiptailMode mode, Vector<Whipta
         return return_code;
     }
 
-    auto file = Core::File::construct();
-    file->open(read_fd, Core::OpenMode::ReadOnly, Core::File::ShouldCloseFileDescriptor::Yes);
-    auto data = String::copy(file->read_all());
-    return data.split('\n', false);
+    auto file_or_error = Core::File::adopt_fd(read_fd, Core::File::OpenMode::Read);
+    if (file_or_error.is_error()) {
+        warnln("\e[31mError:\e[0m Could not adopt file descriptor for reading: {}", file_or_error.error());
+        return -1;
+    }
+    auto data_or_error = file_or_error.value()->read_until_eof();
+    if (data_or_error.is_error()) {
+        warnln("\e[31mError:\e[0m Could not read data from file descriptor: {}", data_or_error.error());
+        return -1;
+    }
+    return ByteString::copy(data_or_error.value()).split('\n');
 }
 
-static bool run_system_command(String const& command, StringView command_name)
+static bool run_system_command(ByteString const& command, StringView command_name)
 {
     if (command.starts_with("cmake"sv))
         warnln("\e[34mRunning CMake...\e[0m");
@@ -224,17 +231,17 @@ int main()
         return 1;
     }
 
-    auto current_working_directory = Core::File::current_working_directory();
-    if (current_working_directory.is_null())
+    auto current_working_directory = FileSystem::current_working_directory();
+    if (current_working_directory.is_error())
         return 1;
-    auto lexical_cwd = LexicalPath(current_working_directory);
+    auto lexical_cwd = LexicalPath(current_working_directory.release_value());
     auto& parts = lexical_cwd.parts_view();
     if (parts.size() < 2 || parts[parts.size() - 2] != "Build") {
         warnln("\e[31mError:\e[0m This program needs to be executed from inside 'Build/*'.");
         return 1;
     }
 
-    if (!Core::File::exists("components.ini")) {
+    if (!FileSystem::exists("components.ini"sv)) {
         warnln("\e[31mError:\e[0m There is no 'components.ini' in the current working directory.");
         warnln("       It can be generated by running CMake with 'cmake ../.. -G Ninja'");
         return 1;
@@ -274,7 +281,7 @@ int main()
     StringView build_type = customize ? type.substring_view(7) : type.view();
 
     // Step 4: Customize the configuration if the user requested to. In any case, set the components component.is_selected value correctly.
-    Vector<String> activated_components;
+    Vector<ByteString> activated_components;
 
     if (customize) {
         Vector<WhiptailOption> options;
@@ -290,7 +297,7 @@ int main()
             }
 
             // NOTE: Required components will always be preselected.
-            WhiptailOption option { component.name, component.name, description_builder.to_string(), is_required };
+            WhiptailOption option { component.name, component.name, description_builder.to_byte_string(), is_required };
             if (build_type == "REQUIRED") {
                 // noop
             } else if (build_type == "RECOMMENDED") {
@@ -336,13 +343,13 @@ int main()
     }
 
     // Step 5: Generate the cmake command.
-    Vector<String> cmake_arguments = { "cmake", "../..", "-G", "Ninja", "-DBUILD_EVERYTHING=OFF" };
+    Vector<ByteString> cmake_arguments = { "cmake", "../..", "-G", "Ninja", "-DBUILD_EVERYTHING=OFF" };
     for (auto& component : components)
-        cmake_arguments.append(String::formatted("-DBUILD_{}={}", component.name.to_uppercase(), component.is_selected ? "ON" : "OFF"));
+        cmake_arguments.append(ByteString::formatted("-DBUILD_{}={}", component.name.to_uppercase(), component.is_selected ? "ON" : "OFF"));
 
     warnln("\e[34mThe following command will be run:\e[0m");
-    outln("{} \\", String::join(' ', cmake_arguments));
-    outln("  && ninja clean\n  && rm -rf Root");
+    outln("ninja clean \\\n  && rm -rf Root \\");
+    outln("  && {}", ByteString::join(' ', cmake_arguments));
     warn("\e[34mDo you want to run the command?\e[0m [Y/n] ");
     auto character = getchar();
     if (character == 'n' || character == 'N') {
@@ -350,13 +357,13 @@ int main()
         return 0;
     }
 
-    // Step 6: Run CMake, 'ninja clean' and 'rm -rf Root'
-    auto command = String::join(' ', cmake_arguments);
-    if (!run_system_command(command, "CMake"sv))
-        return 1;
+    // Step 6: Run 'ninja clean', 'rm -rf Root' and CMake
+    auto command = ByteString::join(' ', cmake_arguments);
     if (!run_system_command("ninja clean"sv, "Ninja"sv))
         return 1;
     if (!run_system_command("rm -rf Root"sv, "rm"sv))
+        return 1;
+    if (!run_system_command(command, "CMake"sv))
         return 1;
     return 0;
 }

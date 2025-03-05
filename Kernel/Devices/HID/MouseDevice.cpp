@@ -1,17 +1,34 @@
 /*
- * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2021-2023, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/Devices/HID/HIDManagement.h>
+#include <Kernel/API/MajorNumberAllocation.h>
+#include <Kernel/Devices/Device.h>
+#include <Kernel/Devices/HID/Management.h>
 #include <Kernel/Devices/HID/MouseDevice.h>
 
 namespace Kernel {
 
-MouseDevice::MouseDevice()
-    : HIDDevice(10, HIDManagement::the().generate_minor_device_number_for_mouse())
+ErrorOr<NonnullRefPtr<MouseDevice>> MouseDevice::try_to_initialize()
 {
+    return TRY(Device::try_create_device<MouseDevice>());
+}
+
+MouseDevice::MouseDevice()
+    : HIDDevice(MajorAllocation::CharacterDeviceFamily::Mouse, HIDManagement::the().generate_minor_device_number_for_mouse())
+{
+}
+
+void MouseDevice::handle_mouse_packet_input_event(MousePacket packet)
+{
+    m_entropy_source.add_random_event(packet);
+    {
+        SpinlockLocker lock(m_queue_lock);
+        m_queue.enqueue(packet);
+    }
+    evaluate_block_conditions();
 }
 
 MouseDevice::~MouseDevice() = default;
@@ -30,18 +47,15 @@ ErrorOr<size_t> MouseDevice::read(OpenFileDescription&, u64, UserOrKernelBuffer&
     SpinlockLocker lock(m_queue_lock);
     while (!m_queue.is_empty() && remaining_space_in_buffer) {
         auto packet = m_queue.dequeue();
-        lock.unlock();
 
         dbgln_if(MOUSE_DEBUG, "Mouse Read: Buttons {:x}", packet.buttons);
-        dbgln_if(MOUSE_DEBUG, "PS2 Mouse: X {}, Y {}, Z {}, W {}, Relative {}", packet.x, packet.y, packet.z, packet.w, packet.buttons);
-        dbgln_if(MOUSE_DEBUG, "PS2 Mouse Read: Filter packets");
+        dbgln_if(MOUSE_DEBUG, "Mouse: X {}, Y {}, Z {}, W {}, Relative {}", packet.x, packet.y, packet.z, packet.w, packet.buttons);
+        dbgln_if(MOUSE_DEBUG, "Mouse Read: Filter packets");
 
         size_t bytes_read_from_packet = min(remaining_space_in_buffer, sizeof(MousePacket));
         TRY(buffer.write(&packet, nread, bytes_read_from_packet));
         nread += bytes_read_from_packet;
         remaining_space_in_buffer -= bytes_read_from_packet;
-
-        lock.lock();
     }
     return nread;
 }

@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/Types.h>
 #include <AK/Vector.h>
 
@@ -34,7 +34,7 @@ public:
     }
 
     Kind kind() const { return m_kind; }
-    String const& key() const
+    ByteString const& key() const
     {
         VERIFY(m_kind == Kind::Key);
         return m_key;
@@ -46,13 +46,13 @@ public:
         return m_index;
     }
 
-    String to_string() const
+    ByteString to_byte_string() const
     {
         switch (m_kind) {
         case Kind::Key:
             return key();
         case Kind::Index:
-            return String::number(index());
+            return ByteString::number(index());
         default:
             return "*";
         }
@@ -75,14 +75,10 @@ public:
         }
         return false;
     }
-    bool operator!=(JsonPathElement const& other) const
-    {
-        return !(*this == other);
-    }
 
 private:
     Kind m_kind;
-    String m_key;
+    ByteString m_key;
     size_t m_index { 0 };
 
     JsonPathElement(Kind kind)
@@ -93,11 +89,14 @@ private:
 
 class JsonPath : public Vector<JsonPathElement> {
 public:
-    JsonValue resolve(JsonValue const&) const;
-    String to_string() const;
+    JsonValue resolve(JsonValue const& root) const { return MUST(try_resolve(root)); }
+    ErrorOr<JsonValue> try_resolve(JsonValue const&) const;
+    ByteString to_byte_string() const;
 };
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::JsonPath;
 using AK::JsonPathElement;
+#endif

@@ -25,6 +25,9 @@ public:
     virtual bool is_navigatable(u64 token) const override;
 
     virtual Syntax::Language language() const override { return Syntax::Language::Cpp; }
+    virtual Optional<StringView> comment_prefix() const override { return "//"sv; }
+    virtual Optional<StringView> comment_suffix() const override { return {}; }
+
     virtual void rehighlight(Palette const&) override;
 
     void update_tokens_info(Vector<CodeComprehension::TokenInfo>);
@@ -32,15 +35,15 @@ public:
     virtual bool is_cpp_semantic_highlighter() const override { return true; }
 
 protected:
-    virtual Vector<MatchingTokenPair> matching_token_pairs_impl() const override { return m_simple_syntax_highlighter.matching_token_pairs_impl(); };
-    virtual bool token_types_equal(u64 token1, u64 token2) const override { return m_simple_syntax_highlighter.token_types_equal(token1, token2); };
+    virtual Vector<MatchingTokenPair> matching_token_pairs_impl() const override { return m_simple_syntax_highlighter.matching_token_pairs_impl(); }
+    virtual bool token_types_equal(u64 token1, u64 token2) const override { return m_simple_syntax_highlighter.token_types_equal(token1, token2); }
 
 private:
     void update_spans(Vector<CodeComprehension::TokenInfo> const&, Gfx::Palette const&);
 
     Cpp::SyntaxHighlighter m_simple_syntax_highlighter;
     Vector<CodeComprehension::TokenInfo> m_tokens_info;
-    String m_saved_tokens_text;
+    ByteString m_saved_tokens_text;
     Vector<Token> m_saved_tokens;
     Threading::Mutex m_lock;
 };

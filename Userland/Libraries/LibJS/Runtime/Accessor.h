@@ -14,16 +14,13 @@
 namespace JS {
 
 class Accessor final : public Cell {
-public:
-    static Accessor* create(VM& vm, FunctionObject* getter, FunctionObject* setter)
-    {
-        return vm.heap().allocate_without_global_object<Accessor>(getter, setter);
-    }
+    JS_CELL(Accessor, Cell);
+    JS_DECLARE_ALLOCATOR(Accessor);
 
-    Accessor(FunctionObject* getter, FunctionObject* setter)
-        : m_getter(getter)
-        , m_setter(setter)
+public:
+    static NonnullGCPtr<Accessor> create(VM& vm, FunctionObject* getter, FunctionObject* setter)
     {
+        return vm.heap().allocate_without_realm<Accessor>(getter, setter);
     }
 
     FunctionObject* getter() const { return m_getter; }
@@ -34,15 +31,20 @@ public:
 
     void visit_edges(Cell::Visitor& visitor) override
     {
+        Base::visit_edges(visitor);
         visitor.visit(m_getter);
         visitor.visit(m_setter);
     }
 
 private:
-    StringView class_name() const override { return "Accessor"sv; };
+    Accessor(FunctionObject* getter, FunctionObject* setter)
+        : m_getter(getter)
+        , m_setter(setter)
+    {
+    }
 
-    FunctionObject* m_getter { nullptr };
-    FunctionObject* m_setter { nullptr };
+    GCPtr<FunctionObject> m_getter;
+    GCPtr<FunctionObject> m_setter;
 };
 
 }

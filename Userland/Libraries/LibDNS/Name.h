@@ -7,20 +7,21 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Forward.h>
-#include <AK/String.h>
 
 namespace DNS {
 
 class Name {
 public:
     Name() = default;
-    Name(String const&);
+    Name(ByteString const&);
 
-    static Name parse(u8 const* data, size_t& offset, size_t max_offset, size_t recursion_level = 0);
+    static ErrorOr<Name> parse(ReadonlyBytes data, size_t& offset, size_t recursion_level = 0);
 
     size_t serialized_size() const;
-    String const& as_string() const { return m_name; }
+    ByteString const& as_string() const { return m_name; }
+    ErrorOr<void> write_to_stream(Stream&) const;
 
     void randomize_case();
 
@@ -33,10 +34,8 @@ public:
     };
 
 private:
-    String m_name;
+    ByteString m_name;
 };
-
-OutputStream& operator<<(OutputStream& stream, Name const&);
 
 }
 

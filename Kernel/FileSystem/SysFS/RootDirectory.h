@@ -21,7 +21,7 @@ public:
 private:
     virtual bool is_root_directory() const override final { return true; }
     SysFSRootDirectory();
-    RefPtr<SysFSBusDirectory> m_buses_directory;
+    NonnullRefPtr<SysFSBusDirectory> const m_buses_directory;
 };
 
 }

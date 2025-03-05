@@ -6,7 +6,7 @@
  */
 
 #include "GraphWidget.h"
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/Font/Font.h>
@@ -59,7 +59,7 @@ void GraphWidget::paint_event(GUI::PaintEvent& event)
             auto const& background_color = line_color.with_alpha(0x7f);
             m_calculated_points.clear_with_capacity();
             for (size_t i = 0; i < m_values.size(); i++) {
-                int x = inner_rect.right() - (i * 2) + 1;
+                int x = inner_rect.right() - i * 2;
                 if (x < 0)
                     break;
                 auto const& current_values = m_values.at(m_values.size() - i - 1);
@@ -74,7 +74,7 @@ void GraphWidget::paint_event(GUI::PaintEvent& event)
                         value += current_values[l];
                 }
                 float scaled_value = value * scale;
-                Gfx::IntPoint current_point { x, inner_rect.bottom() - (int)scaled_value };
+                Gfx::IntPoint current_point { x, inner_rect.bottom() - 1 - (int)scaled_value };
                 m_calculated_points.append(current_point);
             }
             VERIFY(m_calculated_points.size() <= m_values.size());
@@ -91,14 +91,14 @@ void GraphWidget::paint_event(GUI::PaintEvent& event)
                     if (points_in_path > 1) {
                         VERIFY(current_point);
                         VERIFY(first_point);
-                        path.line_to({ current_point->x() - 1, inner_rect.bottom() + 1 });
-                        path.line_to({ first_point->x() + 1, inner_rect.bottom() + 1 });
+                        path.line_to({ current_point->x() - 1, inner_rect.bottom() });
+                        path.line_to({ first_point->x() + 1, inner_rect.bottom() });
                         path.close();
-                        painter.fill_path(path, background_color, Gfx::Painter::WindingRule::EvenOdd);
+                        painter.fill_path(path, background_color, Gfx::WindingRule::EvenOdd);
                     } else if (points_in_path == 1 && current_point) {
                         // Can't fill any area, we only have one data point.
                         // Just draw a vertical line as a "fill"...
-                        painter.draw_line(*current_point, { current_point->x(), inner_rect.bottom() }, background_color);
+                        painter.draw_line(*current_point, { current_point->x(), inner_rect.bottom() - 1 }, background_color);
                     }
                     path = {};
                     points_in_path = 0;
@@ -150,7 +150,7 @@ void GraphWidget::paint_event(GUI::PaintEvent& event)
                 continue;
             auto constrain_rect = inner_rect.shrunken(8, 8);
             auto text_rect = constrain_rect.translated(0, y).intersected(constrain_rect);
-            text_rect.set_height(font().glyph_height());
+            text_rect.set_height(font().pixel_size_rounded_up());
             auto text = format.text_formatter(current_values[i]);
             if (format.text_shadow_color != Color::Transparent)
                 painter.draw_text(text_rect.translated(1, 1), text, Gfx::TextAlignment::CenterRight, format.text_shadow_color);

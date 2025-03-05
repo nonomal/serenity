@@ -17,14 +17,12 @@
 #include <LibGUI/Painter.h>
 #include <LibGUI/Process.h>
 #include <LibGfx/Palette.h>
+#include <LibLocale/DateTimeFormat.h>
+#include <LibLocale/Locale.h>
 #include <LibTimeZone/TimeZone.h>
-#include <LibUnicode/DateTimeFormat.h>
-#include <LibUnicode/Locale.h>
 #include <math.h>
 #include <spawn.h>
 #include <unistd.h>
-
-using StringViewListModel = GUI::ItemListModel<StringView, Span<StringView const>>;
 
 static constexpr auto PI_OVER_180 = M_PIf32 / 180.0f;
 static constexpr auto PI_OVER_4 = M_PIf32 / 4.0f;
@@ -40,32 +38,49 @@ static constexpr auto TIME_ZONE_TEXT_HEIGHT = 40;
 static constexpr auto TIME_ZONE_TEXT_PADDING = 5;
 static constexpr auto TIME_ZONE_TEXT_COLOR = Gfx::Color::from_rgb(0xeaf688);
 
+ErrorOr<NonnullRefPtr<TimeZoneSettingsWidget>> TimeZoneSettingsWidget::create()
+{
+    auto timezonesettings_widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) TimeZoneSettingsWidget));
+
+    auto time_zone_map_bitmap = TRY(Gfx::Bitmap::load_from_file("/res/graphics/map.png"sv));
+    auto time_zone_rect = time_zone_map_bitmap->rect().shrunken(TIME_ZONE_MAP_NORTHERN_TRIM, 0, TIME_ZONE_MAP_SOUTHERN_TRIM, 0);
+    time_zone_map_bitmap = TRY(time_zone_map_bitmap->cropped(time_zone_rect));
+
+    timezonesettings_widget->m_time_zone_map = *timezonesettings_widget->find_descendant_of_type_named<GUI::ImageWidget>("time_zone_map");
+    timezonesettings_widget->m_time_zone_map->set_bitmap(time_zone_map_bitmap);
+
+    auto time_zone_marker = TRY(Gfx::Bitmap::load_from_file("/res/icons/32x32/ladyball.png"sv));
+    timezonesettings_widget->m_time_zone_marker = TRY(time_zone_marker->scaled(0.75f, 0.75f));
+
+    timezonesettings_widget->set_time_zone_location();
+
+    return timezonesettings_widget;
+}
+
 TimeZoneSettingsWidget::TimeZoneSettingsWidget()
 {
-    load_from_gml(time_zone_settings_widget_gml);
+    load_from_gml(time_zone_settings_widget_gml).release_value_but_fixme_should_propagate_errors();
 
-    static auto time_zones = TimeZone::all_time_zones();
+    static auto time_zones = []() {
+        Vector<StringView> time_zones;
+
+        for (auto const& time_zone : TimeZone::all_time_zones()) {
+            if (time_zone.is_link == TimeZone::IsLink::No)
+                time_zones.append(time_zone.name);
+        }
+
+        return time_zones;
+    }();
+
     m_time_zone = TimeZone::system_time_zone();
 
     m_time_zone_combo_box = *find_descendant_of_type_named<GUI::ComboBox>("time_zone_input");
     m_time_zone_combo_box->set_only_allow_values_from_model(true);
-    m_time_zone_combo_box->set_model(*StringViewListModel::create(time_zones));
+    m_time_zone_combo_box->set_model(*GUI::ItemListModel<StringView>::create(time_zones));
     m_time_zone_combo_box->set_text(m_time_zone);
     m_time_zone_combo_box->on_change = [&](auto, auto) {
         set_modified(true);
     };
-
-    auto time_zone_map_bitmap = Gfx::Bitmap::try_load_from_file("/res/graphics/map.png"sv).release_value_but_fixme_should_propagate_errors();
-    auto time_zone_rect = time_zone_map_bitmap->rect().shrunken(TIME_ZONE_MAP_NORTHERN_TRIM, 0, TIME_ZONE_MAP_SOUTHERN_TRIM, 0);
-    time_zone_map_bitmap = time_zone_map_bitmap->cropped(time_zone_rect).release_value_but_fixme_should_propagate_errors();
-
-    m_time_zone_map = *find_descendant_of_type_named<GUI::ImageWidget>("time_zone_map");
-    m_time_zone_map->set_bitmap(time_zone_map_bitmap);
-
-    auto time_zone_marker = Gfx::Bitmap::try_load_from_file("/res/icons/32x32/ladyball.png"sv).release_value_but_fixme_should_propagate_errors();
-    m_time_zone_marker = time_zone_marker->scaled(0.75f, 0.75f).release_value_but_fixme_should_propagate_errors();
-
-    set_time_zone_location();
 }
 
 void TimeZoneSettingsWidget::second_paint_event(GUI::PaintEvent& event)
@@ -125,13 +140,13 @@ void TimeZoneSettingsWidget::set_time_zone_location()
 {
     m_time_zone_location = compute_time_zone_location();
 
-    auto locale = Unicode::default_locale();
-    auto now = AK::Time::now_realtime();
+    auto locale = Locale::default_locale();
+    auto now = AK::UnixDateTime::now();
 
-    auto name = Unicode::format_time_zone(locale, m_time_zone, Unicode::CalendarPatternStyle::Long, now);
-    auto offset = Unicode::format_time_zone(locale, m_time_zone, Unicode::CalendarPatternStyle::LongOffset, now);
+    auto name = Locale::format_time_zone(locale, m_time_zone, Locale::CalendarPatternStyle::Long, now);
+    auto offset = Locale::format_time_zone(locale, m_time_zone, Locale::CalendarPatternStyle::LongOffset, now);
 
-    m_time_zone_text = String::formatted("{}\n({})", name, offset);
+    m_time_zone_text = ByteString::formatted("{}\n({})", name, offset);
 }
 
 // https://en.wikipedia.org/wiki/Mercator_projection#Derivation

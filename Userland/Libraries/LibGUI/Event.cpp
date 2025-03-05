@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -12,17 +12,29 @@
 
 namespace GUI {
 
-DropEvent::DropEvent(Gfx::IntPoint const& position, String const& text, NonnullRefPtr<Core::MimeData> mime_data)
-    : Event(Event::Drop)
+DropEvent::DropEvent(Type type, Gfx::IntPoint position, MouseButton button, u32 buttons, u32 modifiers, ByteString const& text, NonnullRefPtr<Core::MimeData const> mime_data)
+    : Event(type)
     , m_position(position)
+    , m_button(button)
+    , m_buttons(buttons)
+    , m_modifiers(modifiers)
     , m_text(text)
     , m_mime_data(move(mime_data))
 {
 }
 
-String KeyEvent::to_string() const
+DropEvent::~DropEvent() = default;
+
+DragEvent::DragEvent(Type type, Gfx::IntPoint position, MouseButton button, u32 buttons, u32 modifiers, ByteString const& text, NonnullRefPtr<Core::MimeData const> mime_data)
+    : DropEvent(type, position, button, buttons, modifiers, text, move(mime_data))
 {
-    Vector<String, 8> parts;
+}
+
+DragEvent::~DragEvent() = default;
+
+ByteString KeyEvent::to_byte_string() const
+{
+    Vector<ByteString, 8> parts;
 
     if (m_modifiers & Mod_Ctrl)
         parts.append("Ctrl");
@@ -44,7 +56,7 @@ String KeyEvent::to_string() const
         if (i != parts.size() - 1)
             builder.append('+');
     }
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
 ActionEvent::ActionEvent(Type type, Action& action)
@@ -52,5 +64,7 @@ ActionEvent::ActionEvent(Type type, Action& action)
     , m_action(action)
 {
 }
+
+ActionEvent::~ActionEvent() = default;
 
 }

@@ -11,6 +11,7 @@
 
 #include "Music.h"
 #include <LibDSP/Keyboard.h>
+#include <LibGUI/StackWidget.h>
 #include <LibGUI/Widget.h>
 
 class AudioPlayerLoop;
@@ -19,28 +20,33 @@ class WaveWidget;
 class RollWidget;
 class SamplerWidget;
 class KeysWidget;
-class KnobsWidget;
+class TrackControlsWidget;
 class PlayerWidget;
 
 class MainWidget final : public GUI::Widget {
-    C_OBJECT(MainWidget)
+    C_OBJECT_ABSTRACT(MainWidget)
 public:
+    static ErrorOr<NonnullRefPtr<MainWidget>> try_create(TrackManager&, AudioPlayerLoop&);
     virtual ~MainWidget() override = default;
 
-    void add_track_actions(GUI::Menu&);
+    ErrorOr<void> add_track_actions(GUI::Menu&);
 
-    void set_octave_and_ensure_note_change(DSP::Keyboard::Direction);
-    void set_octave_and_ensure_note_change(int);
+    void change_octave_via_keys(DSP::Keyboard::Direction);
+    void set_octave_via_slider(int octave);
+    void update_selected_track();
+    ErrorOr<void> add_controls_for_current_track();
 
 private:
     explicit MainWidget(TrackManager&, AudioPlayerLoop&);
+
+    ErrorOr<void> initialize();
 
     virtual void keydown_event(GUI::KeyEvent&) override;
     virtual void keyup_event(GUI::KeyEvent&) override;
     virtual void custom_event(Core::CustomEvent&) override;
 
-    void note_key_action(int key_code, DSP::Keyboard::Switch);
-    void special_key_action(int key_code);
+    bool note_key_action(int key_code, DSP::Keyboard::Switch);
+    bool special_key_action(int key_code);
 
     void turn_off_pressed_keys();
     void turn_on_pressed_keys();
@@ -54,8 +60,14 @@ private:
     RefPtr<GUI::TabWidget> m_tab_widget;
     RefPtr<GUI::Widget> m_keys_and_knobs_container;
     RefPtr<KeysWidget> m_keys_widget;
-    RefPtr<KnobsWidget> m_knobs_widget;
+    RefPtr<GUI::StackWidget> m_knobs_widget;
+    Vector<NonnullRefPtr<TrackControlsWidget>> m_track_controls;
     RefPtr<PlayerWidget> m_player_widget;
+
+    RefPtr<GUI::Widget> m_octave_container;
+    RefPtr<GUI::Slider> m_octave_knob;
+    RefPtr<GUI::Label> m_octave_value;
+    bool m_octave_change_in_progress { false };
 
     // Not the piano keys, but the computer keyboard keys!
     bool m_keys_pressed[key_code_count] { false };

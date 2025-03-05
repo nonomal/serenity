@@ -10,11 +10,12 @@
 
 extern "C" int LLVMFuzzerTestOneInput(uint8_t const* data, size_t size)
 {
+    AK::set_debug_enabled(false);
     auto zip_file = Archive::Zip::try_create({ data, size });
     if (!zip_file.has_value())
         return 0;
 
-    zip_file->for_each_member([](auto&) {
+    (void)zip_file->for_each_member([](auto&) {
         return IterationDecision::Continue;
     });
 

@@ -20,8 +20,8 @@ class ComboBox : public Frame {
 public:
     virtual ~ComboBox() override;
 
-    String text() const;
-    void set_text(String const&, AllowCallback = AllowCallback::Yes);
+    ByteString text() const;
+    void set_text(ByteString const&, AllowCallback = AllowCallback::Yes);
 
     void open();
     void close();
@@ -42,9 +42,12 @@ public:
     void set_model_column(int);
 
     void set_editor_placeholder(StringView placeholder);
-    String const& editor_placeholder() const;
+    ByteString const& editor_placeholder() const;
 
-    Function<void(String const&, ModelIndex const&)> on_change;
+    int max_visible_items() const { return m_max_visible_items; }
+    void set_max_visible_items(int max) { m_max_visible_items = max; }
+
+    Function<void(ByteString const&, ModelIndex const&)> on_change;
     Function<void()> on_return_pressed;
 
 protected:
@@ -63,6 +66,7 @@ private:
     Optional<ModelIndex> m_selected_index;
     bool m_only_allow_values_from_model { false };
     bool m_updating_model { false };
+    int m_max_visible_items { 15 };
 };
 
 }

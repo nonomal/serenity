@@ -67,3 +67,19 @@ describe("normal behavior", () => {
         expect(o.foo).toBe("bar");
     });
 });
+
+test("does not override frozen function name", () => {
+    const func = Object.freeze(function () {
+        return 12;
+    });
+    const obj = Object.freeze({ name: func });
+    expect(obj.name()).toBe(12);
+});
+
+test("freeze with huge number of properties doesn't crash", () => {
+    const o = {};
+    for (let i = 0; i < 50_000; ++i) {
+        o["prop" + i] = 1;
+    }
+    Object.freeze(o);
+});

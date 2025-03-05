@@ -6,89 +6,89 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Forward.h>
-#include <AK/NonnullOwnPtrVector.h>
-#include <AK/String.h>
-#include <AK/URL.h>
+#include <AK/NonnullOwnPtr.h>
+#include <LibURL/URL.h>
 
 namespace Gemini {
 
 class Line {
 public:
-    Line(String string)
+    Line(ByteString string)
         : m_text(move(string))
     {
     }
 
     virtual ~Line() = default;
 
-    virtual String render_to_html() const = 0;
+    virtual ByteString render_to_html() const = 0;
 
 protected:
-    String m_text;
+    ByteString m_text;
 };
 
 class Document : public RefCounted<Document> {
 public:
-    String render_to_html() const;
+    ByteString render_to_html() const;
 
-    static NonnullRefPtr<Document> parse(StringView source, const URL&);
+    static NonnullRefPtr<Document> parse(StringView source, const URL::URL&);
 
-    const URL& url() const { return m_url; };
+    const URL::URL& url() const { return m_url; }
 
 private:
-    explicit Document(const URL& url)
+    explicit Document(const URL::URL& url)
         : m_url(url)
     {
     }
 
     void read_lines(StringView);
 
-    NonnullOwnPtrVector<Line> m_lines;
-    URL m_url;
+    Vector<NonnullOwnPtr<Line>> m_lines;
+    URL::URL m_url;
     bool m_inside_preformatted_block { false };
     bool m_inside_unordered_list { false };
 };
 
 class Text : public Line {
 public:
-    Text(String line)
+    Text(ByteString line)
         : Line(move(line))
     {
     }
     virtual ~Text() override = default;
-    virtual String render_to_html() const override;
+    virtual ByteString render_to_html() const override;
 };
 
 class Link : public Line {
 public:
-    Link(String line, Document const&);
+    Link(ByteString line, Document const&);
     virtual ~Link() override = default;
-    virtual String render_to_html() const override;
+    virtual ByteString render_to_html() const override;
 
 private:
-    URL m_url;
-    String m_name;
+    URL::URL m_url;
+    ByteString m_name;
 };
 
 class Preformatted : public Line {
 public:
-    Preformatted(String line)
+    Preformatted(ByteString line)
         : Line(move(line))
     {
     }
     virtual ~Preformatted() override = default;
-    virtual String render_to_html() const override;
+    virtual ByteString render_to_html() const override;
 };
 
 class UnorderedList : public Line {
 public:
-    UnorderedList(String line)
+    UnorderedList(ByteString line)
         : Line(move(line))
     {
     }
     virtual ~UnorderedList() override = default;
-    virtual String render_to_html() const override;
+    virtual ByteString render_to_html() const override;
 };
 
 class Control : public Line {
@@ -105,7 +105,7 @@ public:
     {
     }
     virtual ~Control() override = default;
-    virtual String render_to_html() const override;
+    virtual ByteString render_to_html() const override;
 
 private:
     Kind m_kind;
@@ -113,13 +113,13 @@ private:
 
 class Heading : public Line {
 public:
-    Heading(String line, int level)
+    Heading(ByteString line, int level)
         : Line(move(line))
         , m_level(level)
     {
     }
     virtual ~Heading() override = default;
-    virtual String render_to_html() const override;
+    virtual ByteString render_to_html() const override;
 
 private:
     int m_level { 1 };

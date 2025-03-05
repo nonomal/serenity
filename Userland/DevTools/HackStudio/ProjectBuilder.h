@@ -6,11 +6,10 @@
 
 #pragma once
 
-#include "AK/Error.h"
 #include "Project.h"
 #include "TerminalWrapper.h"
+#include <AK/Error.h>
 #include <AK/Noncopyable.h>
-#include <LibCore/TempFile.h>
 
 namespace HackStudio {
 class ProjectBuilder {
@@ -33,27 +32,27 @@ private:
     ErrorOr<void> build_serenity_component();
     ErrorOr<void> run_serenity_component();
     ErrorOr<void> initialize_build_directory();
-    Optional<String> find_cmake_file_for(StringView file_path) const;
-    String generate_cmake_file_content() const;
+    Optional<ByteString> find_cmake_file_for(StringView file_path) const;
+    ByteString generate_cmake_file_content() const;
     ErrorOr<void> update_active_file(StringView active_file);
-    String build_directory() const;
+    ByteString build_directory() const;
 
     struct LibraryInfo {
-        String path;
-        Vector<String> dependencies {};
+        ByteString path;
+        Vector<ByteString> dependencies {};
     };
-    static HashMap<String, NonnullOwnPtr<LibraryInfo>> get_defined_libraries();
-    static void for_each_library_definition(Function<void(String, String)>);
-    static void for_each_library_dependencies(Function<void(String, Vector<StringView>)>);
-    static ErrorOr<String> component_name(StringView cmake_file_path);
+    static HashMap<ByteString, NonnullOwnPtr<LibraryInfo>> get_defined_libraries();
+    static void for_each_library_definition(Function<void(ByteString, ByteString)>);
+    static void for_each_library_dependencies(Function<void(ByteString, Vector<StringView>)>);
+    static ErrorOr<ByteString> component_name(StringView cmake_file_path);
     static ErrorOr<void> verify_cmake_is_installed();
     static ErrorOr<void> verify_make_is_installed();
 
-    String m_project_root;
+    ByteString m_project_root;
     Project const& m_project;
     NonnullRefPtr<TerminalWrapper> m_terminal;
     IsSerenityRepo m_is_serenity { IsSerenityRepo::No };
-    String m_serenity_component_cmake_file;
-    String m_serenity_component_name;
+    ByteString m_serenity_component_cmake_file;
+    ByteString m_serenity_component_name;
 };
 }

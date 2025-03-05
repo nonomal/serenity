@@ -6,7 +6,9 @@
 
 #pragma once
 
+#include <AK/DeprecatedFlyString.h>
 #include <AK/FlyString.h>
+#include <LibJS/Heap/Handle.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/StringOrSymbol.h>
 
@@ -26,15 +28,15 @@ public:
         No,
     };
 
-    static ThrowCompletionOr<PropertyKey> from_value(GlobalObject& global_object, Value value)
+    static ThrowCompletionOr<PropertyKey> from_value(VM& vm, Value value)
     {
         if (value.is_empty())
             return PropertyKey {};
         if (value.is_symbol())
             return PropertyKey { value.as_symbol() };
         if (value.is_integral_number() && value.as_double() >= 0 && value.as_double() < NumericLimits<u32>::max())
-            return value.as_u32();
-        return TRY(value.to_string(global_object));
+            return static_cast<u32>(value.as_double());
+        return TRY(value.to_byte_string(vm));
     }
 
     PropertyKey() = default;
@@ -47,7 +49,7 @@ public:
         VERIFY(index >= 0);
         if constexpr (NumericLimits<T>::max() >= NumericLimits<u32>::max()) {
             if (index >= NumericLimits<u32>::max()) {
-                m_string = String::number(index);
+                m_string = ByteString::number(index);
                 m_type = Type::String;
                 m_string_may_be_number = false;
                 return;
@@ -60,28 +62,32 @@ public:
 
     PropertyKey(char const* chars)
         : m_type(Type::String)
-        , m_string(FlyString(chars))
+        , m_string(DeprecatedFlyString(chars))
     {
     }
 
-    PropertyKey(String const& string)
+    PropertyKey(ByteString const& string)
         : m_type(Type::String)
-        , m_string(FlyString(string))
+        , m_string(DeprecatedFlyString(string))
     {
-        VERIFY(!m_string.is_null());
     }
 
-    PropertyKey(FlyString string, StringMayBeNumber string_may_be_number = StringMayBeNumber::Yes)
+    PropertyKey(FlyString const& string)
+        : m_type(Type::String)
+        , m_string(string.to_deprecated_fly_string())
+    {
+    }
+
+    PropertyKey(DeprecatedFlyString string, StringMayBeNumber string_may_be_number = StringMayBeNumber::Yes)
         : m_string_may_be_number(string_may_be_number == StringMayBeNumber::Yes)
         , m_type(Type::String)
         , m_string(move(string))
     {
-        VERIFY(!m_string.is_null());
     }
 
-    PropertyKey(Symbol& symbol)
+    PropertyKey(NonnullGCPtr<Symbol> symbol)
         : m_type(Type::Symbol)
-        , m_symbol(&symbol)
+        , m_symbol(symbol)
     {
     }
 
@@ -135,7 +141,7 @@ public:
             return false;
         }
 
-        auto property_index = m_string.to_uint(TrimWhitespace::No);
+        auto property_index = m_string.to_number<unsigned>(TrimWhitespace::No);
         if (!property_index.has_value() || property_index.value() == NumericLimits<u32>::max()) {
             m_string_may_be_number = false;
             return false;
@@ -151,7 +157,7 @@ public:
         return m_number;
     }
 
-    FlyString const& as_string() const
+    DeprecatedFlyString const& as_string() const
     {
         VERIFY(is_string());
         return m_string;
@@ -163,13 +169,13 @@ public:
         return m_symbol;
     }
 
-    String to_string() const
+    ByteString to_string() const
     {
         VERIFY(is_valid());
         VERIFY(!is_symbol());
         if (is_string())
             return as_string();
-        return String::number(as_number());
+        return ByteString::number(as_number());
     }
 
     StringOrSymbol to_string_or_symbol() const
@@ -185,8 +191,8 @@ private:
     bool m_string_may_be_number { true };
     Type m_type { Type::Invalid };
     u32 m_number { 0 };
-    FlyString m_string;
-    Symbol* m_symbol { nullptr };
+    DeprecatedFlyString m_string;
+    Handle<Symbol> m_symbol;
 };
 
 }
@@ -194,7 +200,7 @@ private:
 namespace AK {
 
 template<>
-struct Traits<JS::PropertyKey> : public GenericTraits<JS::PropertyKey> {
+struct Traits<JS::PropertyKey> : public DefaultTraits<JS::PropertyKey> {
     static unsigned hash(JS::PropertyKey const& name)
     {
         VERIFY(name.is_valid());

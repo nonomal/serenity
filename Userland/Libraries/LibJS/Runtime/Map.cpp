@@ -8,13 +8,15 @@
 
 namespace JS {
 
-Map* Map::create(GlobalObject& global_object)
+JS_DEFINE_ALLOCATOR(Map);
+
+NonnullGCPtr<Map> Map::create(Realm& realm)
 {
-    return global_object.heap().allocate<Map>(global_object, *global_object.map_prototype());
+    return realm.heap().allocate<Map>(realm, realm.intrinsics().map_prototype());
 }
 
 Map::Map(Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
 {
 }
 
@@ -84,6 +86,8 @@ void Map::visit_edges(Cell::Visitor& visitor)
         visitor.visit(value.key);
         visitor.visit(value.value);
     }
+    // NOTE: The entries in m_keys are already visited by the walk over m_entries above.
+    visitor.ignore(m_keys);
 }
 
 }

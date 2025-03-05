@@ -1,31 +1,32 @@
 /*
  * Copyright (c) 2022, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2024, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <AK/OwnPtr.h>
+#include <LibJS/Heap/GCPtr.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
 namespace Web::WebGL {
 
-class WebGLRenderingContext
-    : public WebGLRenderingContextBase
-    , public Bindings::Wrappable {
+class WebGLRenderingContext final : public WebGLRenderingContextBase {
+    WEB_PLATFORM_OBJECT(WebGLRenderingContext, WebGLRenderingContextBase);
+    JS_DECLARE_ALLOCATOR(WebGLRenderingContext);
+
 public:
-    using WrapperType = Bindings::WebGLRenderingContextWrapper;
+    static JS::ThrowCompletionOr<JS::GCPtr<WebGLRenderingContext>> create(JS::Realm&, HTML::HTMLCanvasElement& canvas_element, JS::Value options);
 
-    static JS::ThrowCompletionOr<RefPtr<WebGLRenderingContext>> create(HTML::HTMLCanvasElement& canvas_element, JS::Value options);
-
-    virtual ~WebGLRenderingContext() override = default;
+    virtual ~WebGLRenderingContext() override;
 
 private:
-    WebGLRenderingContext(HTML::HTMLCanvasElement& canvas_element, NonnullOwnPtr<GL::GLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
-        : WebGLRenderingContextBase(canvas_element, move(context), move(context_creation_parameters), move(actual_context_parameters))
-    {
-    }
+    virtual void initialize(JS::Realm&) override;
+
+    WebGLRenderingContext(JS::Realm&, HTML::HTMLCanvasElement&, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters);
 };
 
 }

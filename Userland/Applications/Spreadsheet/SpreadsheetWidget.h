@@ -8,7 +8,6 @@
 
 #include "SpreadsheetView.h"
 #include "Workbook.h"
-#include <AK/NonnullRefPtrVector.h>
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/Widget.h>
@@ -23,14 +22,14 @@ class SpreadsheetWidget final
 public:
     virtual ~SpreadsheetWidget() override = default;
 
-    void save(Core::File&);
-    void load_file(Core::File&);
-    void import_sheets(Core::File&);
+    void save(ByteString const& filename, Core::File&);
+    void load_file(ByteString const& filename, Core::File&);
+    void import_sheets(ByteString const& filename, Core::File&);
     bool request_close();
     void add_sheet();
     void add_sheet(NonnullRefPtr<Sheet>&&);
 
-    String const& current_filename() const { return m_workbook->current_filename(); }
+    ByteString const& current_filename() const { return m_workbook->current_filename(); }
     SpreadsheetView* current_view() { return static_cast<SpreadsheetView*>(m_tab_widget->active_widget()); }
     Sheet* current_worksheet_if_available() { return current_view() ? current_view()->sheet_if_available() : nullptr; }
     void update_window_title();
@@ -46,10 +45,11 @@ public:
         return current_view()->cursor();
     }
 
-    void initialize_menubar(GUI::Window&);
+    ErrorOr<void> initialize_menubar(GUI::Window&);
 
     void undo();
     void redo();
+    void change_cell_static_color_format(Spreadsheet::FormatType);
     auto& undo_stack() { return m_undo_stack; }
 
 private:
@@ -57,11 +57,11 @@ private:
     virtual void resize_event(GUI::ResizeEvent&) override;
 
     // ^GUI::Clipboard::ClipboardClient
-    virtual void clipboard_content_did_change(String const& mime_type) override;
+    virtual void clipboard_content_did_change(ByteString const& mime_type) override;
 
-    explicit SpreadsheetWidget(GUI::Window& window, NonnullRefPtrVector<Sheet>&& sheets = {}, bool should_add_sheet_if_empty = true);
+    explicit SpreadsheetWidget(GUI::Window& window, Vector<NonnullRefPtr<Sheet>>&& sheets = {}, bool should_add_sheet_if_empty = true);
 
-    void setup_tabs(NonnullRefPtrVector<Sheet> new_sheets);
+    void setup_tabs(Vector<NonnullRefPtr<Sheet>> new_sheets);
 
     void try_generate_tip_for_input_expression(StringView source, size_t offset);
 
@@ -89,9 +89,13 @@ private:
     RefPtr<GUI::Action> m_cut_action;
     RefPtr<GUI::Action> m_copy_action;
     RefPtr<GUI::Action> m_paste_action;
+    RefPtr<GUI::Action> m_insert_emoji_action;
     RefPtr<GUI::Action> m_undo_action;
     RefPtr<GUI::Action> m_redo_action;
+    RefPtr<GUI::Action> m_change_background_color_action;
+    RefPtr<GUI::Action> m_change_foreground_color_action;
 
+    RefPtr<GUI::Action> m_search_action;
     RefPtr<GUI::Action> m_functions_help_action;
     RefPtr<GUI::Action> m_about_action;
 

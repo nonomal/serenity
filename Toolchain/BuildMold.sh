@@ -6,18 +6,13 @@ set -e
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-NPROC="nproc"
-SYSTEM_NAME="$(uname -s)"
+# shellcheck source=/dev/null
+. "${DIR}/../Meta/shell_include.sh"
 
-if [ "$SYSTEM_NAME" = "OpenBSD" ]; then
-    NPROC="sysctl -n hw.ncpuonline"
-elif [ "$SYSTEM_NAME" = "FreeBSD" ]; then
-    NPROC="sysctl -n hw.ncpu"
-elif [ "$SYSTEM_NAME" = "Darwin" ]; then
-    NPROC="sysctl -n hw.ncpu"
-fi
+exit_if_running_as_root "Do not run BuildMold.sh as root, parts of your Toolchain directory will become root-owned"
 
-[ -z "$MAKEJOBS" ] && MAKEJOBS=$($NPROC)
+NPROC=$(get_number_of_processing_units)
+[ -z "$MAKEJOBS" ] && MAKEJOBS=${NPROC}
 
 mkdir -p "$DIR"/Tarballs
 pushd "$DIR"/Tarballs
@@ -29,15 +24,14 @@ if [ "$1" = "--git" ]; then
 
     git pull
 else
-    VERSION=1.3.1
+    VERSION=2.32.0
     [ ! -e mold-$VERSION.tar.gz ] && curl -L "https://github.com/rui314/mold/archive/refs/tags/v$VERSION.tar.gz" -o mold-$VERSION.tar.gz
     [ ! -e mold-$VERSION ] && tar -xzf mold-$VERSION.tar.gz
     cd mold-$VERSION
 fi
 
-make clean
-export DESTDIR="$DIR"/Local/mold
-make -j "$MAKEJOBS"
-make install PREFIX=
+MOLD_BUILD="$DIR"/Build/mold 
+cmake -B "$MOLD_BUILD" -S. -GNinja -DCMAKE_INSTALL_PREFIX="$DIR"/Local/mold
+ninja -C "$MOLD_BUILD" install -j"$MAKEJOBS"
 
 popd
